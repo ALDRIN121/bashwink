@@ -68,6 +68,40 @@ jobs:
           fi
           bash --version | head -1
 
+      # The upstream filesystem suite shells out to a ripgrep binary and, when it cannot find
+      # one on PATH, tries to DOWNLOAD it mid-test. The test harness forbids network access, so
+      # without this step 28 Ripgrep tests fail on every platform with:
+      #   error: test attempted network request: GET .../ripgrep-15.1.0-<target>.tar.gz
+      # Locally this was invisible because Homebrew's rg 15.1.0 was already on PATH.
+      #
+      # Install exactly the version upstream pins, and verify its SHA-256 against
+      # packages/core/src/ripgrep/binary.ts so the dependency stays pinned rather than "latest".
+      - name: Install the pinned ripgrep (upstream requires rg on PATH)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v rg >/dev/null 2>&1 && [ "$(rg --version | head -1 | awk '{print $2}')" = "15.1.0" ]; then
+            echo "rg 15.1.0 already present: $(command -v rg)"
+            exit 0
+          fi
+          case "$(uname -s)-$(uname -m)" in
+            Darwin-arm64) target="aarch64-apple-darwin";    sha="378e973289176ca0c6054054ee7f631a065874a352bf43f0fa60ef079b6ba715"; ext="tar.gz" ;;
+            Linux-x86_64) target="x86_64-unknown-linux-musl"; sha="1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599"; ext="tar.gz" ;;
+            Linux-aarch64) target="aarch64-unknown-linux-gnu"; sha="2b661c6ef508e902f388e9098d9c4c5aca72c87b55922d94abdba830b4dc885e"; ext="tar.gz" ;;
+            *) echo "unsupported runner: $(uname -s)-$(uname -m)"; exit 1 ;;
+          esac
+          dir="$RUNNER_TEMP/ripgrep"
+          mkdir -p "$dir"
+          url="https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-${target}.${ext}"
+          echo "downloading $url"
+          curl -fsSL "$url" -o "$dir/rg.${ext}"
+          echo "${sha}  $dir/rg.${ext}" | shasum -a 256 -c -
+          tar xzf "$dir/rg.${ext}" -C "$dir"
+          install -d "$HOME/.local/bin"
+          install -m 0755 "$dir/ripgrep-15.1.0-${target}/rg" "$HOME/.local/bin/rg"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/rg" --version | head -1
+
       - name: Upstream core suite
         run: bun run --cwd packages/core test
         working-directory: ${{ runner.temp }}/opencode

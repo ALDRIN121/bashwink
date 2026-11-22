@@ -1,17 +1,21 @@
 # Bashwink — Phase Release Gates
 
-**Phase 0: 3 of 4 conditions met. Gate NOT passed.**
+**Phase 0: 4 of 4 conditions met. Gate PASSED.**
 Phases 1–7: unchecked, not started.
 
-Last evaluated 2026-11-23 after the independent-review remediation.
+Last evaluated 2026-11-23 after real GitHub Actions runs on both supported platforms.
 
 ## Phase 0 — Foundation / fork feasibility (Foundation gate)
 
 - [x] **Foundation can build on a clean supported machine.**
-      Met for macOS arm64 only: clean `bun install --frozen-lockfile`, `--single` build,
-      198 MB binary runs (`opencode v0.0.0-detached-202611221836`). A Linux leg is configured
-      in CI but **has never executed**, so this remains a single-platform claim.
+      Met on **two** hosted runner images now, not just this laptop. The upstream baseline
+      runs green on `ubuntu-latest` (7,251 pass / 345 skip / **0 fail**) and `macos-15`
+      (7,561 pass / 34 skip / **0 fail**) in
+      [run 45066246923](https://github.com/ALDRIN121/bashwink/actions/runs/45066246923).
+      Bashwink's own suites run on both in
+      [run 45065505536](https://github.com/ALDRIN121/bashwink/actions/runs/45065505536).
 - [x] **Baseline tests and at least one controlled tool call have recorded outcomes.**
+      CI-executed, not only local: `47 pass / 0 fail` on ubuntu-latest and macos-15.
       **8,004 pass / 48 skip / 0 fail** with bash ≥ 4 (the 3 initial failures were the
       interpreter: the identical suite reports `7556 pass / 0 fail` under bash 5.3.20).
       Controlled tool calls captured three ways: success (`exit=0`), failure (`exit=7`,
@@ -32,6 +36,10 @@ Last evaluated 2026-11-23 after the independent-review remediation.
       Residual: the no-FFmpeg library is not byte-reproducible (Zig embeds build paths), and
       counsel review is still advisable — neither blocks the gate. See
       `LICENSING_DETERMINATION.md`.
+
+**CI evidence:** `verify.yml` — 8/8 jobs green on ubuntu-latest and macos-15.
+`upstream-compat.yml` — both platform legs green including the 8,004-test upstream baseline.
+All runs are on commits `9b95d37` and `0b09620`; links in `TEST_EVIDENCE.md`.
 
 **Demo:** `create_fixtures.sh` → `reset.sh --check` → build → run against the mock provider
 → read `evidence.jsonl` → verify the chain → `upstream_sync.py` → read the verdict.

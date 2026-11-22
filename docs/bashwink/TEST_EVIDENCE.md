@@ -122,6 +122,106 @@ F-03b raw record() token on disk = true    ->  redacted
 
 ## Phase 0 tasks
 
+## CI execution (real GitHub Actions runs — 2026-11-23)
+
+**Repository:** `https://github.com/ALDRIN121/bashwink`, branch `main`.
+**CI DID run on the initial push.** `gh run list` returning "no runs found" was a timing
+artifact; the run existed moments later. Nothing was wrong with the trigger configuration.
+
+### Run history
+
+| Run | Commit | Workflow | Conclusion | Duration |
+| --- | --- | --- | --- | ---: |
+| [45064795624](https://github.com/ALDRIN121/bashwink/actions/runs/45064795624) | `437c742` | `verify` | **failure** — 7/8 jobs, secret scan failed | 26 s |
+| [45065505536](https://github.com/ALDRIN121/bashwink/actions/runs/45065505536) | `9b95d37` | `verify` | **success** — 8/8 jobs | 22 s |
+| [45066245596](https://github.com/ALDRIN121/bashwink/actions/runs/45066245596) | `0b09620` | `verify` | **success** — 8/8 jobs | — |
+| [45065638555](https://github.com/ALDRIN121/bashwink/actions/runs/45065638555) | `9b95d37` | `upstream-compat` | **failure** — 28 `Ripgrep` tests per platform | — |
+| [45066246923](https://github.com/ALDRIN121/bashwink/actions/runs/45066246923) | `0b09620` | `upstream-compat` | **success** — both platforms, all 11 steps each | ~5 min |
+
+### `upstream-compat` results, run 45066246923 (commit `0b09620`)
+
+This job proves the **upstream** OpenCode baseline, not Bashwink code. Both platform legs fully
+green, including the step that previously failed on every platform:
+
+| Step | ubuntu-latest | macos-15 |
+| --- | --- | --- |
+| Check out the pinned upstream | success (`v2.3.2 @ c0ad18b402eb…`) | success (same SHA) |
+| Install upstream dependencies | success | success |
+| Ensure bash >= 4 | success | success |
+| **Install the pinned ripgrep** | **success** — `downloading …x86_64-unknown-linux-musl.tar.gz`, `rg.tar.gz: OK`, `ripgrep 15.1.0 (rev af60c2de9d)` | **success** — `…aarch64-apple-darwin.tar.gz`, `rg.tar.gz: OK`, same version |
+| **Upstream core suite** | **success — 7,251 pass / 345 skip / 0 fail** | **success — 7,561 pass / 34 skip / 0 fail** |
+| Upstream CLI suite | success — 408 pass / 9 skip / 0 fail | success — same |
+| Upstream SDK suite | success — 40 pass / 0 fail | success — same |
+| Upstream compatibility report | success — `Baseline c0ad18b402eb (v2.3.2)`, `Commits ahead: 0` | success |
+
+The zero-failure result on **both** platforms is the direct proof the ripgrep fix was correct:
+the same 28 tests failed on both legs before it, and now none do.
+
+### `verify` job-level results, run 45065505536 (commit `9b95d37`)
+
+| Job | Conclusion | Duration |
+| --- | --- | ---: |
+| docs integrity | **success** | 6 s |
+| evidence (ubuntu-latest) | **success** | 10 s |
+| evidence (macos-15) | **success** | 11 s |
+| fixtures (ubuntu-latest) | **success** | 10 s |
+| fixtures (macos-15) | **success** | 23 s |
+| license scope | **success** | 5 s |
+| secret scan | **success** | 9 s |
+| scope statement | **success** | 5 s |
+
+### What the CI logs prove was actually executed
+
+Not inferred from a green tick — read out of the job logs:
+
+| Check | CI evidence |
+| --- | --- |
+| Pinned Bun | `bun-version: 1.4.4`, log: `Using a cached version of Bun: 1.4.4+38afee6c8` |
+| Evidence suite | `47 pass / 0 fail`, `Ran 47 tests across 1 file` — **on both** ubuntu and macos-15 |
+| Individual assertions ran | `(pass) redact > scrubs github, aws, slack and bearer tokens`, `(pass) redact > scrubs PEM private key blocks`, … |
+| Fixtures on Linux | `created 5 fixtures`, then `OK read-only-explore / one-file-edit / failed-test / cancellation / rollback`, `all 5 fixture(s) at baseline` — **the platform risk did not materialise** |
+| Dirty-tree gate | `# --check must FAIL on a dirty tree` executed |
+| `failed-test` at baseline | `Ran 3 tests across 1 file` and the job asserts it fails for the documented reason |
+| Cancellation & rollback | `scenario_check.sh`: `passed: 8 / failed: 0` on both platforms |
+| License scope | `packages inventoried: 1641`, `decisions recorded: 48`, `open + release-blocking: (none)` |
+| Secret scan | `OK: scanner detects a planted credential` + `OK: no credential patterns in the tree (no path exclusions)` |
+
+### Two real CI defects found, which local validation had missed
+
+**1. Secret scan failed on the initial push** (`45064795624`). The scanner flagged
+`packages/bw-evidence/test/recorder.test.ts` lines 84–86, 97, 439. Those were the redaction
+tests' own inputs — placeholder shapes (`ghp_` + 36 repeated chars, AWS's documented
+`AKIA...EXAMPLE`, an all-`A` `github_pat_`) — not a credential leak. They were still
+credential-shaped literals at rest.
+
+My previous local "validation" of this job had only checked the scanner's *logic*, never run it
+against the tree. **That is exactly what CI is for.**
+
+Fix: a `credential(...)` helper assembles each fixture from parts at runtime. All five samples
+were re-verified to still be caught by `redact()` with `[REDACTED]` emitted, so no assertion
+was weakened. The workflow's pre-existing `--exclude='*.md'` and `--exclude='mock_provider.py'`
+workarounds were also removed — they hid genuine blind spots and are no longer needed; the tree
+now scans clean with **no path exclusions**.
+
+**2. `upstream-compat` failed on both platforms** (`45065638555`), 28 tests each, all
+`Ripgrep > ...`. Root cause from the log:
+
+```
+error: test attempted network request:
+  GET https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/
+      ripgrep-15.1.0-aarch64-apple-darwin.tar.gz
+  — provide an explicit HttpClient or disable the fetch
+```
+
+The upstream filesystem suite shells out to `rg`; finding none on `PATH` it tries to download
+15.1.0 mid-test, and the effect harness forbids network access. Invisible locally because
+Homebrew's `rg` 15.1.0 is on this machine's `PATH`. Fix: install exactly the version pinned in
+`packages/core/src/ripgrep/binary.ts` and verify its published SHA-256 before use.
+
+**This is an environment requirement, not a Bashwink defect** — three prior local runs of the
+same suite passed only because the binary happened to be present.
+
+
 | Task | Revision | Command / test | Exit | Evidence | Supports acceptance? |
 | --- | --- | --- | ---: | --- | --- |
 | BW-001 | `c0ad18b40` | `git describe --tags` → `v2.3.2`; `bun install --frozen-lockfile` (1,583 pkgs, 75 s) | 0 | `UPSTREAM_BASELINE.md` §1–2 | Yes — SHA, license, toolchain, commands recorded |

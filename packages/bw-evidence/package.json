@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@bashwink/evidence",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Bashwink evidence recorder — an OpenCode plugin that turns tool lifecycle hooks into an append-only, hash-chained evidence log.",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "2.3.2"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    }
+  }
+}

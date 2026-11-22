@@ -1,0 +1,126 @@
+{
+  "package_name": "BASHWINK_DOCS_COMPLETE_AUDITED",
+  "date": "2026-11-22",
+  "root": "docs/bashwink/",
+  "task_count": 90,
+  "task_sources": {
+    "v1": 54,
+    "v2": 36
+  },
+  "phase_task_counts": {
+    "P0": 9,
+    "P1": 10,
+    "P2": 15,
+    "P3": 19,
+    "P4": 13,
+    "P5": 8,
+    "P6": 9,
+    "P7": 7
+  },
+  "files": {
+    "ADR-001-FOUNDATION-AND-FORK.md": {
+      "sha256": "36de965d6db2254b1c92e907c9c703e3fadbf834812367144fc6491b73577988",
+      "size_bytes": 4339
+    },
+    "AGENT_WORKFLOW.md": {
+      "sha256": "e09c84106fd0a609ad42bc37c835e86622a25c121409e08ace4179dfc9506d92",
+      "size_bytes": 3292
+    },
+    "BASHWINK_FULL_PLAN.md": {
+      "sha256": "28b5fdbfd0713fdd5cf751232eae062f28a6b4c68daaa1fdafa33639f602b37c",
+      "size_bytes": 67289
+    },
+    "BASHWINK_MASTER_AGENT_PROMPT.md": {
+      "sha256": "cd78f6dea3e0620bd46c6e01cc04d3eaaf2f9bd3b7a0e7df93960c44dcdda456",
+      "size_bytes": 3823
+    },
+    "BASHWINK_PHASE_BY_PHASE_TASK_PLAN.md": {
+      "sha256": "f7376b0ed52daebbd3c49a78fa1341b46ef7f3e3ed0fe52c6846b9c23ce1f46b",
+      "size_bytes": 85088
+    },
+    "BASHWINK_PRODUCT_REQUIREMENTS.md": {
+      "sha256": "4dfa0c6d84e6774c78c612df520239494d9940bb2b60794009480b1b4619a8e1",
+      "size_bytes": 43879
+    },
+    "BASHWINK_TASKS_90.csv": {
+      "sha256": "e7926e13b62a686c27a78e183773712b5cc9998c738f244ba580bfacc955cd2d",
+      "size_bytes": 37321
+    },
+    "BASHWINK_V2_FEATURE_BACKLOG.md": {
+      "sha256": "dab1980faec7101af49fc18ed638e98f2185a85f9a1711164ceeccee50e143e5",
+      "size_bytes": 15744
+    },
+    "BASHWINK_V2_INTEGRATED_PLAN.md": {
+      "sha256": "8621f27820b67106b9775d8b247d61e4b8218512e7ef3023bb487f997010762c",
+      "size_bytes": 130284
+    },
+    "BASHWINK_V2_PRD_ADDENDUM.md": {
+      "sha256": "66d58efef07cba66a2076d6e6415b02fc1e3ca273a315729dca8d9500100a9c1",
+      "size_bytes": 16313
+    },
+    "COMPETITIVE_GAP_RESEARCH.md": {
+      "sha256": "a412761316a0d9743487cd6a35c2857fa887a137e0d56a89e3367216549e0519",
+      "size_bytes": 22261
+    },
+    "EXPERIMENTS_AND_EVALUATIONS.md": {
+      "sha256": "5a9970a508f8962bc172f21d0d64150efaaba1b29ffa1bad362c75d5daacd4ca",
+      "size_bytes": 8431
+    },
+    "IMPLEMENTATION_BACKLOG.md": {
+      "sha256": "836f9ea6f20c4429e9339a4e97849b420b438492cba6d29f454be0332b5f9f00",
+      "size_bytes": 22950
+    },
+    "PHASE-00-FOUNDATION.md": {
+      "sha256": "991ce144e537f87298e4b19c9c63718d0e775c5f84c867475f0a5f6e571b3abf",
+      "size_bytes": 8640
+    },
+    "PHASE-01-CLI-CORE.md": {
+      "sha256": "13c7ec79df9317eb3176661a8586e7720a59cbf59ac0cf5c6a68fc418758f6d8",
+      "size_bytes": 9079
+    },
+    "PHASE-02-PROOF-SECURITY.md": {
+      "sha256": "50c0c19d6bf38eb4ab7af5255e6d8ac211bf3a44f66c60c3f7bab1458d026861",
+      "size_bytes": 13425
+    },
+    "PHASE-03-MEMORY-VERIFIER.md": {
+      "sha256": "e121268e00589f769c6e0e42a33f390100e64400d3e3e520cd14eacc83e3a8fd",
+      "size_bytes": 15520
+    },
+    "PHASE-04-SANDBOX-AGENTS.md": {
+      "sha256": "1135d47bd2eabb2ee2922f4b869d23f444f20c54e44f596a807ab515c4ee1644",
+      "size_bytes": 11343
+    },
+    "PHASE-05-EVALUATION.md": {
+      "sha256": "729300e6d96ff68bd236d0215ccfc2c6c83cbb0b1fe9fed37c2a64de797f78d7",
+      "size_bytes": 7701
+    },
+    "PHASE-06-RELEASE.md": {
+      "sha256": "abe5c00971f04c7cca99e2a8c0fcf22f98e3f3049796ae92923477071928bcb0",
+      "size_bytes": 8257
+    },
+    "PHASE-07-FUTURE.md": {
+      "sha256": "50aeff399f3604eafb3b1d8fa27cde29081d694f76c3f00ed0ac6f42676358ff",
+      "size_bytes": 6165
+    },
+    "PHASE_GATE_CHECKLIST.md": {
+      "sha256": "bc4df2c7c7469ca09a31beb26630f03aa31fef742d47d293fac8267ea0307dd3",
+      "size_bytes": 4557
+    },
+    "reports/BASHWINK_FULL_PLAN.docx": {
+      "sha256": "9ff5e24b6476785dde68336cfa5ed13d3c6bd61aafeeec565675390c0d6b49c9",
+      "size_bytes": 60720
+    },
+    "reports/BASHWINK_PHASE_BY_PHASE_TASK_PLAN.docx": {
+      "sha256": "fb67246a1521c62c9f42216adcc390feb352c20d5e78eaa62247b5893dc98d95",
+      "size_bytes": 60124
+    },
+    "reports/BASHWINK_V2_REPORT_READABLE.md": {
+      "sha256": "57ecec57738ceb026a01025fee35b466c9e2f9ac9261e6c5cb1dc79ef1c3af77",
+      "size_bytes": 69014
+    },
+    "reports/BASHWINK_V2_RESEARCH_AND_ROADMAP.docx": {
+      "sha256": "71f86e30b5128dab17124773aa8816b11d00593d0d0e3ec014b6a8b5f8547787",
+      "size_bytes": 45255
+    }
+  }
+}

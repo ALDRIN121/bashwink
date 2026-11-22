@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "bashwink",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.4",
+  "description": "Bashwink — an evidence-first coding agent built on a pinned OpenCode foundation.",
+  "license": "MIT",
+  "workspaces": {
+    "packages": [
+      "packages/*"
+    ]
+  },
+  "scripts": {
+    "test": "bun test packages",
+    "test:evidence": "bun test packages/bw-evidence",
+    "verify:docs": "python3 scripts/verify_bashwink_docs.py",
+    "verify:evidence": "bun run packages/bw-evidence/src/cli.ts verify"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.3",
+    "typescript": "6.0.2"
+  },
+  "engines": {
+    "bun": ">=1.4.4"
+  }
+}

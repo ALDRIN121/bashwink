@@ -1,0 +1,24 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "providers": {
+    "bashwink-mock": {
+      "name": "Bashwink Mock Provider",
+      "package": "@opencode/ai/providers/openai/chat",
+      "settings": {
+        "baseURL": "http://127.0.0.1:8117/v1"
+      },
+      "models": {
+        "mock-tool-model": {
+          "name": "Mock Tool Model",
+          "limit": {
+            "context": 32768,
+            "output": 4096
+          },
+          "settings": {
+            "temperature": 0
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,182 @@
+name: verify
+
+# Bashwink Phase 0 gate.
+#
+# Runs on Linux and macOS because the foundation was verified on macOS arm64 only, and a
+# foundation that builds on exactly one laptop is not a foundation. The Linux leg is the
+# one that will catch platform assumptions.
+#
+# ACTIVE RUNNER LABELS: macos-15 (not macos-14 — retired 2026-11-02 per
+# https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Upstream pins Bun 1.4.4 (package.json "packageManager"). Keep them aligned so a
+  # local run and CI resolve identical dependency trees.
+  BUN_VERSION: "1.4.4"
+
+jobs:
+  docs:
+    name: docs integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify documentation bundle
+        run: python3 scripts/verify_bashwink_docs.py
+
+  evidence:
+    name: evidence (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Unit tests
+        run: bun run test:evidence
+      - name: Typecheck
+        run: bun run --cwd packages/bw-evidence typecheck
+      # The evidence recorder is Bashwink's security-critical component. Run its suite
+      # against the exact lockfile-pinned toolchain, not whatever the runner default is.
+      - name: Evidence suite under the pinned Bun
+        run: bun --version && bun test packages/bw-evidence/test/recorder.test.ts
+
+  fixtures:
+    name: fixtures (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      # macOS /bin/bash is 3.2; the upstream shell suite needs bash >= 4 and goes from
+      # 3 failures to 0 when a modern bash is present. Ubuntu already ships bash 5.
+      - name: Ensure bash >= 4
+        run: |
+          set -euo pipefail
+          if [ "$(bash -c 'echo ${BASH_VERSINFO[0]}')" -lt 4 ]; then
+            brew install bash
+            echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+          fi
+          bash --version | head -1
+      # A committed identity is required or fixture commits fail on a clean runner.
+      - name: Configure git
+        run: |
+          git config --global user.name "Bashwink CI"
+          git config --global user.email "ci@bashwink.invalid"
+          git config --global init.defaultBranch main
+      - name: Recreate fixtures
+        run: ./fixtures/create_fixtures.sh
+      - name: Fixtures are at their recorded baselines
+        run: ./fixtures/reset.sh --check
+      - name: Dirty a fixture, then prove reset restores it
+        run: |
+          set -euo pipefail
+          echo "dirty" >> fixtures/one-file-edit/README.md
+          touch fixtures/one-file-edit/untracked.tmp
+          # --check must FAIL on a dirty tree; if it passes, the gate is broken.
+          if ./fixtures/reset.sh --check one-file-edit; then
+            echo "FAIL: --check accepted a dirty fixture"
+            exit 1
+          fi
+          ./fixtures/reset.sh one-file-edit
+          ./fixtures/reset.sh --check one-file-edit
+      - name: Fixture tests fail at baseline for the documented reason
+        run: |
+          set -euo pipefail
+          cd fixtures/failed-test
+          if bun test; then
+            echo "FAIL: failed-test fixture passed at baseline; it no longer reproduces a bug"
+            exit 1
+          fi
+
+  secret-scan:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Positive control and real scan
+        run: |
+          set -euo pipefail
+          # A scanner that never fires is untested. Prove it detects a known-bad string
+          # first, then scan the tree for real. (Independent review: "positive and
+          # negative secret-scan fixtures are tested".)
+          tmp="$(mktemp -d)"
+          printf 'const k = "sk-%s"\n' "$(printf 'A%.0s' {1..32})" > "$tmp/leak.js"
+          if ! grep -rInE '(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)' "$tmp" >/dev/null; then
+            echo "FAIL: secret scanner did not detect the positive control"
+            exit 1
+          fi
+          echo "OK: scanner detects a planted credential"
+
+          if grep -rInE '(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)' \
+               --exclude-dir=.git --exclude-dir=node_modules \
+               --exclude='*.md' --exclude='mock_provider.py' .; then
+            echo "FAIL: possible credential committed"
+            exit 1
+          fi
+          echo "OK: no credential patterns in the tree"
+
+  # Licence scope gate. Deliberately NOT a blanket "no GPL anywhere" rule: the shipped
+  # artifact's obligations depend on which packages actually reach the distribution.
+  # This job enforces what is checkable in-tree and fails loudly on anything with no
+  # recorded decision.
+  license-scope:
+    name: license scope
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Every dependency with copyleft must have a recorded decision
+        run: python3 scripts/check_license_scope.py --inventory docs/bashwink/DEPENDENCY_LICENSES.json
+
+  # Scope honesty. A green verify.yml must never be read as "the upstream 8,004-test
+  # suite passed". Full upstream parity is a separate, heavier check that needs the
+  # upstream clone and a ~5 minute run; it is tracked in NEXT_STEPS.md as an explicit
+  # periodic compatibility job rather than being silently implied here.
+  scope:
+    name: scope statement
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: State what this workflow does and does not prove
+        run: |
+          cat <<'EOF'
+          This workflow proves:
+            - the docs bundle is internally consistent
+            - Bashwink's own evidence package passes its tests and typechecks
+            - the QA fixtures reset deterministically on Linux and macOS
+            - the secret scanner works and finds nothing committed
+            - every copyleft dependency has a recorded licensing decision
+
+          This workflow does NOT prove:
+            - upstream OpenCode baseline parity (8,004 tests) — see NEXT_STEPS.md
+            - any licence conclusion is legally sufficient — that needs counsel
+            - the shipped artifact was built, signed or distributed
+          EOF

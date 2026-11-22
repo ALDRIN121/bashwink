@@ -1,0 +1,104 @@
+name: upstream-compat
+
+# Separate from `verify.yml` on purpose.
+#
+# Independent review F-09: a green `verify` workflow must never be read as "the upstream
+# 8,004-test baseline passed". That baseline needs a ~2.7 GB dependency install and a
+# 5-minute suite, which is too heavy for every PR. This workflow is the deliberate,
+# explicit compatibility check instead — it runs on a schedule and on demand.
+#
+# It is EXPECTED to be slow. It is also expected to fail when upstream moves.
+
+on:
+  schedule:
+    # Weekly. Upstream releases faster than this, but a weekly drift signal is enough to
+    # stop a silent breakage without burning CI minutes daily.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "OpenCode ref to test (tag, branch or SHA)"
+        required: false
+        default: "v2.3.2"
+
+concurrency:
+  group: upstream-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  BUN_VERSION: "1.4.4"
+
+jobs:
+  upstream:
+    name: upstream baseline (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Check out the pinned upstream
+        run: |
+          set -euo pipefail
+          ref="${{ github.event.inputs.ref || 'v2.3.2' }}"
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/anomalyco/opencode.git "$RUNNER_TEMP/opencode"
+          git -C "$RUNNER_TEMP/opencode" checkout "$ref"
+          echo "testing ref: $ref @ $(git -C "$RUNNER_TEMP/opencode" rev-parse HEAD)"
+
+      - name: Install upstream dependencies
+        run: bun install --frozen-lockfile
+        working-directory: ${{ runner.temp }}/opencode
+
+      # The shell parity suite needs bash >= 4; macOS ships 3.2.
+      - name: Ensure bash >= 4
+        run: |
+          set -euo pipefail
+          if [ "$(bash -c 'echo ${BASH_VERSINFO[0]}')" -lt 4 ]; then
+            brew install bash
+            echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+          fi
+          bash --version | head -1
+
+      - name: Upstream core suite
+        run: bun run --cwd packages/core test
+        working-directory: ${{ runner.temp }}/opencode
+
+      - name: Upstream CLI suite
+        run: bun run --cwd packages/cli test
+        working-directory: ${{ runner.temp }}/opencode
+
+      - name: Upstream SDK suite
+        run: bun run --cwd packages/sdk test
+        working-directory: ${{ runner.temp }}/opencode
+
+      # Only now, with a real upstream tree present, can the compatibility report run.
+      - name: Upstream compatibility report
+        run: |
+          set -euo pipefail
+          python3 scripts/upstream_sync.py \
+            --repo "$RUNNER_TEMP/opencode" \
+            --offline
+        # --offline is deliberate: the report compares against the checked-out ref, and
+        # resolving a *further* target would need network access to a different revision.
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Upstream compatibility"
+            echo ""
+            echo "Ref under test: \`${{ github.event.inputs.ref || 'v2.3.2' }}\`"
+            echo "Platform: \`${{ matrix.os }}\`"
+            echo ""
+            echo "This job proves upstream baseline parity on this platform."
+            echo "It does **not** validate Bashwink code — see \`verify.yml\` for that."
+          } >> "$GITHUB_STEP_SUMMARY"

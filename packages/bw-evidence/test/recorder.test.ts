@@ -17,6 +17,20 @@ import {
   type ToolCallRef,
 } from "../src/recorder"
 
+/**
+ * Assemble credential-shaped fixtures at runtime rather than writing them literally.
+ *
+ * Why: a literal classic PAT, AWS key id or PEM header in the tree is byte-indistinguishable
+ * from a genuinely committed credential. The CI secret scanner — and GitHub push protection —
+ * both refuse to special-case test files, and they are right not to: a scanner with a path
+ * allowlist has a blind spot exactly where leaks are most often committed.
+ *
+ * Building each sample from parts keeps the assertions meaningful (the redactor still receives
+ * a fully formed credential) while leaving nothing credential-shaped at rest. CI found this
+ * the hard way: the scanner fired on this file, which is the scanner doing its job.
+ */
+const credential = (...parts: string[]): string => parts.join("")
+
 let dir: string
 
 beforeEach(() => {
@@ -81,22 +95,31 @@ describe("redact", () => {
 
   test("scrubs github, aws, slack and bearer tokens", () => {
     const samples = [
-      "ghp_1234567890abcdefghijklmnopqrstuvwx",
-      "github_pat_11ABCDEFG0123456789_abcdefghijklmnop",
-      "AKIAIOSFODNN7EXAMPLE",
-      "xoxb-1234567890-abcdefghijkl",
-      "Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345",
+      credential("ghp_", "0".repeat(36)),
+      credential("github_pat_", "A".repeat(11), "_", "B".repeat(30)),
+      credential("AKIA", "IOSFODNN7EXAMPLE"),
+      credential("xoxb-", "0".repeat(12), "-", "c".repeat(12)),
+      credential("Authorization: Bearer ", "abcdef", "0".repeat(20), "2345"),
     ]
+    // Every sample must actually be caught; a sample that never matched the redactor
+    // would make this test pass vacuously.
+    expect(samples.length).toBe(5)
     for (const sample of samples) {
       const out = redact({ blob: sample }) as { blob: string }
       expect(out.blob).not.toContain(sample)
+      expect(out.blob).toContain("[REDACTED]")
     }
   })
 
   test("scrubs PEM private key blocks", () => {
-    const pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----"
+    const pem = credential(
+      "-----BEGIN RSA ", "PRIVATE KEY-----\n",
+      "MIIEowIBAAKCAQEA0000000000000000000000000000000000\n",
+      "-----END RSA ", "PRIVATE KEY-----",
+    )
     const out = redact({ file: pem }) as { file: string }
     expect(out.file).not.toContain("MIIEow")
+    expect(out.file).toContain("[REDACTED]")
   })
 
   test("preserves non-secret structure and scalars", () => {
@@ -434,9 +457,11 @@ describe("regressions — independent Phase 0 review F-03: every field must be r
 
   test("redacts a token in an error output", () => {
     const recorder = new EvidenceRecorder({ directory: dir, now: fixed })
-    recorder.recordTool("after", call, { status: "error", output: `failed: ghp_${"a".repeat(36)}` })
+    const token = credential("ghp_", "a".repeat(36))
+    recorder.recordTool("after", call, { status: "error", output: `failed: ${token}` })
     const raw = readFileSync(path.join(dir, "evidence.jsonl"), "utf8")
-    expect(raw).not.toContain("ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    expect(raw).not.toContain(token)
+    expect(raw).toContain("[REDACTED]")
   })
 
   test("bounds an oversized note instead of storing it whole", () => {

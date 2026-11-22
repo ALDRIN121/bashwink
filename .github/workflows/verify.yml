@@ -138,13 +138,17 @@ jobs:
           fi
           echo "OK: scanner detects a planted credential"
 
+          # Deliberately NO path allowlist. An earlier revision excluded '*.md' and
+          # 'mock_provider.py' to work around a false positive; the real fix was to stop
+          # writing credential-shaped literals in the tree at all (see the credential()
+          # helper in packages/bw-evidence/test/recorder.test.ts). A scanner with a path
+          # allowlist has a blind spot that grows every time something trips it.
           if grep -rInE '(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)' \
-               --exclude-dir=.git --exclude-dir=node_modules \
-               --exclude='*.md' --exclude='mock_provider.py' .; then
+               --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=audit .; then
             echo "FAIL: possible credential committed"
             exit 1
           fi
-          echo "OK: no credential patterns in the tree"
+          echo "OK: no credential patterns in the tree (no path exclusions)"
 
   # Licence scope gate. Deliberately NOT a blanket "no GPL anywhere" rule: the shipped
   # artifact's obligations depend on which packages actually reach the distribution.

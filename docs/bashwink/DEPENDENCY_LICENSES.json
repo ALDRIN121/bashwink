@@ -117,16 +117,18 @@
   "@opentui/core-darwin-arm64": {
    "license": "MIT AND LGPL-2.1-or-later",
    "in_shipped_path": true,
-   "shipped_evidence": "`strings` on the built binary matched ffmpeg 13x and libavcodec 28x; opentui 109x",
-   "decision": "static link of a decode-only FFmpeg 9.0.2 into the native binary; LGPL-2.1 s6 obligations attach to every distributed artifact",
+   "shipped_evidence": "libopentui.dylib (6.3 MB) contains 796 statically-linked FFmpeg symbols and is embedded byte-identically in the built binary at offset 167,016,147 (verified by full-length byte comparison).",
+   "decision": "Two distribution models were distinguished (LICENSING_DETERMINATION.md). PM-0 (publish the plugin only) redistributes no native code and no FFmpeg. PM-1 (bundle a binary) can ship a libopentui rebuilt from pinned OpenTUI v0.8.4 source WITHOUT FFmpeg: verified to build, load, pass the ABI check and render the TUI, with 796 FFmpeg symbols reduced to 0 genuine ones.",
    "required_actions": [
-    "ship the package's nine license files verbatim (LICENSE, LICENSE-FFMPEG, LICENSE-WUFFS, LICENSE-ZLIB, LICENSE-LIBWEBP, LICENSE-STB, LICENSE-GHOSTTY, LICENSE-LCMS2, AUTHORS-LIBWEBP)",
-    "publish the bundled FFmpeg version (9.0.2) and matching source/build configuration",
-    "provide a relinking/modification route adequate for LGPL-2.1 s6",
-    "obtain legal confirmation before release"
+    "ship PM-0 (plugin only) or PM-1 built with --no-ffmpeg; do not ship the stock LGPL binary without counsel",
+    "generate and ship THIRD_PARTY_NOTICES.txt from scripts/generate_notices.py for whichever model is used",
+    "for PM-1-stock only: nine license files + FFmpeg 9.0.2 source + LGPL-2.1 s6 relinking route (OPENTUI_LIB_PATH, proven)"
    ],
-   "status": "OPEN",
-   "blocks_release": true
+   "status": "RESOLVED_BY_DESIGN",
+   "blocks_release": false,
+   "resolved_on": "2026-11-23",
+   "resolved_by": "ADR-009 / LICENSING_DETERMINATION.md",
+   "residual": "Legal review of the chosen model is still advisable before public release, but no LGPL obligation attaches to PM-0 or PM-1-no-FFmpeg."
   },
   "@img/sharp-libvips-darwin-arm64": {
    "license": "LGPL-3.0-or-later",
@@ -8817,6 +8819,8 @@
  ],
  "notes": {
   "kind_model": "every entry is classified as package | subpath-entry | test-fixture; only `package` entries carry real licensing obligations",
-  "open_but_not_release_blocking": "packages whose license text is missing from the installed tree are OPEN, but none of them is in the shipped path, so they cannot block the CLI artifact; they must be resolved before a notices bundle is complete"
+  "open_but_not_release_blocking": "packages whose license text is missing from the installed tree are OPEN, but none of them is in the shipped path, so they cannot block the CLI artifact; they must be resolved before a notices bundle is complete",
+  "distribution_models": "PM-0 = npm plugin only (no native redistribution). PM-1 = bundled binary; PM-1-no-FFmpeg is the recommended binary model.",
+  "updated": "2026-11-23 after the FFmpeg/OpenTUI determination"
  }
 }

@@ -4,12 +4,32 @@
 Serves just enough of the chat-completions streaming protocol for OpenCode to run a
 real agent turn with a real tool call, with no API key and no network egress.
 
-The script is a state machine: the first request asks the model to call the `bash`
+The script is a state machine: the first request asks the model to call the shell
 tool; once it sees the tool result in the conversation, it answers with a final
 message. That fixed shape is what makes the run reproducible across machines.
 
+Scenarios
+---------
+``--scenario`` selects what the mock *asks the agent to run* and what it then claims:
+
+``ok`` (default)
+    Run a command that prints ``bw-mock-ok`` and exits 0. The final message claims
+    success. This is the happy path used by the smoke test.
+
+``fail``
+    Run a command that prints ``bw-mock-fail`` and exits 7. The final message
+    **honestly reports the failure**, so a reviewer can see that the evidence log
+    recorded ``exit=7`` while the model's own summary also says it failed. Previously
+    the mock always printed ``exit 7`` but always claimed success, which made the
+    happy path indistinguishable from the failure path and left the `exit=7` in every
+    transcript unexplained (see the Phase 0 review, Part 3).
+
+Why a scenario flag instead of a single hardcoded command: the two paths must be
+distinguishable to be meaningful. A mock that always fails while always claiming
+success tests nothing about whether failures are recorded correctly.
+
 Usage:
-    python3 mock_provider.py --port 8117 [--log /tmp/mock-provider.jsonl]
+    python3 mock_provider.py --port 8117 [--scenario ok|fail] [--log /tmp/mock.jsonl]
 """
 
 from __future__ import annotations
@@ -21,10 +41,26 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-# The exact command the model "chooses". Chosen because it is read-only, has no
-# network dependency, and its output is stable.
-TOOL_COMMAND = "printf 'bw-mock-fail\\n'; exit 7"
-FINAL_TEXT = "Tool call completed; the command printed bw-mock-ok."
+# Commands the model "chooses". Both are read-only, have no network dependency and
+# produce stable output, which is what makes a run reproducible across machines.
+SCENARIOS = {
+    "ok": {
+        "command": "printf 'bw-mock-ok\\n'",
+        "final": "Tool call completed; the command printed bw-mock-ok.",
+    },
+    "fail": {
+        "command": "printf 'bw-mock-fail\\n'; exit 7",
+        # Honest: the mock reports the failure it caused. A summary that lied about a
+        # failure it had just observed would be exactly the defect Bashwink exists to
+        # prevent, and would make the evidence log's `exit=7` look unaccountable.
+        "final": "The command failed with exit code 7; it printed bw-mock-fail.",
+    },
+}
+DEFAULT_SCENARIO = "ok"
+
+# Kept for backwards compatibility with anything importing the module directly.
+TOOL_COMMAND = SCENARIOS[DEFAULT_SCENARIO]["command"]
+FINAL_TEXT = SCENARIOS[DEFAULT_SCENARIO]["final"]
 
 # OpenCode exposes its shell runner as `shell`; code-mode exposes it as `execute`.
 # The mock prefers these in order so it works in both agent shapes, and falls back to
@@ -32,6 +68,12 @@ FINAL_TEXT = "Tool call completed; the command printed bw-mock-ok."
 PREFERRED_TOOLS = ("shell", "execute", "bash")
 
 LOG_PATH: str | None = None
+ACTIVE_SCENARIO: str = DEFAULT_SCENARIO
+
+
+def scenario() -> dict[str, str]:
+    """Return the scenario the mock is currently playing."""
+    return SCENARIOS[ACTIVE_SCENARIO]
 
 
 def log(event: dict) -> None:
@@ -154,7 +196,7 @@ class Handler(BaseHTTPRequestHandler):
             chosen = choose_tool(tools)
             if chosen is None:
                 log({"event": "respond_final_no_tools"})
-                sse(self, [base_chunk(model, {"role": "assistant", "content": ""}), base_chunk(model, {"content": FINAL_TEXT}), base_chunk(model, {}, "stop")])
+                sse(self, [base_chunk(model, {"role": "assistant", "content": ""}), base_chunk(model, {"content": scenario()["final"]}), base_chunk(model, {}, "stop")])
                 return
             call_id = f"call_{uuid.uuid4().hex[:20]}"
             chunks = [
@@ -169,7 +211,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "type": "function",
                                 "function": {
                                     "name": chosen,
-                                    "arguments": json.dumps({"command": TOOL_COMMAND}),
+                                    "arguments": json.dumps({"command": scenario()["command"]}),
                                 },
                             }
                         ]
@@ -177,14 +219,14 @@ class Handler(BaseHTTPRequestHandler):
                 ),
                 base_chunk(model, {}, "tool_calls"),
             ]
-            log({"event": "respond_tool_call", "call_id": call_id, "tool": chosen, "command": TOOL_COMMAND})
+            log({"event": "respond_tool_call", "call_id": call_id, "tool": chosen, "command": scenario()["command"]})
             sse(self, chunks)
             return
 
         # Phase 2: final answer.
         chunks = [
             base_chunk(model, {"role": "assistant", "content": ""}),
-            base_chunk(model, {"content": FINAL_TEXT}),
+            base_chunk(model, {"content": scenario()["final"]}),
             base_chunk(model, {}, "stop"),
         ]
         log({"event": "respond_final"})
@@ -196,8 +238,16 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8117)
     parser.add_argument("--log", default=None)
+    parser.add_argument(
+        "--scenario",
+        choices=sorted(SCENARIOS),
+        default=DEFAULT_SCENARIO,
+        help="which command to ask the agent to run, and what to claim afterwards",
+    )
     args = parser.parse_args()
+    global ACTIVE_SCENARIO
     LOG_PATH = args.log
+    ACTIVE_SCENARIO = args.scenario
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"[mock] listening on http://127.0.0.1:{args.port}", flush=True)
     try:

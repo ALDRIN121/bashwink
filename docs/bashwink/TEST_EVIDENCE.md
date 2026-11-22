@@ -2,14 +2,84 @@
 
 **Revision under test:** Bashwink working tree at 2026-11-23 (post-remediation);
 foundation = OpenCode `v2.3.2` (`c0ad18b402eb2827fc1ee71c171b1177b3fc02d1`).
-**Environment:** macOS 27.0.1, arm64 (Darwin 27.0.0), Bun 1.4.5 (upstream pins 1.4.4),
-Git 2.54.0. One machine. No Linux or Windows run. **No hosted CI run of any kind.**
+**Environment:** macOS 27.0.1, arm64 (Darwin 27.0.0), **Bun 1.4.4** (the exact pinned
+version — the suite was re-run under it, closing the earlier 1.4.5 drift), Git 2.54.0.
+One machine. No Linux or Windows run. **No hosted CI run of any kind.**
 **Evidence is authoritative only if reproducible at this revision.**
 
-## Remediation evidence (independent review findings F-01 … F-10)
+## Final remediation evidence (2026-11-23)
 
-All defects were **reproduced against the delivered code before being fixed**. The reproduction
-harness and its output are recorded below.
+### Licensing (ADR-009)
+
+| Check | Command / method | Result |
+| --- | --- | --- |
+| FFmpeg is inside `libopentui.dylib` | `nm -gU libopentui.dylib` | **796** FFmpeg symbols, 0 external `libav*` dylib deps |
+| The dylib is embedded in the binary | full-length byte compare at offset | **True**, offset **167,016,147** |
+| No-FFmpeg build is possible | `zig build -Doptimize=ReleaseFast` (no prefix) | `warning: … building without video`, **exit 0** |
+| FFmpeg symbols after rebuild | `nm -gU` | **796 → 0 genuine** (1 regex hit is `_ot_video_set_av_sync_offset`, an OpenTUI API name) |
+| Public video API preserved | `nm -gU \| grep ot_video` | **11** symbols still exported |
+| Exported-symbol delta | `comm -23` on sorted symbol sets | 2,702 → 1,888; **814 removed**, 795 of them `_ff_*` internals |
+| No-FFmpeg library loads and renders | `OPENTUI_LIB_PATH` + TUI start | **no init errors**, TUI rendered (10,792 B) |
+| ABI check passes | `ot_context_abi_version` | version **1** matches |
+| `OPENTUI_LIB_PATH` is honoured | negative control → nonexistent path | `Error: Failed to initialize OpenTUI render library (set by OPENTUI_LIB_PATH)` |
+| Mechanism enables replacement | positive control → re-signed modified dylib | TUI rendered normally |
+| Notices bundle generated | `generate_notices.py --model PM-1 --no-ffmpeg` | 7 components, 30,075 B, **FFmpeg excluded** |
+| Notices bundle (stock) | `generate_notices.py --model PM-1` | 8 components, 58,866 B, FFmpeg + LGPL included |
+| Release licensing gate | `check_license_scope.py --fail-on-open` | **exit 0** — no release blockers |
+
+### Fixture scenarios (previously unexecuted)
+
+| Check | Result |
+| --- | --- |
+| `fixtures/scenario_check.sh` | **8 / 8 pass** |
+| cancellation: killed mid-run (SIGKILL) | 3/5 steps done, **step-5 absent** — no completion claimed |
+| cancellation: partial artifacts visible | yes; fixture resets clean afterwards |
+| rollback: mutate then revert | file **byte-identical** to baseline (`3d29c1f0…`) |
+| rollback: working tree clean after revert | yes |
+
+### Mock provider defect (Part 3 finding)
+
+The mock previously ran `printf 'bw-mock-fail'; exit 7` while its final message claimed
+"the command printed bw-mock-ok" — so the failure path was indistinguishable from success and
+every transcript's `exit=7` was unexplained. Fixed with `--scenario ok|fail`.
+
+| Scenario | Command run | Evidence `exit` | Model's final text |
+| --- | --- | ---: | --- |
+| `ok` | `printf 'bw-mock-ok\n'` | **0** | claims success (matches) |
+| `fail` | `printf 'bw-mock-fail\n'; exit 7` | **7** | **admits exit 7** (matches) |
+
+Both verified end-to-end: **4 / 4 assertions pass**.
+
+### Pinned toolchain
+
+| Check | Result |
+| --- | --- |
+| `bun install --frozen-lockfile` under Bun 1.4.4 | exit 0, no changes |
+| `bun run test:evidence` under Bun 1.4.4 | **47 pass / 0 fail** |
+| `typecheck` under Bun 1.4.4 | exit 0 |
+
+### Full local verification (9 checks)
+
+| # | Command | Exit |
+| ---: | --- | ---: |
+| 1 | `bun run test:evidence` → 47 pass / 0 fail | 0 |
+| 2 | `bun run --cwd packages/bw-evidence typecheck` | 0 |
+| 3 | `python3 scripts/verify_bashwink_docs.py` → `Audit: PASS` | 0 |
+| 4 | `python3 scripts/generate_status_summary.py --check` | 0 |
+| 5 | `python3 scripts/check_license_scope.py --inventory …` | 0 |
+| 6 | `python3 scripts/check_license_scope.py … --fail-on-open` | **0** (was 3) |
+| 7 | `./fixtures/reset.sh --check` | 0 |
+| 8 | `./fixtures/scenario_check.sh` | 0 |
+| 9 | `python3 scripts/generate_notices.py --model PM-0` | 0 |
+
+### CI — still never executed
+
+**No hosted run exists.** Verified concretely: `git remote -v` returns **nothing** (no remote
+is configured) and `gh auth status` reports *"You are not logged into any GitHub hosts."*
+Every workflow step was validated locally instead (see the table above), but **local success
+is not evidence that CI passes**. BW-006 stays In progress.
+
+## Recorder defect remediation (F-02 / F-03 / F-08)
 
 | Finding | Command | Observed before fix | Observed after fix |
 | --- | --- | --- | --- |

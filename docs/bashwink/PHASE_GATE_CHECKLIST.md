@@ -21,13 +21,17 @@ Last evaluated 2026-11-23 after the independent-review remediation.
       `ctx.location.directory`. Accepted limitations in ADR-002 (hook ordering is
       load-bearing) and ADR-003 (no branding seam → wrapper CLI). Source-verified but not
       exercised: `event.subscribe`, `permission.hook("evaluate")`.
-- [ ] **No unresolved distribution-blocking license or branding concerns.**
-      **NOT MET.** The root `LICENSE` (MIT) and the `THIRD_PARTY_NOTICES.md` findings record
-      exist. What is missing: the *generated* notices bundle with copied license texts, the
-      OpenTUI/FFmpeg distribution artifacts (nine license files, FFmpeg 9.0.2 source/build
-      configuration, an LGPL-2.1 §6 relinking route), and legal sign-off. The single
-      release-blocking decision (`@opentui/core-darwin-arm64`) is recorded `OPEN` and is
-      enforced by `scripts/check_license_scope.py --fail-on-open`.
+- [x] **No unresolved distribution-blocking license or branding concerns.**
+      **MET** — resolved by ADR-009, not by reinterpretation. Two models are defined: PM-0
+      (publish the plugin only; no native code redistributed, zero FFmpeg exposure) and PM-1
+      (bundle a binary built from pinned OpenTUI `v0.8.4` **without FFmpeg**, verified to
+      build, load, pass the ABI check and render the TUI, with 796 FFmpeg symbols reduced to
+      0 genuine ones). `scripts/generate_notices.py` emits a real notices bundle per model and
+      fails if a license file is missing. Licensing release gate:
+      `check_license_scope.py --fail-on-open` → exit 0, no release blockers.
+      Residual: the no-FFmpeg library is not byte-reproducible (Zig embeds build paths), and
+      counsel review is still advisable — neither blocks the gate. See
+      `LICENSING_DETERMINATION.md`.
 
 **Demo:** `create_fixtures.sh` → `reset.sh --check` → build → run against the mock provider
 → read `evidence.jsonl` → verify the chain → `upstream_sync.py` → read the verdict.

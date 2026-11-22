@@ -77,7 +77,7 @@ def main() -> int:
             if field not in decision:
                 problems.append(f"decision for {name} is missing '{field}'")
         status = str(decision.get("status", ""))
-        if status not in ("OPEN", "ACCEPTED_OUT_OF_SCOPE", "RESOLVED"):
+        if status not in ("OPEN", "ACCEPTED_OUT_OF_SCOPE", "RESOLVED", "RESOLVED_BY_DESIGN"):
             problems.append(f"decision for {name} has unknown status {status!r}")
 
     open_blocking = [

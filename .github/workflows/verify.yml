@@ -113,6 +113,11 @@ jobs:
             echo "FAIL: failed-test fixture passed at baseline; it no longer reproduces a bug"
             exit 1
           fi
+      # Cancellation and rollback were previously only created-and-reset, never exercised.
+      # This asserts the gate criterion directly: a killed run must not claim completion,
+      # and a revert must be byte-identical.
+      - name: Cancellation and rollback scenarios
+        run: ./fixtures/scenario_check.sh
 
   secret-scan:
     name: secret scan

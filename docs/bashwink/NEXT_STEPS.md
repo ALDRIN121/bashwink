@@ -1,84 +1,109 @@
 # Bashwink — Next Steps
 
-**Where we are:** Phase 0 remediation after the independent review. **7 of 9 tasks Done,
-2 In progress. The gate still FAILS** — one of four conditions is unmet.
+**Where we are:** Phase 0, after the final remediation. **8 of 9 tasks Done, 1 In progress.
+3 of 4 gate conditions met — the gate still FAILS.**
 
 **Do not begin Phase 1.**
 
-## Closed in this remediation
+## The single remaining blocker: CI has never run (BW-006)
 
-| Finding | Resolution |
+Everything else in Phase 0 is now evidence-backed. This one is not an engineering problem —
+it is an authorisation problem.
+
+**Concretely verified state:**
+
+```
+$ git remote -v
+(no output — zero remotes configured)
+$ gh auth status
+You are not logged into any GitHub hosts. To log in, run: gh auth login
+```
+
+So CI *cannot* execute until you create a remote and authenticate. Every workflow step has
+been run locally instead (47 tests, typecheck, docs, license scope, fixtures, cancellation and
+rollback scenarios, secret-scan logic) — but **local success is not evidence that CI passes**.
+
+### Exact actions required from you
+
+1. **Authenticate the GitHub CLI** (or tell me the remote URL to add):
+   ```bash
+   gh auth login
+   ```
+2. **Decide the remote target.** No `bashwink` repository exists under the authenticated
+   account. Either:
+   - create one: `gh repo create <name> --private --source=. --remote=origin`, or
+   - give me an existing URL to add as `origin`.
+3. **Authorise the push.** Nothing has been pushed and `origin` does not exist. On your word:
+   ```bash
+   git remote add origin <url>
+   git push -u origin main
+   ```
+4. Watch the run and capture the URL:
+   ```bash
+   gh run list --workflow=verify.yml
+   gh run watch
+   ```
+
+I will not create a remote or push without that explicit approval. Once a run exists, BW-006
+closes and — if both platform legs pass — the Phase 0 gate becomes passable.
+
+### Risk that the first run will fail
+
+Stated plainly so it is not a surprise: `fixtures/create_fixtures.sh` has **only ever run on
+macOS**. Git behaviour, `shasum` vs `sha256sum`, and `sed -i` differ on Ubuntu. Expect the
+first Ubuntu fixtures leg to need a fix; that is exactly why the Linux leg exists.
+
+## Secondary gap: single-platform evidence
+
+Everything Bashwink-specific was verified on macOS arm64. The Linux leg exists only as
+workflow YAML. Running CI resolves this at the same time.
+
+## Closed across the two remediations
+
+| Item | Resolution |
 | --- | --- |
-| F-01 retired `macos-14` runner | Replaced with `macos-15`; retirement confirmed from GitHub's changelog (2026-11-02) |
+| F-01 retired `macos-14` runner | → `macos-15`; retirement confirmed from GitHub's changelog (2026-11-02) |
 | F-02 object/array payload bypass | Bounded on the serialised form, in UTF-8 bytes; 6 regression tests |
-| F-03 `note`/raw redaction bypass | Single write boundary sanitises every field; 5 regression tests |
-| F-04 caret peer, unvalidated packaging | Exact `2.3.2`; clean registry install verified; plugin shape matches the real `Plugin.define` |
-| F-05 stale docs/totals | Status block generated from the register; stale `LICENSE` and tally claims corrected |
-| F-06 zero commits, no ADR owner | Owner assigned; baseline commit created; review decisions recorded in `DECISIONS.md` |
-| F-08 silent evidence degradation | Resume verifies the chain; `health` and `verify().limitations` surface the truth |
+| F-03 `note`/raw redaction bypass | One write boundary sanitises every field; 5 regression tests |
+| F-04 caret peer, unvalidated packaging | Exact `2.3.2`; clean registry install; plugin shape matches real `Plugin.define` |
+| F-05 stale docs/totals | Status block generated from the register; stale claims corrected |
+| F-06 zero commits, no ADR owner | Owner assigned; baseline commit; review decisions recorded |
+| F-07 LGPL needs a strategy | **ADR-009**: two distribution models; no-FFmpeg build proven; notices generated; release gate exits 0 |
+| F-08 silent evidence degradation | Resume verifies the chain; `health` and `verify().limitations` surface it |
 | F-09 CI narrower than upstream | Separate `upstream-compat.yml`; a `scope` job states what CI does and does not prove |
-
-## Remaining blockers (gate)
-
-### 1. FFmpeg/LGPL distribution work — BW-005
-
-The *assessment* is complete and machine-enforced (`DEPENDENCY_LICENSES.json`,
-`check_license_scope.py`: 48/48 entries decided). What does not exist:
-
-1. **The generated notices bundle** — copied `LICENSE`/`NOTICE` text for every shipped
-   dependency, including packages whose license text is missing from the installed tree and
-   currently recorded `OPEN`.
-2. **The OpenTUI/FFmpeg artifacts** — the nine license files verbatim, the bundled FFmpeg
-   9.0.2 version and matching source/build configuration, and a **relinking/modification
-   route** adequate for LGPL-2.1 §6.
-3. **Legal review.** Copying license texts is a prerequisite, not a compliance strategy.
-   `check_license_scope.py --fail-on-open` exits 3 precisely because this is open.
-
-### 2. CI has still never run — BW-006
-
-The configuration is now correct as far as static review can tell: valid runner labels,
-license-scope gate, secret-scan positive control, scope statement, root typecheck. But **no
-hosted run exists**. To close it:
-
-- Push to a branch (needs owner approval — nothing has been pushed) or run `act` locally.
-- Confirm `fixtures/create_fixtures.sh` works on `ubuntu-latest`; only macOS has ever run it.
-- Capture the run URL, commit SHA and per-job outcomes.
-
-Until then `verify.yml` is unexecuted YAML and no CI claim may be made.
-
-### 3. Single-platform evidence
-
-Everything Bashwink-specific was verified on macOS arm64. The Linux leg exists only as workflow
-YAML. Either run it, or declare macOS arm64 the sole supported platform in the README.
+| — | **Mock provider defect**: always ran `exit 7` while claiming success. Now `--scenario ok\|fail`, honest in both |
+| — | **Fixture scenarios**: cancellation and rollback executed for the first time (8/8) |
+| — | **Bun drift**: suite re-run under pinned 1.4.4 (47/47) |
 
 ## Not gate blockers, but weak
 
-1. **Bun drift** — upstream pins `1.4.4`; all local work ran on `1.4.5`. CI pins 1.4.4, so the
-   first real CI run will also settle this.
-2. **`@opencode/plugin` runtime** — the clean registry install pulled 259 packages and
-   typechecked, but the plugin was never executed inside a runtime sourced from the registry.
-   The runtime binary still comes from the local upstream clone.
-3. **Fixture coverage** — only `failed-test` and `one-file-edit` have their scenarios
-   exercised; `cancellation` and `rollback` are created and reset but unproven.
+1. **No-FFmpeg library is not byte-reproducible.** Two clean builds differ in hash because Zig
+   embeds 194 absolute paths; size and symbol profile are identical. A release must publish the
+   recipe plus a symbol-profile assertion, or wait for path normalisation.
+2. **OpenTUI's own native tests** were not run against the no-FFmpeg build — only a TUI smoke
+   test.
+3. **`@opencode/plugin` runtime** — the registry install typechecked, but the plugin was never
+   executed inside a runtime sourced from the registry; the binary still comes from the local
+   clone.
 4. **Dependency vulnerabilities** — `bun audit` has still never been run.
-5. **Inventory regeneration** — `DEPENDENCY_LICENSES.json` is a snapshot of one tree and is not
-   regenerated by `upstream_sync.py`. Add that before the next pin move.
+5. **Inventory regeneration** — `DEPENDENCY_LICENSES.json` is a snapshot and is not regenerated
+   by `upstream_sync.py`.
+6. **No legal review.** The determination removes known LGPL exposure; it is not legal advice.
 
 ## Then, and only then
 
-1. **Phase 1, first task: the wrapper CLI (ADR-003).** Rules already fixed: own
-   `--version`/`--help`, forward everything else, set `OPENCODE_CONFIG_DIR`, stage the plugin
-   directory contents explicitly (not just the config list), exec and propagate exit codes.
-2. **Task/run taxonomy on evidence entries** — Phase 1 requires task and run identifiers;
-   entries currently carry only call/session IDs.
+1. **Phase 1, first task: the wrapper CLI (ADR-003).** Own `--version`/`--help`, forward
+   everything else, set `OPENCODE_CONFIG_DIR`, stage the plugin directory contents explicitly
+   (config alone does not control loading), exec and propagate exit codes.
+2. **Task/run taxonomy on evidence entries** — entries currently carry only call/session IDs.
 3. **Concurrency control for the evidence log** (ADR-004) before Phase 4's parallel worktrees.
-4. **Publish a per-session head hash** so tail truncation becomes detectable (ADR-007 reversal
-   condition).
+4. **Publish a per-session head hash** so tail truncation becomes detectable.
 
 ## Housekeeping
 
-- The baseline commit exists locally. **Nothing has been pushed** and nothing will be without
-  explicit approval.
+- The baseline commit exists locally. **Nothing has been pushed.**
 - The pinned OpenCode clone lives at `~/Developer/bashwink-upstream/opencode`, outside this
   repository — deliberate, so 2.7 GB of dependencies never enter Git.
+- Upstream OpenTUI source for the no-FFmpeg build: clone at `v0.8.4`
+  (`d4a2af24ba50636da5f222367f91746a1bf89644`); recipe in `LICENSING_DETERMINATION.md`.
 - The 3 upstream bash-3.2 failures stay unpatched by design (BW-002). CI must have bash ≥ 4.

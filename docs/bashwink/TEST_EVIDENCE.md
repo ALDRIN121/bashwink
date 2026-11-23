@@ -5,10 +5,11 @@ OpenCode `v2.3.2` (`c0ad18b402eb2827fc1ee71c171b1177b3fc02d1`).
 **Environment:** macOS 27.0.1, arm64 (Darwin 27.0.0), **Bun 1.4.4** (the exact pinned
 version — the suite was re-run under it, closing the earlier 1.4.5 drift), Git 2.54.0.
 Phase 0 and Phase 1 CI evidence is hosted; **Phase 2's evidence below is hosted** at
-`0fd50b0`, and re-confirmed at the evidence commit `394b02f`
-([run 45150430237](https://github.com/ALDRIN121/bashwink/actions/runs/45150430237)) — see
-"Phase 2 hosted CI" in that section. Commits after `394b02f` change documentation only; no
-code claim in this register depends on them.
+`0fd50b0` and re-confirmed at `394b02f`
+([45150430237](https://github.com/ALDRIN121/bashwink/actions/runs/45150430237)) and at the
+current HEAD `c731ab6` ([45151661558](https://github.com/ALDRIN121/bashwink/actions/runs/45151661558),
+13/13 green). Commits after `394b02f` change documentation only; no code claim in this
+register depends on them.
 **Evidence is authoritative only if reproducible at this revision.**
 
 ## Phase 2 evidence (2026-11-23) — runtime reliability and BW-055
@@ -89,8 +90,12 @@ default. Fixed in `0fd50b0` by declaring `@opencode/cli` as a trusted dependency
 throwaway probe manifest. It is a genuinely CI-only defect — the local install had already run
 its postinstall — and it is recorded here rather than quietly amended.
 
-Re-run at `394b02f` ([45150430237](https://github.com/ALDRIN121/bashwink/actions/runs/45150430237)):
-**13/13 jobs success**, `opencode v2.3.2` on both platforms, runtime-health 17/17 twice.
+Re-run at `394b02f` ([45150430237](https://github.com/ALDRIN121/bashwink/actions/runs/45150430237))
+and again at HEAD `c731ab6` ([45151661558](https://github.com/ALDRIN121/bashwink/actions/runs/45151661558)):
+**13/13 jobs success**, `opencode v2.3.2` on both platforms, runtime-health 17/17 twice. On
+the `c731ab6` attempt the `evidence (macos-15)` job was reported `cancelled` with no steps and
+no runner assigned — an infrastructure event, not a test result — and `gh run rerun --failed`
+produced a full green run. Recorded because "cancelled with no runner" is not a pass.
 
 | Job | ubuntu-latest | macos-15 |
 | --- | --- | --- |

@@ -4,10 +4,13 @@
 Phase 1 **complete and gate-passed** — 10/10 tasks, 11/11 CI jobs green on `ubuntu-latest`
 and `macos-15` at `ad9d44e` ([run 45129207277](https://github.com/ALDRIN121/bashwink/actions/runs/45129207277)),
 and **revalidated** after the silent-plugin-load investigation (ADR-010).
-Phase 2 **in progress** — BW-055 done; 252 tests; **13/13 CI jobs green on `ubuntu-latest` and
-`macos-15` at `0fd50b0`** ([run 45148495146](https://github.com/ALDRIN121/bashwink/actions/runs/45148495146)),
-including the new `runtime-health` job on the real OpenCode binary. Phase 2's gate has not been
-evaluated.
+Phase 2 **in progress** — BW-055 done; **335 tests**; the runtime-health job runs on the real
+OpenCode binary on both platforms. Phase 2's gate has **not** been evaluated.
+**LLM integration (BW-091) is implemented and verified but is not a register task** — the
+90-task register has no provider/model entry, so it is recorded here and in
+`LLM_INTEGRATION_AUDIT.md` rather than being forced onto an unrelated task. Adding it to the
+register is a planning decision, not something this increment should decide by editing
+`Status`.
 **Canonical per-task register:** `BASHWINK_TASKS_90.csv`.
 **The block below is generated** by `scripts/generate_status_summary.py` — do not hand-edit
 it. `--check` fails if it drifts from the register.
@@ -27,6 +30,31 @@ it. `--check` fails if it drifts from the register.
 | **Total** | **90** | **20** | **0** | **0** | **70** |
 
 <!-- END GENERATED:status -->
+
+## LLM integration (BW-091) — implemented, not a phase-gate task
+
+Real-model coding works end to end through the pinned runtime. What Bashwink adds is narrow
+and load-bearing: provider configuration without storing a key, model selection and switching,
+and per-call model attribution in the evidence chain.
+
+| Capability | State | Where |
+| --- | --- | --- |
+| Configure an OpenAI/Anthropic-compatible provider without persisting a key | **Done, tested** | `auth add`, `providers.ts` |
+| Per-model wire protocol on a mixed provider | **Done, tested** | `--model id:protocol` |
+| Credential status with no value disclosed | **Done, tested** | `auth status`, `auth check` |
+| Model list / default selection / refusal of unknown models | **Done, tested** | `model list\|use\|current` |
+| Pre-flight credential failure naming the variable | **Done, tested** | `main.ts` pre-flight |
+| Model attribution per tool call, per session | **Done, tested on the real binary** | `bw-evidence` plugin |
+| Model usage table in the export | **Done, tested** | `evidence export` |
+| Clean install outside the checkout | **Done, verified** | `scripts/build_alpha.sh` |
+| A second independently credentialed provider | **NOT verified — BLOCKED** | see TEST_EVIDENCE matrix |
+| Enforced filesystem boundary | **NOT implemented (BW-059)** | see risk note |
+
+**Alpha distribution risk:** `allowedPaths` in a TaskContract is recorded and displayed, and
+**nothing enforces it**. An alpha user running the agent against a real repository is relying on
+model judgement plus the runtime's permission prompts. Every real-model test in this increment
+used a disposable workspace for that reason. Recommendation: enforce BW-059, or an equivalent
+boundary, before distributing an alpha to anyone outside this machine.
 
 ## Phase 0 detail
 

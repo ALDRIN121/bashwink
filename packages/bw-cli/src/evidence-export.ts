@@ -54,6 +54,25 @@ export interface ToolEventSummary {
   readonly exit?: number
   readonly outputDigest?: string
   readonly truncated?: boolean
+  /**
+   * `provider/model` that served this call, when the runtime reported one.
+   *
+   * Absent means "not attributed", which is a different fact from "the configured model":
+   * a call made before the plugin observed a `session.step.started` event has no model,
+   * and filling in the configured default here would fabricate attribution.
+   */
+  readonly model?: string
+}
+
+/** Per-model tally: how much of the run each model actually produced. */
+export interface ModelUsage {
+  readonly model: string
+  /** Tool calls attributed to this model (`before` entries). */
+  readonly toolCalls: number
+  /** Times the runtime reported this model serving a step. */
+  readonly steps: number
+  /** True when the runtime reported switching to or away from this model mid-run. */
+  readonly switched: boolean
 }
 
 export interface EvidenceExport {
@@ -65,6 +84,8 @@ export interface EvidenceExport {
   readonly generatedAt: string
   readonly tasks: readonly TaskReport[]
   readonly toolEvents: readonly ToolEventSummary[]
+  /** Models observed serving this run, and how much work each did. Empty when unattributed. */
+  readonly models: readonly ModelUsage[]
   /** Aggregate: `pass` only when every task is `verified` AND every declared check passed. */
   readonly verdict: "pass" | "fail" | "incomplete"
   readonly summary: {
@@ -137,33 +158,54 @@ export function reportChecks(
 export function readToolEvents(
   file: string,
   unassignedReason = "event recorded before a task was selected",
-): { events: ToolEventSummary[]; limitations: string[] } {
+): {
+  events: ToolEventSummary[]
+  selections: { seq: number; at: string; model: string; source: string }[]
+  limitations: string[]
+} {
   const limitations: string[] = []
   if (!existsSync(file))
     return {
       events: [],
+      selections: [],
       limitations: [`no evidence log at ${file}; the run produced no recorded tool events`],
     }
   const lines = readFileSync(file, "utf8")
     .split("\n")
     .filter((line) => line.trim() !== "")
   const events: ToolEventSummary[] = []
+  const selections: { seq: number; at: string; model: string; source: string }[] = []
   for (const [index, line] of lines.entries()) {
     try {
       const entry = JSON.parse(line) as {
         seq?: number
         at?: string
-        phase?: "before" | "after"
-        call?: { id?: string; tool?: string; taskID?: string }
+        phase?: "before" | "after" | "model" | "boot"
+        call?: { id?: string; tool?: string; sessionID?: string; taskID?: string }
         payload?: {
           status?: "completed" | "error"
           exit?: number
           outputDigest?: string
           truncated?: boolean
+          model?: { id?: string; providerID?: string; variant?: string }
         }
+      }
+      // Model and boot entries are counted separately; a tool-event summary that included
+      // them would overstate how many tools the agent actually ran.
+      if (entry.phase === "model") {
+        const model = entry.payload?.model
+        if (model?.id !== undefined && model.providerID !== undefined)
+          selections.push({
+            seq: Number(entry.seq ?? index + 1),
+            at: String(entry.at ?? ""),
+            model: `${model.providerID}/${model.id}`,
+            source: "model-selected",
+          })
+        continue
       }
       if (entry.phase !== "before" && entry.phase !== "after") continue
       const taskId = entry.call?.taskID
+      const served = entry.payload?.model
       events.push({
         seq: Number(entry.seq ?? index + 1),
         at: String(entry.at ?? ""),
@@ -177,6 +219,9 @@ export function readToolEvents(
           ? {}
           : { outputDigest: entry.payload.outputDigest }),
         ...(entry.payload?.truncated === undefined ? {} : { truncated: entry.payload.truncated }),
+        ...(served?.id === undefined || served.providerID === undefined
+          ? {}
+          : { model: `${served.providerID}/${served.id}` }),
       })
     } catch {
       limitations.push(
@@ -189,7 +234,7 @@ export function readToolEvents(
     limitations.push(
       `${unassigned} of ${events.length} tool event(s) are unassigned (${unassignedReason}); they are listed, not attributed to a task`,
     )
-  return { events, limitations }
+  return { events, selections, limitations }
 }
 
 export interface BuildOptions {
@@ -204,8 +249,31 @@ export interface BuildOptions {
 /** Assemble the export. Pure read: nothing here mutates the store. */
 export function build(options: BuildOptions): EvidenceExport {
   const { store, plan } = options
-  const { events, limitations } = readToolEvents(options.evidenceFile)
+  const { events, selections, limitations } = readToolEvents(options.evidenceFile)
   const extraLimitations = [...limitations]
+
+  // Aggregate model usage: one row per model that actually served work.
+  const usage = new Map<string, { toolCalls: number; steps: number; switched: boolean }>()
+  const touch = (model: string) => {
+    const existing = usage.get(model)
+    if (existing !== undefined) return existing
+    const created = { toolCalls: 0, steps: 0, switched: false }
+    usage.set(model, created)
+    return created
+  }
+  for (const selection of selections) {
+    touch(selection.model).steps += 1
+    if (selections.length > 1) touch(selection.model).switched = true
+  }
+  for (const event of events)
+    if (event.phase === "before" && event.model !== undefined) touch(event.model).toolCalls += 1
+  const models: ModelUsage[] = [...usage.entries()]
+    .map(([model, counters]) => ({ model, ...counters }))
+    .sort((a, b) => a.model.localeCompare(b.model))
+  if (models.length === 0)
+    extraLimitations.push(
+      "no model attribution recorded; tool events cannot be attributed to a provider/model",
+    )
 
   const tasks: TaskReport[] = plan.tasks.map((task) => {
     const checks = reportChecks(task.checks, store.observations(task.id))
@@ -251,6 +319,7 @@ export function build(options: BuildOptions): EvidenceExport {
     generatedAt: (options.now ?? (() => new Date()))().toISOString(),
     tasks,
     toolEvents: events,
+    models,
     verdict,
     summary: {
       tasks: tasks.length,
@@ -311,6 +380,20 @@ export function toMarkdown(report: EvidenceExport): string {
       const exit = check.exitCode === undefined ? "—" : String(check.exitCode)
       lines.push(`| \`${check.id}\` ${check.description} | ${glyph[check.outcome]} | ${exit} |`)
     }
+    lines.push("")
+  }
+
+  if (report.models.length > 0) {
+    lines.push(
+      "## Models",
+      "",
+      "| model | tool calls | steps served | switched |",
+      "| --- | ---: | ---: | --- |",
+    )
+    for (const model of report.models)
+      lines.push(
+        `| \`${model.model}\` | ${model.toolCalls} | ${model.steps} | ${model.switched ? "yes" : "no"} |`,
+      )
     lines.push("")
   }
 

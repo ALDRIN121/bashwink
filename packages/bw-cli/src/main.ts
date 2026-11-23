@@ -19,6 +19,7 @@ import {
   ensurePaths,
   environmentFor,
   paths,
+  resolvePluginDirectory,
   stagePlugins,
   writeConfig,
 } from "./paths.js"
@@ -31,6 +32,8 @@ import {
   runtimeLogHint,
 } from "./run-health.js"
 import {
+  runAuthCommand,
+  runModelCommand,
   runContractCommand,
   runDoctorCommand,
   runEvidenceCommand,
@@ -40,15 +43,36 @@ import {
 } from "./commands.js"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { existsSync } from "node:fs"
+import { preflightCredential, readRuntimeConfig } from "./providers.js"
+
+/** Value of `--flag value` or `--flag=value`, or undefined. First occurrence wins. */
+function flagOf(argv: readonly string[], flag: string): string | undefined {
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index]
+    if (value === flag) return argv[index + 1]
+    if (value?.startsWith(`${flag}=`) === true) return value.slice(flag.length + 1)
+  }
+  return undefined
+}
+
+/** Directory of this module. Resolved from the module, never `process.cwd()`. */
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
 
 /**
- * Repository root, used to point staged plugins at their real source.
+ * Repository root in a source checkout; `undefined` when the CLI is installed as a package.
  *
- * Resolved from this module's location rather than `process.cwd()`, because the wrapper is
- * routinely run from inside the user's project — which is not where Bashwink's own packages
- * live.
+ * The wrapper is routinely run from inside the user's project, which is not where
+ * Bashwink's own packages live, so this must not be derived from the working directory.
+ * But it also must not be *assumed*: in `node_modules/@bashwink/cli/src`, three levels up
+ * is `node_modules`, which is not a repository root.
  */
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..")
+const REPO_ROOT = (() => {
+  const candidate = path.resolve(MODULE_DIR, "..", "..", "..")
+  return existsSync(path.join(candidate, "packages", "bw-evidence", "package.json"))
+    ? candidate
+    : undefined
+})()
 
 /** Flags this wrapper handles itself. Everything else is forwarded. */
 const OWNED_FLAGS = new Set(["--version", "-v", "--help", "-h"])
@@ -117,6 +141,18 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
       if (result.stderr !== undefined) err(result.stderr)
       return { exitCode: result.exitCode, handled: true }
     }
+    case "auth": {
+      const result = runAuthCommand(rest)
+      if (result.stdout !== "") out(result.stdout)
+      if (result.stderr !== undefined) err(result.stderr)
+      return { exitCode: result.exitCode, handled: true }
+    }
+    case "model": {
+      const result = runModelCommand(rest)
+      if (result.stdout !== "") out(result.stdout)
+      if (result.stderr !== undefined) err(result.stderr)
+      return { exitCode: result.exitCode, handled: true }
+    }
     case "resume": {
       const result = runResumeCommand(rest)
       if (result.stdout !== "") out(result.stdout)
@@ -154,13 +190,63 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
   const resolved = paths()
   ensurePaths(resolved)
 
+  // Pre-flight the credential for an explicitly requested model, before spawning.
+  //
+  // The runtime's own failure for a missing key is `Invalid 'Authorization' header or
+  // token.` — true, but it names the header rather than the environment variable, and it
+  // arrives after a server has started and a session created. Bashwink resolved which
+  // variable the provider declared, so it owes the user that sentence instead.
+  //
+  // Only an explicit `--model`/`-m` is checked. A default model resolved inside the runtime
+  // is the runtime's business; re-deriving it here would duplicate its resolution and could
+  // disagree with it.
+  const requestedModel = flagOf(argv, "--model") ?? flagOf(argv, "-m")
+  if (requestedModel !== undefined) {
+    try {
+      const preflight = preflightCredential(readRuntimeConfig(resolved.config), requestedModel)
+      if (preflight !== undefined && !preflight.ok) {
+        err(preflight.message)
+        return { exitCode: 1, handled: true }
+      }
+    } catch {
+      // A config this module cannot read is reported by `doctor` and by the runtime itself.
+      // Failing here would turn a diagnostic nicety into a new failure mode.
+    }
+  }
+
   // Evidence collection is on by default. `BASHWINK_EVIDENCE=off` is the deliberate optional
   // mode ADR-002 allows: a caller may run the runtime without the recorder, and the run is
   // then recorded as `disabled` rather than being silently indistinguishable from a health
   // problem. Everything else is expected to record, and a missing boot record fails the run.
   const evidenceEnabled = (process.env["BASHWINK_EVIDENCE"] ?? "on") !== "off"
   const runId = newRunId()
-  const pluginDirectory = path.join(REPO_ROOT, "packages", "bw-evidence")
+  // Two layouts are supported: the source checkout (`packages/bw-evidence` beside this
+  // package) and an installed CLI (`node_modules/@bashwink/evidence`). Both are tried, and
+  // an honest miss refuses the run instead of starting one that cannot record.
+  const pluginDirectory = (() => {
+    try {
+      return resolvePluginDirectory([
+        // Built install: `lib/evidence` beside the bundle.
+        path.join(MODULE_DIR, "evidence"),
+        // Installed layout: `@bashwink/evidence` beside `@bashwink/cli` in node_modules.
+        path.join(MODULE_DIR, "..", "..", "evidence"),
+        // Source layout: the sibling workspace package.
+        path.join(MODULE_DIR, "..", "..", "bw-evidence"),
+        ...(REPO_ROOT === undefined ? [] : [path.join(REPO_ROOT, "packages", "bw-evidence")]),
+        ...(REPO_ROOT === undefined
+          ? []
+          : [path.join(REPO_ROOT, "node_modules", "@bashwink", "evidence")]),
+      ])
+    } catch (error) {
+      if (error instanceof PluginEntryError) {
+        err(`evidence plugin cannot be located: ${error.message}`)
+        err("refusing to start a run whose evidence would be silently absent.")
+        return undefined
+      }
+      throw error
+    }
+  })()
+  if (pluginDirectory === undefined) return { exitCode: 3, handled: true }
   let staged: ReturnType<typeof stagePlugins> = []
   try {
     // Stage the plugin directory contents before every run (ADR-002 constraint 2). Without

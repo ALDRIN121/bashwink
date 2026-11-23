@@ -13,15 +13,26 @@ import { PINNED_RUNTIME_VERSION } from "./runtime.js"
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
+/**
+ * Read the version, from the closest build manifest that exists.
+ *
+ * Two layouts: the source checkout (a sibling `package.json`) and a built bundle (a
+ * `version.json` written by `scripts/build_alpha.sh`, because a single-file bundle has no
+ * package manifest beside it). Neither is a hardcoded constant, so a release bump cannot
+ * leave `--version` behind.
+ */
 function readVersion(): string {
-  try {
-    const manifest = JSON.parse(readFileSync(path.join(here, "..", "package.json"), "utf8")) as {
-      version?: string
+  const manifest = path.join(here, "..", "package.json")
+  const stamped = path.join(here, "version.json")
+  for (const file of [stamped, manifest]) {
+    try {
+      const parsed = JSON.parse(readFileSync(file, "utf8")) as { version?: string }
+      if (parsed.version !== undefined) return parsed.version
+    } catch {
+      continue
     }
-    return manifest.version ?? "0.0.0-unknown"
-  } catch {
-    return "0.0.0-unknown"
   }
+  return "0.0.0-unknown"
 }
 
 export const VERSION = readVersion()
@@ -49,6 +60,13 @@ COMMANDS
   plan show [--json]        render the current plan
   plan approve --by <name>  approve the current plan (required before edits)
   plan task <id> <status>   transition a task through the state machine
+  auth status               providers, their credential route and whether it resolves
+  auth add <id> ...         add an OpenAI/Anthropic-compatible provider (no key stored)
+  auth check <id>           can this provider authenticate right now? (exit 1 if not)
+  auth remove <id>          remove a provider and any default model pointing at it
+  model list                models the config declares, with the default marked
+  model use <provider>/<m>  set the default model for every run
+  model current             print the default model
   evidence export [--json]  export what actually ran, including checks that did not run
   evidence status [--json]  per-run record: did the evidence plugin initialise?
   contract new              create the task contract from the current plan
@@ -66,8 +84,29 @@ VERSION AND PATHS
   Data:    ${pathsHelp("data")}
   Override everything at once with BASHWINK_HOME=/some/dir
 
+PROVIDERS AND MODELS
+  Inference, streaming and tool calls are the pinned runtime's job; Bashwink configures it.
+  A provider is declared once in the config the runtime reads, and the key is never stored:
+
+    bashwink auth add commandcode --name CommandCode \
+      --base-url https://api.commandcode.ai/provider/v1 \
+      --env COMMANDCODE_API_KEY \
+      --model claude-sonnet-5:anthropic:200000:8192 \
+      --model gpt-6.1-sol:openai:200000:8192
+    bashwink model use commandcode/claude-sonnet-5
+    bashwink run --auto "fix the failing test"
+
+  Models of different wire protocols on one provider get a per-model package; the protocol
+  suffix above (":anthropic", ":openai") is how you declare that. Getting it wrong produces
+  an endpoint-shape error on the first request, not at startup, which is why it is explicit.
+
+  --model overrides the default for one run; --session continues a session, including
+  across a model switch. No key is ever written by Bashwink: --env names the variable the
+  runtime reads and --key-file names a 0600 file it substitutes at run time.
+
 ENVIRONMENT
   BASHWINK_HOME             relocate all config/data/cache/state under one directory
+  BASHWINK_PLUGIN_DIR       stage this evidence plugin directory instead of resolving one
   BASHWINK_OPENCODE_BIN     use this OpenCode binary instead of resolving one
   BASHWINK_EVIDENCE_DIR     where the tool-event log is written
   BASHWINK_EVIDENCE=off     run without the evidence plugin (explicit, unverified mode)

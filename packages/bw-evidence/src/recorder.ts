@@ -79,7 +79,7 @@ export function truncateBytes(text: string, maxBytes: number): string {
  * never happen. Before this phase existed, a plugin that failed to load and a session that
  * simply called no tools produced the same thing: an empty log.
  */
-export type ToolPhase = "boot" | "before" | "after"
+export type ToolPhase = "boot" | "model" | "before" | "after"
 
 export interface ToolCallRef {
   /** OpenCode tool call id, e.g. `call_...`. */
@@ -101,6 +101,19 @@ export interface ToolCallRef {
   readonly unassignedReason?: string
 }
 
+/**
+ * The model that produced a request, as the runtime reported it.
+ *
+ * Recorded rather than inferred: the wrapper knows what it *asked* for, but only the
+ * runtime knows what actually served the step. Those are different claims, and an evidence
+ * log that conflates them cannot answer "which model made this edit?".
+ */
+export interface ModelRef {
+  readonly id: string
+  readonly providerID: string
+  readonly variant?: string
+}
+
 export interface EvidencePayload {
   /** Tool input after redaction/truncation. */
   readonly input?: unknown
@@ -120,6 +133,8 @@ export interface EvidencePayload {
   readonly truncated?: boolean
   /** Free-form notes from the caller (e.g. why a call was denied). */
   readonly note?: string
+  /** Model that served this call, as reported by the runtime. Absent when unknown. */
+  readonly model?: ModelRef
 }
 
 export interface EvidenceEntry {
@@ -237,6 +252,15 @@ export class EvidenceRecorder {
   private seq = 0
   private prevHash = GENESIS
   /**
+   * Model per session, filled from runtime events.
+   *
+   * Keyed by session because one plugin process can serve several sessions, and a single
+   * "current model" would attribute a concurrent session's edits to the wrong model. A
+   * session with no recorded model yields entries with no `model` field — an honest gap,
+   * never a default.
+   */
+  private readonly models = new Map<string, ModelRef>()
+  /**
    * Set when the recorder could not establish a trustworthy chain. Bashwink must never
    * present a log it could not verify as "verified" (independent review F-08).
    */
@@ -319,6 +343,15 @@ export class EvidenceRecorder {
       if (n.truncated) out.truncated = true
     }
     if (payload.exit !== undefined) out.exit = payload.exit
+    if (payload.model !== undefined) {
+      // A model id is not a secret, but it is caller-supplied text and is bounded like one.
+      const safe = redact(payload.model) as Record<string, unknown>
+      out.model = {
+        id: truncateBytes(String(safe.id ?? ""), 128),
+        providerID: truncateBytes(String(safe.providerID ?? ""), 128),
+        ...(safe.variant === undefined ? {} : { variant: truncateBytes(String(safe.variant), 64) }),
+      }
+    }
     if (payload.note !== undefined) {
       // Redact, then bound. A note is short by intent but must not be a smuggling route
       // for an unbounded payload.
@@ -355,6 +388,14 @@ export class EvidenceRecorder {
       payload: this.sanitisePayload(payload),
       prevHash: this.prevHash,
     }
+    const sessionModel = this.models.get(String(call.sessionID))
+    if (body.payload.model === undefined && sessionModel !== undefined)
+      // Attached *after* `sanitisePayload` ran, so it has to be bounded on the way in here as
+      // well. Skipping this let a hostile session's model id reach the chain unbounded — the
+      // one path where caller-controlled text could bypass the single write boundary.
+      (body.payload as { model?: ModelRef }).model = this.sanitisePayload({
+        model: sessionModel,
+      }).model as ModelRef
     const entry: EvidenceEntry = { ...body, hash: entryHash(body) }
     appendFileSync(this.file, `${canonical(entry)}\n`, "utf8")
     this.seq = entry.seq
@@ -406,6 +447,63 @@ export class EvidenceRecorder {
         note:
           `plugin initialised run=${runID} pid=${detail.pid} cwd=${detail.cwd}` +
           (detail.location === undefined ? "" : ` location=${detail.location}`),
+      },
+    )
+  }
+
+  /**
+   * Remember the model serving a session.
+   *
+   * Returns true when this changed what was known, so the caller can decide whether the
+   * change is itself worth a chain entry.
+   */
+  setModel(sessionID: string, model: ModelRef): boolean {
+    const previous = this.models.get(sessionID)
+    if (
+      previous !== undefined &&
+      previous.id === model.id &&
+      previous.providerID === model.providerID &&
+      previous.variant === model.variant
+    )
+      return false
+    this.models.set(sessionID, model)
+    return true
+  }
+
+  /** The model currently attributed to a session, if any. */
+  modelFor(sessionID: string): ModelRef | undefined {
+    return this.models.get(sessionID)
+  }
+
+  /**
+   * Record a model selection or switch as its own entry.
+   *
+   * Separate from tool entries so a reviewer can see the model change even when no tool was
+   * called between the switch and the end of the session.
+   */
+  recordModel(input: {
+    readonly sessionID: string
+    readonly model: ModelRef
+    readonly previous?: ModelRef
+    readonly source: string
+  }): EvidenceEntry {
+    this.setModel(input.sessionID, input.model)
+    return this.record(
+      "model",
+      {
+        id: `model_${input.sessionID}_${input.model.providerID}_${input.model.id}`,
+        tool: "model",
+        sessionID: input.sessionID,
+      },
+      {
+        status: "completed",
+        model: input.model,
+        note:
+          `${input.source} model=${input.model.providerID}/${input.model.id}` +
+          (input.model.variant === undefined ? "" : ` variant=${input.model.variant}`) +
+          (input.previous === undefined
+            ? ""
+            : ` previous=${input.previous.providerID}/${input.previous.id}`),
       },
     )
   }

@@ -6,10 +6,36 @@ BW-055 (TaskContract / IntentLock data plane) is Done; 1 of 15 Phase 2 tasks. **
 has not been evaluated**, and Phase 3 has not been started.
 
 - 20/90 tasks Done, 70 Not started, nothing Blocked.
-- 252 tests pass; lint, formatting and typecheck are clean under the pinned Bun 1.4.4.
+- **335 tests** pass; lint, formatting and typecheck are clean under the pinned Bun 1.4.4.
+- **Real-model execution is now proven end to end** (BW-091, not a register task): a paid
+  provider configured without storing a key, model selection and switching across two wire
+  protocols, real tool calls and file edits, tests run, and per-call model attribution in the
+  evidence chain. One paid provider verified; a second independently credentialed provider is
+  **BLOCKED** on credit.
 - Runtime evidence: `fixtures/runtime-health` 17/17 and `fixtures/tool-lifecycle` 13/13
   against the real OpenCode v2.3.2 binary; `fixtures/contract` 14/14; the Phase 1 demo 8/8;
   the SIGKILL fixture 10/10.
+
+## Next priority: the enforced boundary, not more features
+
+The LLM integration works well enough to code against a real repository, which makes the
+missing safety boundary the top risk: **`TaskContract.allowedPaths` is recorded but not
+enforced (BW-059)**. A wrapper that measures what an agent did, accurately, while the agent can
+write anywhere, is a good measurement tool and a poor safety story.
+
+Recommended order:
+
+1. **BW-059 ScopeFence** — enforce the contract's paths at the tool boundary. This is the
+   alpha blocker, and it is also the cheapest of the P2 tasks to prove, because the contract
+   data plane (BW-055) already exists and the tool hooks are already in place.
+2. **BW-057/BW-058** — protected test inventory and TestGuard, so a passing suite cannot be
+   achieved by editing the tests.
+3. **BW-075 BudgetPilot** — cost and turn ceilings before anyone runs this unattended.
+4. **BW-020** — packaged alpha, once the above justify distributing it.
+
+Do not add fallback chains, model aliases, auxiliary models, or a second inference engine in
+this window. Each multiplies the model-attribution surface, and nothing about the alpha needs
+them.
 
 ## What changed in this increment
 

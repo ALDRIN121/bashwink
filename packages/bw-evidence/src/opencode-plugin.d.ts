@@ -45,10 +45,47 @@ declare module "@opencode/plugin" {
     ): Promise<unknown>
   }
 
+  /**
+   * One runtime event, as `event.subscribe()` yields it.
+   *
+   * Only the fields Bashwink reads are declared. Verified against OpenCode v2.3.2 by
+   * loading a probe plugin into the real binary and dumping the event stream — the shapes
+   * below are observed output, not an inference from the type definitions.
+   *
+   *   session.step.started      { sessionID, agent, model: { id, providerID, variant } }
+   *   session.model.selected    { sessionID, model: { id, providerID, variant }, previous? }
+   */
+  export interface RuntimeEvent {
+    readonly id?: string
+    readonly type: string
+    readonly data?: {
+      readonly sessionID?: string
+      readonly model?: {
+        readonly id?: string
+        readonly providerID?: string
+        readonly variant?: string
+      }
+      readonly previous?: {
+        readonly id?: string
+        readonly providerID?: string
+        readonly variant?: string
+      }
+    }
+  }
+
+  export interface EventDomain {
+    subscribe(options?: { readonly types?: readonly string[] }): AsyncIterable<RuntimeEvent>
+  }
+
   export interface PluginContext {
     readonly options?: Readonly<Record<string, unknown>>
     readonly location?: { readonly directory?: string }
     readonly tool: ToolDomain
+    /**
+     * Absent on older runtimes. The recorder treats absence as "no model attribution"
+     * rather than failing the run, so the plugin stays loadable across a runtime bump.
+     */
+    readonly event?: EventDomain
   }
 
   export interface PluginDefinition {

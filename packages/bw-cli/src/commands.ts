@@ -29,6 +29,9 @@ import {
 import { build, toJson, toMarkdown } from "./evidence-export.js"
 import { recentRuns, runsDir } from "./run-health.js"
 import { reconcile, resume } from "./resume.js"
+// Re-exported so `main.ts` imports every subcommand from one module, and so the CLI has a
+// single import edge for tests that drive it as a library.
+export { runAuthCommand, runModelCommand } from "./providers-cli.js"
 
 export interface CommandResult {
   readonly exitCode: number

@@ -12,6 +12,166 @@ current HEAD `c731ab6` ([45151661558](https://github.com/ALDRIN121/bashwink/acti
 register depends on them.
 **Evidence is authoritative only if reproducible at this revision.**
 
+Phase 2 increment 2 (LLM integration, BW-091) evidence is in
+"Phase 2 increment 2 — real-model integration" below. It was gathered at working tree
+`f8fa85a + LLM integration` and is reproduced by
+`packages/bw-cli/test/providers*.test.ts`, `model-attribution.test.ts`,
+`plugin-resolution.test.ts`, and `scripts/build_alpha.sh`.
+
+
+## Phase 2 increment 2 — real-model integration (BW-091, 2026-11-23)
+
+Everything in this section was executed. Where a claim could not be tested it is recorded as
+**BLOCKED** or **not tested**, never as a pass.
+
+### The provider/protocol defect, reproduced before it was fixed
+
+A custom provider's `package` field selects the wire protocol for **every model of that
+provider**. Declaring an OpenAI-chat package on a provider whose Claude models need the
+Anthropic Messages endpoint validates, lists, and then fails at the first request:
+
+| Declaration | Result |
+| --- | --- |
+| `package: openai/chat`, model `claude-sonnet-5` | `Error: Model "claude-sonnet-5" must be called via /provider/v1/messages (Anthropic Messages shape).` |
+| per-model `package: anthropic` on that model, no provider-level package | works — both models serve on one provider id |
+| per-model `package` for claude + gpt, same provider | works — `MIXED_A` and `MIXED_B` |
+
+This is why `--model id:anthropic` exists and why a mixed-protocol provider writes no
+provider-level package.
+
+### Credential routes, verified against the real binary
+
+| Route | Verified | Notes |
+| --- | --- | --- |
+| `env: ["VAR"]` only, key exported | yes | `{env:VAR}` inside settings was **not** required when the variable is exported — an important simplification |
+| `settings.apiKey: "{env:VAR}"` | yes | works, but redundant when `env` is declared |
+| `settings.apiKey: "{file:path}"`, mode 0600 | yes | file substituted at run time; value never in config |
+| no credential | BLOCKED, not a pass | fails, as it should; the wrapper now pre-flights this |
+
+### Real coding tasks (three, all in disposable workspaces)
+
+| # | Workspace | Task | Model | Result |
+| --- | --- | --- | --- | --- |
+| 1 | throwaway repo, `calc.py` `add()` subtracts | fix so tests pass | `commandcode/claude-sonnet-5` | ran tests, read files, edited `calc.py`, re-ran tests: both pass. Only the source file changed. |
+| 2 | throwaway repo, `median()` wrong for even counts | fix so tests pass | `commandcode/claude-sonnet-5` | identified the even/odd branch, edited, re-ran: 3/3 pass |
+| 3 | throwaway repo, `is_palindrome()` ignores case/spaces | fix so tests pass | `commandcode/claude-sonnet-5` | normalised input, edited, re-ran: 2/2 pass |
+
+Task 1 and 3 were run through the **installed** binary from
+`~/Developer/bashwink-alpha-install`, outside the source checkout.
+
+### Provider compatibility matrix
+
+| Provider | Transport | Credential | Status | Evidence |
+| --- | --- | --- | --- | --- |
+| CommandCode (`api.commandcode.ai`) | `anthropic` (Claude models), `openai/chat` (GPT models) | `COMMANDCODE_API_KEY` env | **Verified** (paid) | completions, tool calls, edits, tests, attribution — all three tasks above |
+| OpenCode gateway (`opencode/*`) | runtime-internal | none in Bashwink config | **Verified** (gateway, not a second credential) | `opencode/tidepool-alpha-free` → `PROVIDER2_OK`, exit 0 |
+| DeepSeek | n/a | `DEEPSEEK_API_KEY` | **Not tested — BLOCKED** | HTTP 402 `Insufficient Balance` from the provider |
+| Ollama Cloud | n/a | `OLLAMA_API_KEY` | **Not tested — BLOCKED** | HTTP 402 `Add usage credits or subscribe` |
+| GitHub Copilot | device OAuth | none available non-interactively | **Not tested — BLOCKED** | requires interactive device flow |
+| Local Ollama | — | — | **Not tested** | no local daemon running (`127.0.0.1:11434` closed) |
+
+**So: one verified paid provider, one verified gateway transport, and no second independently
+credentialed provider.** The multi-provider claim rests on that and nothing more.
+
+### Model switching and session continuity
+
+```
+session ses_alpha1795433234:
+  --model commandcode/claude-sonnet-5   "Remember the number 417"      -> "OK"
+  --model commandcode/gpt-6.1-sol       "What number did I remember?"  -> "417"
+```
+
+Repeated with the codeword ORCHID through the installed binary: `ORCHID` returned by the
+second model in the same session. A session survives a model switch **across two different
+wire protocols**.
+
+### Evidence model attribution
+
+Real run, installed binary, 14 entries:
+
+```
+phases: {'boot': 1, 'model': 1, 'before': 6, 'after': 6}
+models seen: ['commandcode/claude-sonnet-5']
+tools called: ['shell', 'read', 'read', 'shell', 'edit', 'shell']
+unattributed tool entries: 0
+```
+
+A switch records both models:
+
+```
+2  model  step model=commandcode/claude-sonnet-5
+14 model  step model=commandcode/claude-sonnet-5 variant=default
+16 model  step model=commandcode/gpt-6.1-sol variant=default
+```
+
+Exported table:
+
+```
+## Models
+
+| model | tool calls | steps served | switched |
+| --- | ---: | ---: | --- |
+| `commandcode/claude-sonnet-5` | 6 | 1 | no |
+```
+
+### Evidence survives process termination
+
+A run was started and killed with `SIGKILL` mid-session:
+
+| Measure | Result |
+| --- | --- |
+| entries before / after | 18 / 22 (grew) |
+| chain verification afterwards | `{"ok":true,"entries":22,...}` |
+
+The recorder resumes a verified chain rather than forking or discarding it.
+
+### Redaction at the real boundary
+
+Asked the agent to run a command echoing credential-shaped strings. The evidence log recorded:
+
+```json
+{"exitCode": 0, "output": "[REDACTED] and [REDACTED]\n", "wallTimeSeconds": 0.036}
+```
+
+The raw strings (`sk-live-…`, `Bearer …`) appear nowhere in the log.
+
+### Secret-on-disk audit
+
+After configuring a provider and running three real tasks, every file under the install and
+data directories was searched for the actual `COMMANDCODE_API_KEY` value:
+
+| Location | Real key present |
+| --- | --- |
+| `opencode.json` | no |
+| `data/evidence/evidence.jsonl` | no |
+| any file under the data/install roots | **NONE** |
+
+### Clean installation
+
+`scripts/build_alpha.sh` → copied to `~/Developer/bashwink-alpha-install` (outside the repo):
+
+| Check | Result |
+| --- | --- |
+| no absolute source paths baked in | 0 occurrences of the source paths |
+| CLI starts | `bashwink 0.1.0` |
+| doctor executes | `12 checks, 7 warning(s), 0 failures` |
+| provider config loads | `✓ commandcode`, protocols `anthropic, openai` |
+| evidence plugin resolves | `bashwink-evidence resolves to <install>/lib/evidence/src/index.ts` |
+| boot entry recorded | `bootSeq 1` on the real run |
+| missing credential fails clearly | exit 1, `COMMANDCODE_API_KEY is not set` + `export …` |
+| session persistence | verified (above) |
+| evidence survives termination | verified (above) |
+
+**Note on installation method.** `bun add` of the packed tarballs **fails**:
+`@bashwink/evidence` is `private: true` and depends on `workspace:*`, so it cannot resolve from
+the registry. The supported alpha path is the bundled build, not npm publish. Publishing the
+scope is a release decision that has not been taken.
+
+### Test totals and CI
+
+See the final section of this register for the committed totals and the GitHub Actions run
+that produced them.
+
 ## Phase 2 evidence (2026-11-23) — runtime reliability and BW-055
 
 ### The defect, reproduced before it was fixed

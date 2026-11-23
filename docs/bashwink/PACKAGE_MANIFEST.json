@@ -19,7 +19,7 @@
   },
   "files": {
     "ADR-001-FOUNDATION-AND-FORK.md": {
-      "sha256": "36de965d6db2254b1c92e907c9c703e3fadbf834812367144fc6491b73577988",
+      "sha256": "7a029a0cbb3e3726a241fd10b4415894543c7a3039f5f14534cb055316fda9f2",
       "size_bytes": 4339
     },
     "AGENT_WORKFLOW.md": {
@@ -43,7 +43,7 @@
       "size_bytes": 43879
     },
     "BASHWINK_TASKS_90.csv": {
-      "sha256": "e7926e13b62a686c27a78e183773712b5cc9998c738f244ba580bfacc955cd2d",
+      "sha256": "004d3c3b27e7c259fe433a2438f180daf9e806308873e9f8932288626f3aaebf",
       "size_bytes": 37321
     },
     "BASHWINK_V2_FEATURE_BACKLOG.md": {
@@ -79,7 +79,7 @@
       "size_bytes": 9079
     },
     "PHASE-02-PROOF-SECURITY.md": {
-      "sha256": "50c0c19d6bf38eb4ab7af5255e6d8ac211bf3a44f66c60c3f7bab1458d026861",
+      "sha256": "94226f73388bdb9a7744304fd4ba780164dc4c897760af9aa76674e2b7177022",
       "size_bytes": 13425
     },
     "PHASE-03-MEMORY-VERIFIER.md": {
@@ -103,7 +103,7 @@
       "size_bytes": 6165
     },
     "PHASE_GATE_CHECKLIST.md": {
-      "sha256": "bc4df2c7c7469ca09a31beb26630f03aa31fef742d47d293fac8267ea0307dd3",
+      "sha256": "809705be2e2a8ea20800d2839087aa5c4bc2f32a2e0e15fbe9f05ea6fe53b160",
       "size_bytes": 4557
     },
     "reports/BASHWINK_FULL_PLAN.docx": {
@@ -121,6 +121,12 @@
     "reports/BASHWINK_V2_RESEARCH_AND_ROADMAP.docx": {
       "sha256": "71f86e30b5128dab17124773aa8816b11d00593d0d0e3ec014b6a8b5f8547787",
       "size_bytes": 45255
+    },
+    "ADR-011-PROVIDER-CONFIGURATION-AND-ATTRIBUTION.md": {
+      "sha256": "d2b27fa8dd80b75ccbbed222a40dbb2bbe1a0b6769ab2b6b71a08a123b53d93b"
+    },
+    "LLM_INTEGRATION_AUDIT.md": {
+      "sha256": "81fcaff84431064e41b997036a8fa8ebaeddb0ad3300cb77b3eb5b74fded7611"
     }
   }
 }

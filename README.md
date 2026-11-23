@@ -26,6 +26,35 @@ The pinned OpenCode foundation is **not** vendored here. It lives beside this re
 
 ## Quick start
 
+Use a real model (inference, streaming and tool calls are the pinned runtime's; Bashwink
+configures it and records what it did):
+
+```bash
+bashwink auth add commandcode --name CommandCode \
+  --base-url https://api.commandcode.ai/provider/v1 \
+  --env COMMANDCODE_API_KEY \
+  --model claude-sonnet-5:anthropic:200000:8192 \
+  --model gpt-6.1-sol:openai:200000:8192
+bashwink model use commandcode/claude-sonnet-5
+bashwink auth status            # credential presence, never a value
+bashwink run --auto "fix the failing test"
+```
+
+No key is stored: `--env` names the variable the runtime reads, `--key-file` names a 0600 file
+it substitutes at run time, and `--key` is refused outright. A `:protocol` suffix per model is
+required when one provider serves models on different wire protocols — a provider-level
+package applies to every model, so a mixed provider gets none.
+
+Install outside the checkout:
+
+```bash
+./scripts/build_alpha.sh                    # -> dist/bashwink
+export PATH="$PWD/dist/bashwink/bin:$PATH"
+bashwink --version && bashwink doctor
+```
+
+Development:
+
 ```bash
 bun install
 bun run test                          # full suite (pinned Bun 1.4.4)
@@ -51,6 +80,28 @@ Upstream compatibility report:
 ```bash
 python3 scripts/upstream_sync.py --repo ~/Developer/bashwink-upstream/opencode --target origin/dev
 ```
+
+## Provider and model support
+
+`docs/bashwink/LLM_INTEGRATION_AUDIT.md` documents what is reused from the pinned runtime,
+what Bashwink adds, and the exact source revisions reviewed (OpenCode
+`c0ad18b402eb2827fc1ee71c171b1177b3fc02d1` = v2.3.2; Hermes Agent
+`3b421578588243f920886e6fe79a6faa87ea026e`).
+
+Commands:
+
+| Command | Purpose |
+| --- | --- |
+| `auth status` | every configured provider, its credential route, and whether it resolves |
+| `auth add <id> …` | declare a provider; the key is referenced, never stored |
+| `auth check <id>` | exit 1 when the provider cannot authenticate |
+| `auth remove <id>` | remove it, and repoint a default model that pointed at it |
+| `model list` | models **the config declares**, default marked |
+| `model use <provider>/<model>` | set the default for every run |
+| `model current` | print the default |
+
+The live catalogue belongs to the runtime: `bashwink models` (forwarded). `model list` does
+not start a server, so it reports the config rather than pretending to be the catalogue.
 
 ## Evidence log
 
@@ -104,10 +155,21 @@ not model quality.
 
 ## Known limitations
 
-- Verified on macOS arm64 only. Linux and Windows were never run.
-- CI exists but has **never executed**.
-- The branded `bashwink` wrapper CLI does not exist yet (ADR-003).
+- **No enforced filesystem boundary.** A TaskContract's `allowedPaths` is recorded and shown,
+  but nothing enforces it (BW-059). Use a disposable workspace, and do not distribute an alpha
+  before this is enforced.
+- Verified on macOS arm64 and Linux; Windows was never run.
+- **One paid provider verified end to end.** A second independently credentialed provider was
+  blocked on credit — see `docs/bashwink/TEST_EVIDENCE.md` for the matrix.
+- No model aliases, fallback chains or auxiliary-model routing. Deliberate: each multiplies the
+  model-attribution surface, and an automatic fallback would change which model made a change
+  without the evidence saying so.
+- The evidence chain is tamper-**evident**, not tamper-proof: it cannot detect tail truncation,
+  and anyone with write access can recompute a consistent chain.
+- No cost ceiling. `session.usage.updated` carries cost, but nothing stops a run (BW-075).
 - The evidence log has no concurrency control; one writer per log.
+- `bun add` of the packed packages fails because `@bashwink/evidence` is private with a
+  `workspace:*` dependency. The supported alpha path is the bundled build, not npm publish.
 - LGPL/FFmpeg distribution compliance is documented but not yet packaged —
   `docs/bashwink/THIRD_PARTY_NOTICES.md` §6.
 

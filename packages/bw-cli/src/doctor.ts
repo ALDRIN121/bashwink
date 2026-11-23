@@ -21,11 +21,13 @@ import {
   EVIDENCE_PLUGIN_ID,
   PluginEntryError,
   paths,
+  resolvePluginDirectory,
   resolvePluginEntry,
   type Paths,
 } from "./paths.js"
 import { recentRuns, runtimeLogHint } from "./run-health.js"
 import { canonicalWorkspace, isTrusted, readTrust } from "./trust.js"
+import { credentialSummary, runAuthCommand, runModelCommand } from "./providers-cli.js"
 
 export type CheckStatus = "ok" | "warn" | "fail"
 
@@ -176,24 +178,89 @@ export function diagnose(options: DoctorOptions = {}): DoctorReport {
     })
   }
 
+  // --- configured providers ----------------------------------------------
+  // A provider that is configured but cannot authenticate is the failure mode that looks
+  // like "the agent is broken": the runtime starts, the request fails, and the message
+  // names the endpoint rather than the missing variable. Check it before a run does.
+  const providers = credentialSummary(resolved.config)
+  const auth = runAuthCommand(["status"])
+  checks.push({
+    id: "providers",
+    title: "Model providers",
+    status:
+      providers.configured === 0
+        ? "warn"
+        : providers.usable === providers.configured
+          ? "ok"
+          : "fail",
+    detail: providers.detail,
+    ...(providers.configured === 0
+      ? {
+          fix:
+            "add one with `bashwink auth add <id> --base-url <url> --env <KEY_VAR> --model <model>`; " +
+            "the runtime's built-in catalogue also works without configuration",
+        }
+      : providers.usable === providers.configured
+        ? {}
+        : {
+            fix: "run `bashwink auth status`; the ✗ entries name the credential each provider needs",
+          }),
+  })
+  if (providers.configured > 0 && auth.exitCode !== 0 && auth.stderr !== undefined)
+    checks.push({
+      id: "provider-auth",
+      title: "Provider credentials",
+      status: "fail",
+      detail: auth.stderr,
+      fix: "export the named variable, or create the key file, then re-run",
+    })
+
+  // --- default model -------------------------------------------------------
+  const current = runModelCommand(["current"])
+  const modelRef = current.stdout.trim()
+  const declared =
+    modelRef === "" || modelRef === "no default model configured" ? undefined : modelRef
+  checks.push({
+    id: "model",
+    title: "Default model",
+    status: declared === undefined ? "warn" : "ok",
+    detail:
+      declared === undefined
+        ? "no default model configured; each run must pass --model or accept the runtime default"
+        : `${declared} (declared in ${resolved.config})`,
+    ...(declared === undefined
+      ? {
+          fix: "bashwink model use <provider>/<model>; list the declared models with `bashwink model list`",
+        }
+      : {}),
+  })
+
   // --- credentials -------------------------------------------------------
+  // This list is a convenience for the *built-in* catalogue, not the definition of what is
+  // configured: `providers` above is authoritative. It used to be the only credential check,
+  // which made `doctor` report "no credential" for a working setup that used a provider
+  // declared in the config file or a variable not in this list.
   const present = CREDENTIAL_VARS.filter((name) => (env[name] ?? "").trim() !== "")
   checks.push({
     id: "credentials",
-    title: "Model credentials",
+    title: "Environment credentials",
     // Not failing: a local/mock provider is a legitimate configuration (ADR-006).
-    status: present.length > 0 ? "ok" : "warn",
+    status: present.length > 0 || providers.usable > 0 ? "ok" : "warn",
     detail:
       present.length > 0
-        ? `${present.length} provider credential(s) present: ${present.join(", ")} — values not printed`
-        : "no provider credential environment variable is set",
-    ...(present.length > 0
+        ? `${present.length} built-in provider variable(s) present: ` +
+          present.map((name) => `${name} ${describeSecret(env[name])}`).join(", ") +
+          " — values not printed"
+        : providers.usable > 0
+          ? "no built-in variable set; the configured provider(s) above supply credentials"
+          : "no provider credential is available",
+    ...(present.length > 0 || providers.usable > 0
       ? {}
       : {
           fix:
-            "set one of " +
+            "run `bashwink auth add ...`, or set one of " +
             CREDENTIAL_VARS.join("/") +
-            " for a hosted model, or use the local mock provider (fixtures/mock_provider.py)",
+            ", or use the local mock provider (fixtures/mock_provider.py)",
         }),
   })
 
@@ -225,15 +292,23 @@ export function diagnose(options: DoctorOptions = {}): DoctorReport {
   })
 
   // --- evidence plugin ---------------------------------------------------
-  // Static half of the health story: the directory must resolve to an entry the way the
-  // runtime resolves it. The dynamic half is the boot record checked below.
-  const pluginDirectory = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "..",
-    "..",
-    "bw-evidence",
-  )
+  // Static half of the health story: the directory must be findable *and* resolve to an
+  // entry the way the runtime resolves it. The dynamic half is the boot record checked
+  // below. Both halves used a repo-relative path until a built install was tested, at which
+  // point `doctor` reported a missing plugin for a correct install — the check has to use
+  // the same resolver the launcher does, or it tests a path that nothing else uses.
+  const moduleDirectory = path.dirname(fileURLToPath(import.meta.url))
+  const repoRoot = path.resolve(moduleDirectory, "..", "..", "..")
   try {
+    const pluginDirectory = resolvePluginDirectory(
+      [
+        path.join(moduleDirectory, "evidence"),
+        path.join(moduleDirectory, "..", "..", "evidence"),
+        path.join(moduleDirectory, "..", "..", "bw-evidence"),
+        path.join(repoRoot, "packages", "bw-evidence"),
+      ],
+      env,
+    )
     const entry = resolvePluginEntry(pluginDirectory)
     checks.push({
       id: "evidence-plugin",
@@ -247,7 +322,7 @@ export function diagnose(options: DoctorOptions = {}): DoctorReport {
       title: "Evidence plugin",
       status: "fail",
       detail: error instanceof PluginEntryError ? error.message : String(error),
-      fix: "the staged plugin would be dropped silently; restore packages/bw-evidence's exports map",
+      fix: "the run would start with no recorder; set BASHWINK_PLUGIN_DIR or reinstall",
     })
   }
 

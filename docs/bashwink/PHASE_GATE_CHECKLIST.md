@@ -5,6 +5,9 @@
 supported platforms. Gate PASSED — revalidated 2026-11-23 after the silent-plugin-load
 investigation (ADR-010).**
 **Phase 2: 1/15 tasks Done (BW-055). Gate NOT evaluated. Phases 3–7: not started.**
+**Out-of-register: BW-091 (LLM provider integration) is implemented and verified — see
+`LLM_INTEGRATION_AUDIT.md`. It does not count toward the Phase 2 gate, and the gate is
+unchanged.**
 
 Last evaluated 2026-11-23 after real GitHub Actions runs on both supported platforms
 (Phase 0 and Phase 1), and a local real-runtime pass for the Phase 1 revalidation.

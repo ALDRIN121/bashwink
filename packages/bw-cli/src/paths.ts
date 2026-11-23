@@ -46,6 +46,43 @@ export class PluginEntryError extends Error {
   }
 }
 
+/**
+ * Locate the evidence plugin directory, in the order that works for both layouts.
+ *
+ * This used to be `<repo>/packages/bw-evidence`, computed from the CLI module's location.
+ * That is correct in the source checkout and wrong the moment the CLI is installed as a
+ * package: `node_modules/@bashwink/cli/src` three levels up is `node_modules`, so staging
+ * looked for `node_modules/packages/bw-evidence`, found nothing, and — because a missing
+ * directory produced no staged plugin — the run proceeded with no recorder at all. The
+ * failure was invisible except as evidence that never appeared, which is the exact class of
+ * silent failure BW-014 exists to remove.
+ *
+ * So resolution is explicit and ordered, and a miss throws with the paths it tried.
+ */
+export function resolvePluginDirectory(
+  candidates: readonly string[],
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  const override = environment["BASHWINK_PLUGIN_DIR"]
+  if (override !== undefined) {
+    const directory = path.resolve(override)
+    if (!existsSync(directory))
+      throw new PluginEntryError(
+        `BASHWINK_PLUGIN_DIR points at '${override}', which does not exist`,
+      )
+    return directory
+  }
+  for (const candidate of candidates) {
+    const directory = path.resolve(candidate)
+    if (existsSync(path.join(directory, "package.json"))) return directory
+  }
+  throw new PluginEntryError(
+    "the evidence plugin directory could not be found.\n" +
+      `looked in:\n${candidates.map((candidate) => `    ${path.resolve(candidate)}`).join("\n")}\n` +
+      "run `bashwink doctor` to re-check the install, or set BASHWINK_PLUGIN_DIR.",
+  )
+}
+
 export interface PluginSpec {
   readonly id: string
   /** Absolute path to the plugin directory that gets linked/copied into staging. */

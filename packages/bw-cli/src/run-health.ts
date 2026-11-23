@@ -264,14 +264,34 @@ export function renderMissingEvidence(input: {
   readonly logFile: string
 }): string {
   const plugin = input.record.plugin
-  return [
+  const lines = [
     `evidence plugin did not initialise for ${input.record.runId}`,
     `  expected: ${plugin === undefined ? "bashwink-evidence" : plugin.id} (${plugin?.entry ?? "entry unknown"})`,
     `  evidence: ${input.evidenceFile}`,
     `  reason:   ${input.boot.ok ? "unreachable" : input.boot.reason}`,
     `  runtime log: ${input.logFile}`,
+  ]
+
+  // Distinguish the two ways this happens, because the advice differs and the wrong advice
+  // wastes the reader's time. When the child exited before doing any work (a bad `--model`,
+  // an unknown flag, a refused command), nothing ran to record — the honest statement is
+  // "nothing happened", not "work happened but was not recorded". Only a run that actually
+  // started, with no boot record, is the alarming case.
+  const exitCode = input.record.exitCode
+  const neverStarted = exitCode !== undefined && exitCode !== 0 && input.boot.entries === 0
+  if (neverStarted) {
+    lines.push(
+      `  the runtime exited ${String(exitCode)} before any evidence was written, so no work was`,
+      "  recorded and none is known to have happened. This run is unverified either way.",
+      "  fix: fix the error the runtime printed above and re-run.",
+    )
+    return lines.join("\n")
+  }
+
+  lines.push(
     "  the agent may have done real work; none of it was recorded, so this run is NOT verified.",
     "  fix: run `bashwink doctor` (it re-resolves the plugin and reads the last run record);",
     "       if the runtime log shows `failed to load plugin`, the cause is in that log's cause= field.",
-  ].join("\n")
+  )
+  return lines.join("\n")
 }

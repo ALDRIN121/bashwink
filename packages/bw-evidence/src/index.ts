@@ -13,7 +13,7 @@
 import { Plugin } from "@opencode/plugin"
 import { readFileSync } from "node:fs"
 import path from "node:path"
-import { EvidenceRecorder, onToolAfter, onToolBefore, verify } from "./recorder.js"
+import { EvidenceRecorder, onToolAfter, onToolBefore, verify, type ModelRef } from "./recorder.js"
 
 export interface EvidencePluginOptions {
   /** Where to write `evidence.jsonl`. Default: `<cwd>/.bashwink/evidence`. */
@@ -126,6 +126,68 @@ export function create(options: EvidencePluginOptions = {}) {
           log(`after hook failed: ${error instanceof Error ? error.message : String(error)}`)
         }
       })
+
+      // Attribute every call to the model that actually served it.
+      //
+      // The wrapper knows which model it *asked* for; only the runtime knows which one
+      // served a step, and the two differ whenever a session switches models. So the plugin
+      // listens to the runtime's own events and keeps a per-session map. A failure here must
+      // never break the agent: attribution is best-effort, and an unattributed call is
+      // recorded as such rather than guessed.
+      const current = new Map<string, ModelRef>()
+      const noteModel = (sessionID: string, model: ModelRef, source: string) => {
+        const previous = current.get(sessionID)
+        const changed =
+          previous === undefined ||
+          previous.id !== model.id ||
+          previous.providerID !== model.providerID
+        current.set(sessionID, model)
+        const changedNow = recorder.setModel(sessionID, model)
+        if (changed && changedNow)
+          recorder.recordModel({
+            sessionID,
+            model,
+            source,
+            ...(previous === undefined ? {} : { previous }),
+          })
+        log(`model ${sessionID} ${model.providerID}/${model.id} (${source})`)
+      }
+      void (async () => {
+        try {
+          const events = ctx.event?.subscribe?.()
+          if (events === undefined) return
+          for await (const event of events) {
+            try {
+              const data = event.data as
+                | {
+                    sessionID?: string
+                    model?: { id?: string; providerID?: string; variant?: string }
+                  }
+                | undefined
+              if (data?.sessionID === undefined || data.model?.id === undefined) continue
+              if (data.model.providerID === undefined) continue
+              const model: ModelRef = {
+                id: data.model.id,
+                providerID: data.model.providerID,
+                ...(data.model.variant === undefined ? {} : { variant: data.model.variant }),
+              }
+              if (event.type === "session.step.started") noteModel(data.sessionID, model, "step")
+              else if (event.type === "session.model.selected")
+                noteModel(data.sessionID, model, "switch")
+            } catch (error) {
+              log(
+                `event handling failed: ${error instanceof Error ? error.message : String(error)}`,
+              )
+            }
+          }
+        } catch (error) {
+          // A runtime without a subscribe surface, or a closed stream, is not a failure of
+          // the run: the log simply carries no model attribution.
+          log(
+            `event subscription unavailable: ${error instanceof Error ? error.message : String(error)}`,
+          )
+        }
+      })()
 
       // Only now is the plugin actually usable. The wrapper looks for this entry by run id
       // and fails the run loudly when it is absent, so a load failure cannot masquerade as a

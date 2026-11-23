@@ -124,6 +124,13 @@ Boot records labelled `cwd=<plugin host cwd>`, which is the runtime's shared hos
 workspace — observed as `cwd=/Users/me` for a workspace at `/Users/me/repo`. Renamed to `hostcwd`
 so it cannot be read as the run's directory; `location` is the workspace.
 
+### CI for this increment
+
+Committed at `b38dd51` — **13/13 jobs success**, first attempt, no re-run
+([run 45195209661](https://github.com/ALDRIN121/bashwink/actions/runs/45195209661)).
+CI ran **293 `cli` tests / 17 files** and **76 `evidence` tests**, against 369 locally.
+The previously flaky macOS runner capacity did not recur.
+
 ### Not tested here
 
 - In-session model switching via the TUI picker.

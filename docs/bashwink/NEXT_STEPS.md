@@ -14,8 +14,10 @@ verified by real GitHub Actions runs on both supported platforms.
 | `verify` | [45066245596](https://github.com/ALDRIN121/bashwink/actions/runs/45066245596) | `0b09620` | **success — 8/8 jobs** |
 | `verify` | [45067382809](https://github.com/ALDRIN121/bashwink/actions/runs/45067382809) | `8a3286c` | **success — 8/8 jobs** |
 | `verify` | [45111515216](https://github.com/ALDRIN121/bashwink/actions/runs/45111515216) | `c536466` | **success — 9/9 jobs** (lint gate added) |
+| `verify` | [45112004423](https://github.com/ALDRIN121/bashwink/actions/runs/45112004423) | `0c299df` | **success — 9/9 jobs** (at HEAD) |
 | `upstream-compat` | [45065638555](https://github.com/ALDRIN121/bashwink/actions/runs/45065638555) | `9b95d37` | failure — 28 `Ripgrep` tests/platform |
 | `upstream-compat` | [45066246923](https://github.com/ALDRIN121/bashwink/actions/runs/45066246923) | `0b09620` | **success — both platforms** |
+| `upstream-compat` | [45110993064](https://github.com/ALDRIN121/bashwink/actions/runs/45110993064) | `8a3286c` | **success — dispatched on demand** |
 
 ### The two defects CI found that local validation could not
 

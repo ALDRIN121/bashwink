@@ -137,8 +137,10 @@ artifact; the run existed moments later. Nothing was wrong with the trigger conf
 | [45066245596](https://github.com/ALDRIN121/bashwink/actions/runs/45066245596) | `0b09620` | `verify` | **success** — 8/8 jobs | — |
 | [45067382809](https://github.com/ALDRIN121/bashwink/actions/runs/45067382809) | `8a3286c` | `verify` | **success** — 8/8 jobs | 29 s |
 | [45111515216](https://github.com/ALDRIN121/bashwink/actions/runs/45111515216) | `c536466` | `verify` | **success** — **9/9 jobs** (lint added) | 25 s |
+| [45112004423](https://github.com/ALDRIN121/bashwink/actions/runs/45112004423) | `0c299df` | `verify` | **success** — **9/9 jobs** (at HEAD) | 27 s |
 | [45065638555](https://github.com/ALDRIN121/bashwink/actions/runs/45065638555) | `9b95d37` | `upstream-compat` | **failure** — 28 `Ripgrep` tests per platform | — |
 | [45066246923](https://github.com/ALDRIN121/bashwink/actions/runs/45066246923) | `0b09620` | `upstream-compat` | **success** — both platforms, all 11 steps each | ~5 min |
+| [45110993064](https://github.com/ALDRIN121/bashwink/actions/runs/45110993064) | `8a3286c` | `upstream-compat` | **success** — dispatched on demand at HEAD, both legs | 9 m 46 s |
 
 ### `upstream-compat` results, run 45066246923 (commit `0b09620`)
 

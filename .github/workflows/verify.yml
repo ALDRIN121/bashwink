@@ -28,11 +28,14 @@ env:
 
 jobs:
   lint:
-    # BW-006 acceptance names "deterministic lint" explicitly, and the independent review
-    # asked for a root lint gate. This is the pinned toolchain's own formatter/checker
-    # (`bun fmt --check`), so the gate needs no extra dependency and cannot drift from the
-    # Bun version the rest of CI pins. bunfig.toml pins the style to the one the tree was
-    # already written in, so this lints the source instead of passively rewriting it.
+    # BW-006 acceptance names "deterministic lint". Two distinct gates, deliberately separate:
+    #   - semantic lint  (`oxlint`, correctness rules as errors, warnings denied)
+    #   - formatting     (`bun fmt --check`, the pinned runtime's own formatter)
+    # A formatter alone is not a linter: it rewrites whitespace and reports nothing about
+    # unused bindings, unreachable code or `debugger` statements, so it never satisfied the
+    # criterion on its own. `lint:gate` additionally runs a committed violation fixture
+    # (fixtures/lint-violation/bad.ts) and asserts the rules actually fire, which is what
+    # distinguishes a working gate from one that has only ever been seen to pass.
     name: lint
     runs-on: ubuntu-latest
     steps:
@@ -40,8 +43,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
-      - name: Lint (formatting is deterministic and enforced)
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Semantic lint (oxlint, pinned)
         run: bun run lint
+      - name: Lint gate positive + negative control
+        run: bun run lint:gate
+      - name: Formatting is deterministic and enforced
+        run: bun run format
 
   docs:
     name: docs integrity

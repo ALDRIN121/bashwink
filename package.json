@@ -17,11 +17,15 @@
     "test:evidence": "bun test packages/bw-evidence",
     "verify:docs": "python3 scripts/verify_bashwink_docs.py",
     "verify:evidence": "bun run packages/bw-evidence/src/cli.ts verify",
-    "lint": "bun fmt --check packages",
-    "lint:fix": "bun fmt packages"
+    "lint": "oxlint --deny-warnings packages",
+    "lint:fix": "oxlint --fix packages",
+    "lint:gate": "./scripts/check_lint_gate.sh",
+    "format": "bun fmt --check packages",
+    "format:fix": "bun fmt packages"
   },
   "devDependencies": {
     "@types/bun": "1.4.3",
+    "oxlint": "1.94.0",
     "typescript": "6.0.2"
   },
   "engines": {

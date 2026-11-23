@@ -115,12 +115,35 @@ jobs:
         run: |
           set -euo pipefail
           export BASHWINK_HOME="$RUNNER_TEMP/bw-smoke"
-          bun run packages/bw-cli/src/bin.ts --version
+
+          # The two acceptance criteria for BW-008, asserted directly.
+          version="$(bun run packages/bw-cli/src/bin.ts --version)"
+          echo "version: $version"
+          case "$version" in
+            bashwink\ *) ;;
+            *) echo "::error::--version did not print the Bashwink product name: $version"; exit 1 ;;
+          esac
           bun run packages/bw-cli/src/bin.ts --help > /dev/null
-          bun run packages/bw-cli/src/bin.ts doctor || true
-          # `doctor` is expected to be nonzero on a runner without the runtime installed,
-          # so its exit code is asserted at the level that matters: it ran and reported.
-          test -d "$BASHWINK_HOME"
+
+          # `init` is the command that creates the state directories; `--version` deliberately
+          # does not touch the filesystem, so asserting on it here would test nothing.
+          bun run packages/bw-cli/src/bin.ts init
+          test -d "$BASHWINK_HOME/data"
+
+          # `doctor` exits 1 when a precondition is genuinely missing (no runtime on this
+          # runner). That is the acceptance criterion, so assert the code rather than ignoring
+          # it with `|| true` — the earlier version of this step did the latter and swallowed a
+          # real failure.
+          set +e
+          bun run packages/bw-cli/src/bin.ts doctor > "$RUNNER_TEMP/doctor.txt" 2>&1
+          doctor_rc=$?
+          set -e
+          cat "$RUNNER_TEMP/doctor.txt"
+          if [ "$doctor_rc" -ne 1 ]; then
+            echo "::error::doctor exited $doctor_rc; expected 1 with no runtime installed"
+            exit 1
+          fi
+          grep -q "fix:" "$RUNNER_TEMP/doctor.txt" || { echo "::error::doctor gave no actionable fix"; exit 1; }
       # BW-014's end-to-end proof needs the real OpenCode binary (a ~225 MB platform package).
       # Installing it on every PR is too expensive for a workflow that runs in ~30s, so the
       # fixture detects its absence and reports SKIP with a reason rather than failing or —

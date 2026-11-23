@@ -51,7 +51,7 @@ Implement TaskContract/IntentLock, immutable baseline, TestGuard, ScopeFence, Tr
 
 - [ ] **BW-018 — Protect permissions and command execution paths** (P0, L)
 
-- [x] **BW-055 — TaskContract schema, migrations and criterion lifecycle** (P0, M) — Done, local evidence; CI pending the commit
+- [x] **BW-055 — TaskContract schema, migrations and criterion lifecycle** (P0, M) — Done, local **and hosted** CI evidence
 
 - [ ] **BW-056 — IntentLock command and confirmation UX** (P0, M)
 
@@ -157,7 +157,7 @@ Schema round-trip and invalid transitions tested; criterion statuses cannot disa
 - [x] Implement BW-055 — schema v2 + `contract` CLI data plane (ADR-010)
 - [x] Run success and negative-path checks — 37 unit/integration tests, `fixtures/contract` 14/14
 - [x] Attach verifiable evidence and update issue status — `TEST_EVIDENCE.md` § Phase 2, CSV status Done
-- [ ] CI verification — pending the commit/push for this increment
+- [x] CI verification — 13/13 jobs green at `c731ab6` ([run 45151661558](https://github.com/ALDRIN121/bashwink/actions/runs/45151661558)), including the contract fixture on both platforms
 
 
 ### 04. BW-056 — IntentLock command and confirmation UX

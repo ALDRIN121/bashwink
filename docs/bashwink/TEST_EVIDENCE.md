@@ -11,6 +11,14 @@ Phase 0 CI evidence is hosted; **Phase 1's evidence below is local**, and says s
 
 ### Phase 1 hosted CI — green on both platforms
 
+Current HEAD `ad9d44e` is covered by run
+[45129207277](https://github.com/ALDRIN121/bashwink/actions/runs/45129207277): **11/11 jobs, both
+`ubuntu-latest` and `macos-15`**, and **zero failure-level annotations** across all eleven jobs.
+
+The run below at `f753920` is the one that first proved the Phase 1 suite on both platforms and
+is retained because its job log is quoted here; `ad9d44e` changes only workflow framing (see
+"Two misleading CI signals, removed" below), not product code.
+
 Run [45119233542](https://github.com/ALDRIN121/bashwink/actions/runs/45119233542) at
 **`f753920`**: **11/11 jobs, both `ubuntu-latest` and `macos-15`.**
 
@@ -49,6 +57,31 @@ at `ee4652f`, failed — **in the workflow, not the code**: the smoke step asser
 `test -d "$BASHWINK_HOME"` after `--version`, which never touches the filesystem, and used
 `doctor || true`, discarding the exit code that *is* the BW-009 acceptance criterion. Both fixed
 in `f753920`.
+
+### Two misleading CI signals, removed in `ad9d44e`
+
+Both were green runs saying something red, and neither was a test or product defect.
+
+1. **The `fixtures` job carried a red failure annotation on a run where every step exited 0.**
+   `bun test` detects GitHub Actions via `GITHUB_ACTIONS=true` and emits each assertion failure as
+   an `::error::` workflow command. The `failed-test` fixture is *supposed* to fail — that is the
+   assertion — so the step passed while the UI showed `Expected: "hello-world" /
+   Received: "-hello-world-"` as a failed check at `.github#23`. Present on both `fixtures` legs.
+   Fixed by unsetting the variable for that one command (`env -u GITHUB_ACTIONS bun test`); the exit
+   code is still the signal and a negative control confirms the step still fails when the suite
+   genuinely passes.
+
+2. **Every job carried `Node.js 20 is deprecated … forced to run on Node.js 24`.** `checkout@v4`
+   and `setup-python@v5` declare `runs.using: node20`, so they were executing on GitHub's
+   compatibility shim. Currently a warning; when the shim is removed those jobs stop starting
+   entirely. Bumped to the first majors that declare `node24` — `checkout@v5`,
+   `setup-python@v6` — confirmed per tag from `action.yml`, not from the version number (the two
+   actions moved at different majors).
+
+Read from the run rather than inferred: run `45129207277` reports **0** failure-level annotations
+across all eleven jobs (three `notice` annotations remain, all macOS arm64 queue-capacity), and the
+job log on `fixtures (ubuntu-latest)` still shows `2 pass / 1 fail` — the fixture still reproduces
+its bug — with the step itself green because the failure is the assertion.
 
 ### Test totals
 

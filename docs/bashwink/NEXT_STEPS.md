@@ -2,7 +2,8 @@
 
 **Where we are:** **Phase 0 complete and gate-passed**, and **Phase 1 complete and gate-passed**.
 10 of 10 Phase 1 tasks Done, 188 tests passing on Linux and macOS, and **11/11 CI jobs green on
-both supported platforms** ([run 45119233542](https://github.com/ALDRIN121/bashwink/actions/runs/45119233542) at `f753920`).
+both supported platforms** at HEAD `ad9d44e`
+([run 45129207277](https://github.com/ALDRIN121/bashwink/actions/runs/45129207277)).
 
 **Phase 2 has not been started.** The Phase 1 gate is where work stopped, deliberately.
 
@@ -12,6 +13,7 @@ both supported platforms** ([run 45119233542](https://github.com/ALDRIN121/bashw
 | --- | --- | --- | --- |
 | `verify` | [45118931489](https://github.com/ALDRIN121/bashwink/actions/runs/45118931489) | `ee4652f` | **failure** — `cli` job, in the *workflow* not the code |
 | `verify` | [45119233542](https://github.com/ALDRIN121/bashwink/actions/runs/45119233542) | `f753920` | **success — 11/11 jobs, both platforms** |
+| `verify` | [45129207277](https://github.com/ALDRIN121/bashwink/actions/runs/45129207277) | `ad9d44e` | **success — 11/11 jobs, both platforms, 0 failure annotations** |
 
 ### The CI failure, and why it was worth having
 
@@ -25,6 +27,18 @@ fixture had **already passed**. The failure was in the smoke step I wrote:
 
 Both fixed in `f753920`. This is the same class of error as the `bun fmt`-as-lint mistake in
 Phase 0: a check that looked like verification and verified nothing.
+
+### Two green-but-red signals, removed in `ad9d44e`
+
+Neither was a test or product defect; both made a passing pipeline report something untrue.
+
+1. **`fixtures` carried a red failure annotation while every step exited 0.** `bun test` sees
+   `GITHUB_ACTIONS=true` and emits assertion failures as `::error::` workflow commands. The
+   `failed-test` fixture must fail — that is the assertion — so the UI showed
+   `Expected: "hello-world" / Received: "-hello-world-"` as a failed check on a green job. Fixed by
+   scoping the variable off that one command; the exit code is still the signal.
+2. **Every job ran on the deprecated Node 20 shim.** `checkout@v4` / `setup-python@v5` declare
+   `node20`; bumped to `checkout@v5` / `setup-python@v6`, confirmed per tag from `action.yml`.
 
 ### What the Linux leg actually settled
 

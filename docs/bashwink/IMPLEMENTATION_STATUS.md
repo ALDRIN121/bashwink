@@ -2,7 +2,7 @@
 
 **Snapshot:** 2026-11-23, Phase 0 **complete and gate-passed** with real CI evidence;
 Phase 1 **complete and gate-passed** — 10/10 tasks, 188 tests, 11/11 CI jobs green on
-`ubuntu-latest` and `macos-15`.
+`ubuntu-latest` and `macos-15` at `ad9d44e` ([run 45129207277](https://github.com/ALDRIN121/bashwink/actions/runs/45129207277)).
 **Canonical per-task register:** `BASHWINK_TASKS_90.csv`.
 **The block below is generated** by `scripts/generate_status_summary.py` — do not hand-edit
 it. `--check` fails if it drifts from the register.

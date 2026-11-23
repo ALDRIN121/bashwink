@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite"
+import { Database, SQLiteError } from "bun:sqlite"
 import { randomBytes } from "node:crypto"
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import path from "node:path"
@@ -88,8 +88,11 @@ function unattendedDatabase(environment: Record<string, string>): string {
   try {
     statSync(file)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return file
-    throw new ReadinessError("could not inspect the OpenCode database before startup")
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === "ENOENT") return file
+    throw new ReadinessError(
+      `could not locate the OpenCode database before startup (${code ?? "unknown error"})`,
+    )
   }
   try {
     const db = new Database(file, { readonly: true })
@@ -108,7 +111,8 @@ function unattendedDatabase(environment: Record<string, string>): string {
     }
   } catch (error) {
     if (error instanceof ReadinessError) throw error
-    throw new ReadinessError("could not inspect the OpenCode database before startup")
+    const detail = error instanceof SQLiteError ? `${error.code} / ${error.errno}` : "unknown error"
+    throw new ReadinessError(`could not inspect the OpenCode database before startup (${detail})`)
   }
   return file
 }

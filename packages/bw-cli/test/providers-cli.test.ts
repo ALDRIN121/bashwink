@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -441,50 +441,81 @@ describe("BW-091 — model selection", () => {
 })
 
 describe("BW-091 — pre-flight blocks a doomed run before it starts", () => {
+  /**
+   * A stub runtime, because the pre-flight runs *after* runtime resolution.
+   *
+   * That ordering is deliberate: a missing runtime is an install problem and should be
+   * reported as one, ahead of any credential complaint. But it means these tests cannot rely
+   * on "there is no runtime here" — CI does have one on PATH on macOS runners and not on
+   * Linux, so an unruntime-ed test passed locally and failed with exit 127 in CI on both
+   * legs. A stub makes the precondition explicit and platform-independent.
+   */
+  function stubRuntime(): { dir: string; cleanup: () => void } {
+    const dir = mkdtempSync(path.join(tmpdir(), "bw-stub-runtime-"))
+    const binary = path.join(dir, "opencode")
+    // If this ever executes, the pre-flight failed to refuse and the test must say so.
+    writeFileSync(binary, "#!/bin/sh\necho 'STUB RUNTIME EXECUTED' >&2\nexit 42\n", "utf8")
+    chmodSync(binary, 0o755)
+    return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
+  }
+
   test("an explicit --model on a provider with no credential fails with the variable name", () => {
     const box = sandbox()
+    const stub = stubRuntime()
     try {
       box.cli(ADD, { BW_TEST_PROVIDER_KEY: "x" })
-      // BASHWINK_OPENCODE_BIN is irrelevant here: the refusal must happen before resolution,
-      // so no runtime is needed for this test to be meaningful.
       const run = box.cli(["run", "--model", "cc/claude-sonnet-5", "hello"], {
         BW_TEST_PROVIDER_KEY: "",
+        BASHWINK_OPENCODE_BIN: path.join(stub.dir, "opencode"),
       })
       expect(run.code).toBe(1)
       expect(run.stderr).toContain("BW_TEST_PROVIDER_KEY is not set")
       expect(run.stderr).toMatch(/export BW_TEST_PROVIDER_KEY=/)
       // The runtime's own message must not be what the user sees instead.
       expect(run.stderr).not.toContain("Invalid 'Authorization' header")
+      // And the refusal happened before spawning.
+      expect(run.stderr).not.toContain("STUB RUNTIME EXECUTED")
     } finally {
       box.done()
+      stub.cleanup()
     }
   })
 
   test("--model=value form is recognised too", () => {
     const box = sandbox()
+    const stub = stubRuntime()
     try {
       box.cli(ADD, { BW_TEST_PROVIDER_KEY: "x" })
-      const run = box.cli(["run", "--model=cc/claude-sonnet-5", "hi"], { BW_TEST_PROVIDER_KEY: "" })
+      const run = box.cli(["run", "--model=cc/claude-sonnet-5", "hi"], {
+        BW_TEST_PROVIDER_KEY: "",
+        BASHWINK_OPENCODE_BIN: path.join(stub.dir, "opencode"),
+      })
       expect(run.code).toBe(1)
       expect(run.stderr).toContain("BW_TEST_PROVIDER_KEY")
+      expect(run.stderr).not.toContain("STUB RUNTIME EXECUTED")
     } finally {
       box.done()
+      stub.cleanup()
     }
   })
 
   test("a model outside the config is not pre-flighted, so the runtime still decides", () => {
     const box = sandbox()
+    const stub = stubRuntime()
     try {
-      // No provider configured at all: the check must stay silent rather than inventing a
-      // credential requirement for the runtime's built-in catalogue. It will fail later on
-      // runtime resolution in this environment, which is a different, honest failure.
+      // No provider configured: the check must stay silent rather than inventing a credential
+      // requirement for the runtime's built-in catalogue. The stub proves the call reached the
+      // runtime instead of being refused — asserting only "no auth error" would also pass if
+      // the wrapper had failed for an unrelated reason.
       const run = box.cli(["run", "--model", "opencode/tidepool-alpha-free", "hi"], {
-        BASHWINK_OPENCODE_BIN: "",
-        PATH: "/usr/bin:/bin",
+        BASHWINK_OPENCODE_BIN: path.join(stub.dir, "opencode"),
       })
       expect(run.stderr).not.toContain("cannot authenticate")
+      expect(run.stderr).toContain("STUB RUNTIME EXECUTED")
+      expect(run.code).toBe(42)
     } finally {
       box.done()
+      stub.cleanup()
     }
   })
 })

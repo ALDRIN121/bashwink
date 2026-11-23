@@ -19,6 +19,121 @@ Phase 2 increment 2 (LLM integration, BW-091) evidence is in
 `plugin-resolution.test.ts`, and `scripts/build_alpha.sh`.
 
 
+
+## Phase 2 increment 3 — alpha stabilisation (BW-059, BW-091 register entry, 2026-11-23)
+
+### The interactive entry point was broken
+
+Bare `bashwink` printed help instead of starting a session, because the dispatcher treated
+`first === undefined` as `--help`. For the alpha's most obvious invocation, the one thing it
+could not do was start a conversation.
+
+| Directory | Boot entry recorded | Workspace the runtime resolved |
+| --- | --- | --- |
+| `/tmp/bw-tui-git` (Git repo) | yes | `/private/tmp/bw-tui-git` |
+| `/tmp/bw-tui-nogit` (no Git) | yes | `/private/tmp/bw-tui-nogit` |
+| `/tmp/bw-tui-nested/deep/sub` | yes | `/private/tmp/bw-tui-nested/deep/sub` |
+
+`fixtures/interactive-entry/run.sh` → **7/7**. The TUI is a full-screen application, so the
+assertion is not on its escape-sequence output: each launch's boot entry carries the `location`
+the runtime resolved, and a launch that failed produces none.
+
+Two portability traps surfaced while writing that fixture, both of which failed **silently** as
+"no boot entry" rather than as an error: macOS `script` has no `-c` flag (that is util-linux),
+and `timeout` is absent on macOS. Both are recorded in the fixture's header.
+
+A non-interactive bare invocation still prints help: neither stream is a terminal, and spawning a
+TUI onto a pipe hangs instead of failing.
+
+### A launch failure that was misreported
+
+A session killed with `SIGKILL` leaves the runtime's managed service holding its port. The next
+launch then dies during start-up with a port-in-use stack trace, and the wrapper reported
+"evidence plugin did not initialise" — true, and actively misleading, because the agent never
+started at all.
+
+The wrapper now reads the runtime's own log for a known infrastructure failure and reports the
+cause, the holding PID, and how to clear it. Unit controls:
+`packages/bw-cli/test/service-health.test.ts` (7 tests). The patterns are copied from output the
+pinned binary actually produced, and an ordinary provider error is explicitly **not** classified
+as an infrastructure failure.
+
+### BW-059 — allowedPaths is enforced
+
+Enforcement is the plugin's `execute.before` hook: the one tool hook whose failure rejects the
+call before the tool body runs (`packages/core/src/plugin/hooks.ts`). The wrapper writes the
+policy per run from the approved contract; the plugin reads it once at setup, so a mid-run write
+cannot change its own fence. A policy that fails to parse is treated as "enforce with no paths"
+— fail closed, never open.
+
+Live model, contract with `allowedPaths: ["src"]`, `fixtures/scope-fence/run.sh` → **10/10**:
+
+| Attempt | Result |
+| --- | --- |
+| `../bw-scope-outside/pwned.txt` | refused; file absent |
+| `/tmp/bw-scope-outside/absolute.txt` | refused; file absent |
+| in-scope edit of `src/calc.py` | applied; test passes |
+| edit of `test_calc.py` (outside scope) | refused; file hash unchanged |
+
+The denials, as recorded in the chain:
+
+```
+DENIED write | '../bw-scope-outside/pwned.txt' resolves to /private/tmp/bw-scope-outside/pwned.txt,
+             | which is outside this task's allowed paths (src).
+DENIED write | '/tmp/bw-scope-outside/absolute.txt' resolves to /private/tmp/bw-scope-outside/absolute.txt, ...
+```
+
+Symlink escape is refused because containment is decided on `realpath` of the deepest existing
+ancestor — `link -> /etc` then `link/passwd` is lexically inside the workspace and physically
+outside it. Unit controls: `packages/bw-evidence/test/scope.test.ts` (23 tests), including that
+case with a real symlink.
+
+**Scope of the guarantee, stated precisely.** File writes are fenced and audited. A permitted
+shell command is **not** path-bounded: obvious outside path arguments and an out-of-scope
+`workdir` are refused, but an interpreter can write anywhere, so every permitted shell call is
+recorded as `unconstrained`. Two markers were observed in a verified run:
+
+```
+UNCONSTRAINED: shell commands are not path-bounded; only their obvious path arguments were checked
+```
+
+`unconstrained` is a separate phase from `denied` so the denial count stays truthful.
+
+### A false security claim, found and fixed
+
+`doctor` said an untrusted workspace denies writes and shell "by default". It did not:
+`evaluateCall` existed and was called by **tests only**. A fresh clone was as writable as a
+trusted one.
+
+Trust is now enforced through the same hook. Verified with a real model:
+
+| Workspace state | Request | Result |
+| --- | --- | --- |
+| untrusted | create `proof.txt` | refused; file **absent** |
+| after `bashwink trust .` | create `proof.txt` | created, contents correct |
+
+This is the kind of defect that matters more than a missing feature: the documentation asserted a
+boundary that did not exist.
+
+### Totals
+
+| Gate | Result |
+| --- | --- |
+| `bun test packages` | **365 pass / 0 fail**, 19 files, 1032 expect() |
+| `bun test packages/bw-cli` (as CI runs it) | 292 pass / 0 fail, 17 files |
+| `bun test packages/bw-evidence` | 73 pass / 0 fail, 2 files |
+| typecheck / oxlint `--deny-warnings` / `bun fmt --check` | clean |
+| existing fixtures | runtime-health 17/17, tool-lifecycle 13/13, contract 14/14, resume 10/10, phase1-demo 8/8 stages, scenarios 8/8, baselines 5/5 |
+| new fixtures | interactive-entry 7/7, scope-fence 10/10 |
+
+### Not run, and stated as such
+
+- **Dependency vulnerability audit** (`bun audit` / advisory database): not run; no advisory
+  source is configured here. Licence inventory **was** checked: 1643 packages, 48 requiring a
+  decision, 48 recorded, `open + release-blocking: (none)`.
+- **Windows**: untested.
+- **Second independently credentialed provider**: still BLOCKED on credit.
+
 ## Phase 2 increment 2 — real-model integration (BW-091, 2026-11-23)
 
 Everything in this section was executed. Where a claim could not be tested it is recorded as

@@ -1,0 +1,329 @@
+/**
+ * BW-059 — ScopeFence: the allowedPaths policy, evaluated at the tool boundary.
+ *
+ * Why this module exists rather than a prompt: a TaskContract's `allowedPaths` was recorded and
+ * displayed, and nothing enforced it. The model could write anywhere the runtime's permission
+ * prompts allowed. A contract the agent can ignore is documentation, not a boundary.
+ *
+ * The enforcement point is the plugin's `execute.before` hook, which upstream treats as the one
+ * hook whose failure **rejects the call before it runs** (`packages/core/src/plugin/hooks.ts`:
+ * "Only tool execute.before may fail: a Tool.Error rejects the call before it runs"). That is
+ * the earliest place a write can be stopped, and it is why this is a plugin rather than a
+ * wrapper-side check on the finished diff.
+ *
+ * Two properties this design refuses to trade away:
+ *
+ *  1. **Symlinks are resolved, not string-matched.** `workspace/link -> /etc` then a write to
+ *     `link/passwd` is lexically "inside the workspace" and physically `/etc/passwd`. Containing
+ *     by prefix would allow it. Every target is resolved through `realpath` of its deepest
+ *     existing ancestor before the containment test.
+ *  2. **Shell is not claimed to be bounded.** A shell string can write anywhere through an
+ *     interpreter (`python3 -c "open('/etc/passwd','w')"`), and no parser fixes that. So shell
+ *     calls have their obvious escapes rejected and every one is recorded as unconstrained.
+ *     A real boundary needs an OS sandbox (BW-031); this is a guardrail that is honest about
+ *     being one.
+ */
+
+import { existsSync, realpathSync } from "node:fs"
+import path from "node:path"
+
+export type ScopeMode = "off" | "enforce"
+
+export interface ScopePolicy {
+  readonly mode: ScopeMode
+  /** Roots a **write** may touch. Each is resolved to a real path at load time. */
+  readonly allowedPaths: readonly string[]
+  /**
+   * Roots a **read** may touch, and the only place a shell command may run.
+   *
+   * Wider than `allowedPaths` by design. Narrowing writes is the point of a scope fence;
+   * narrowing reads to the same set would stop the agent from seeing the repository it is
+   * supposed to change, and narrowing the shell's working directory to it made even
+   * `python3 -m pytest` impossible — both observed when this policy was first run against a
+   * real model, which answered by repeatedly retrying a command it was not allowed to run.
+   */
+  readonly readPaths: readonly string[]
+  /**
+   * Whether the shell tool may run at all.
+   *
+   * Not a path setting: it is the acknowledged escape hatch. When false, every shell call is
+   * refused, which makes the scope a genuine (if blunt) boundary for a task that only needs
+   * file edits.
+   */
+  readonly allowShell: boolean
+  /** Tool names that mutate the filesystem. Anything absent from this list is not path-checked. */
+  readonly readonly_?: true
+}
+
+/** Tools that mutate one file. */
+const WRITE_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch"])
+/** Tools that only read one file. */
+const READ_TOOLS = new Set(["read"])
+/** Tools whose input is a patch document containing several targets. */
+const PATCH_TOOLS = new Set(["patch"])
+const SHELL_TOOLS = new Set(["shell", "bash"])
+
+export type ScopeVerdict =
+  | { readonly allow: true; readonly unconstrained?: boolean; readonly note?: string }
+  | {
+      readonly allow: false
+      readonly reason: string
+      readonly target?: string
+      /** Which rule refused it, so the audit says more than "no". */
+      readonly rule?: "write-scope" | "read-scope" | "shell-scope" | "shell-disabled"
+    }
+
+export interface ScopeInput {
+  readonly tool: string
+  readonly input: unknown
+  /** The runtime's resolved workspace root for this call. */
+  readonly cwd: string
+}
+
+/**
+ * Resolve a path to its physical location, following symlinks, without requiring it to exist.
+ *
+ * `realpathSync` throws on a missing file, and a write to a new file is the normal case. So the
+ * deepest existing ancestor is resolved and the remaining segments are re-joined: that catches a
+ * symlinked directory (`link -> /etc`) while still accepting `src/new.ts`.
+ */
+export function physicalPath(target: string): string {
+  let probe = path.resolve(target)
+  const tail: string[] = []
+  // Bound the walk: a filesystem cannot have more components than this, and a pathological
+  // path must not spin.
+  for (let depth = 0; depth < 4096; depth += 1) {
+    if (existsSync(probe)) {
+      let real: string
+      try {
+        real = realpathSync(probe)
+      } catch {
+        // An unreadable or dangling component: treat the lexical path as the answer rather than
+        // pretending it resolved. The containment test below then decides on the literal path,
+        // which errs toward refusing.
+        return path.resolve(target)
+      }
+      return tail.length === 0 ? real : path.join(real, ...tail.reverse())
+    }
+    const parent = path.dirname(probe)
+    if (parent === probe) return path.resolve(target)
+    tail.push(path.basename(probe))
+    probe = parent
+  }
+  return path.resolve(target)
+}
+
+/** True when `target` is `root` or inside it. Separator-aware, so `/a/bc` is not inside `/a/b`. */
+export function contains(root: string, target: string): boolean {
+  const normalizedRoot = path.resolve(root)
+  const normalizedTarget = path.resolve(target)
+  if (normalizedTarget === normalizedRoot) return true
+  return normalizedTarget.startsWith(normalizedRoot + path.sep)
+}
+
+/**
+ * Build a policy from the contract's declared paths.
+ *
+ * Roots are resolved once, at load time. A root that does not exist yet is still accepted (a
+ * task may create its output directory), but it is resolved physically so a later symlink at
+ * that location cannot silently re-point the boundary.
+ */
+export function makePolicy(input: {
+  readonly mode: ScopeMode
+  readonly allowedPaths: readonly string[]
+  /** Defaults to the workspace root, which is what a run always has. */
+  readonly readPaths?: readonly string[]
+  readonly allowShell?: boolean
+  readonly cwd: string
+}): ScopePolicy {
+  return {
+    mode: input.mode,
+    allowedPaths: input.allowedPaths.map((entry) => physicalPath(path.resolve(input.cwd, entry))),
+    readPaths: (input.readPaths ?? [input.cwd]).map((entry) =>
+      physicalPath(path.resolve(input.cwd, entry)),
+    ),
+    allowShell: input.allowShell ?? true,
+  }
+}
+
+/** Read a policy document, refusing anything it cannot fully understand. */
+export function parsePolicy(document: unknown): ScopePolicy | undefined {
+  if (typeof document !== "object" || document === null) return undefined
+  const record = document as Record<string, unknown>
+  const mode = record["mode"]
+  if (mode !== "off" && mode !== "enforce") return undefined
+  const raw = record["allowedPaths"]
+  if (!Array.isArray(raw) || raw.some((entry) => typeof entry !== "string")) return undefined
+  const allowShell = record["allowShell"]
+  if (allowShell !== undefined && typeof allowShell !== "boolean") return undefined
+  const rawRead = record["readPaths"]
+  if (
+    rawRead !== undefined &&
+    (!Array.isArray(rawRead) || rawRead.some((e) => typeof e !== "string"))
+  )
+    return undefined
+  return {
+    mode,
+    allowedPaths: raw as string[],
+    readPaths: (rawRead as string[] | undefined) ?? (raw as string[]),
+    allowShell: allowShell ?? true,
+  }
+}
+
+/** Extract the file targets a patch document would touch. */
+export function patchTargets(patchText: string): string[] {
+  const targets: string[] = []
+  // The patch grammar the runtime uses marks each operation with a `*** <Op> File: <path>` line.
+  const pattern = /^\*\*\* (?:Update|Add|Delete) File: (.+)$/gm
+  for (const match of patchText.matchAll(pattern)) {
+    const target = match[1]?.trim()
+    if (target !== undefined && target !== "") targets.push(target)
+  }
+  return targets
+}
+
+/**
+ * Path-like tokens in a shell command, best effort.
+ *
+ * Not a shell parser, and not trying to be: quotes, substitutions and heredocs defeat tokenising,
+ * and an interpreter can open any path from a string that looks innocent. This exists to catch
+ * the obvious `cat /etc/passwd` and `../..` cases so they are *denied* rather than merely
+ * recorded, and its limits are stated in the evidence as `unconstrained`.
+ */
+export function shellPathTokens(command: string): string[] {
+  const tokens = command.match(/(?:[^\s"'`;&|<>()]+)/g) ?? []
+  return tokens.filter(
+    (token) =>
+      token.includes("/") &&
+      !token.startsWith("-") &&
+      !/^[a-z]+:\/\//i.test(token) && // URLs are not filesystem paths
+      !token.includes("$"), // a substituted path is unknowable here; recorded, not judged
+  )
+}
+
+function targetOfFileTool(input: unknown): string | undefined {
+  if (typeof input !== "object" || input === null) return undefined
+  const record = input as Record<string, unknown>
+  for (const key of ["path", "filePath", "file_path", "file"]) {
+    const value = record[key]
+    if (typeof value === "string" && value !== "") return value
+  }
+  return undefined
+}
+
+/**
+ * Decide whether a tool call may run.
+ *
+ * Order matters: file tools are checked strictly, patch documents per target, and shell last.
+ * An unknown tool is allowed — this policy is a fence around paths, not an allowlist of tools,
+ * and silently blocking tools it does not recognise would break the agent in ways that look
+ * like model errors.
+ */
+export function evaluate(policy: ScopePolicy, input: ScopeInput): ScopeVerdict {
+  if (policy.mode === "off") return { allow: true }
+
+  const cwd = input.cwd
+
+  if (WRITE_TOOLS.has(input.tool)) {
+    const raw = targetOfFileTool(input.input)
+    if (raw === undefined) return { allow: true }
+    const target = physicalPath(path.resolve(cwd, raw))
+    if (policy.allowedPaths.some((root) => contains(root, target))) return { allow: true }
+    return {
+      allow: false,
+      rule: "write-scope",
+      target,
+      reason:
+        policy.allowedPaths.length === 0
+          ? `no file writes are permitted here: the workspace is not trusted, or the task's ` +
+            `contract allows no paths. '${raw}' would have written ${target}.`
+          : `'${raw}' resolves to ${target}, which is outside this task's allowed paths ` +
+            `(${policy.allowedPaths.join(", ")}).`,
+    }
+  }
+
+  if (READ_TOOLS.has(input.tool)) {
+    const raw = targetOfFileTool(input.input)
+    if (raw === undefined) return { allow: true }
+    const target = physicalPath(path.resolve(cwd, raw))
+    if (policy.readPaths.some((root) => contains(root, target))) return { allow: true }
+    return {
+      allow: false,
+      rule: "read-scope",
+      target,
+      reason:
+        policy.readPaths.length === 0
+          ? `no reads are permitted here: the workspace is not trusted.`
+          : `'${raw}' resolves to ${target}, which is outside this run's readable roots ` +
+            `(${policy.readPaths.join(", ")}).`,
+    }
+  }
+
+  if (PATCH_TOOLS.has(input.tool)) {
+    const record = input.input as Record<string, unknown> | undefined
+    const text = typeof record?.["patchText"] === "string" ? (record["patchText"] as string) : ""
+    for (const raw of patchTargets(text)) {
+      const target = physicalPath(path.resolve(cwd, raw))
+      if (!policy.allowedPaths.some((root) => contains(root, target)))
+        return {
+          allow: false,
+          rule: "write-scope",
+          target,
+          reason:
+            `the patch modifies ${raw} (${target}), which is outside this task's allowed paths ` +
+            `(${policy.allowedPaths.join(", ")}).`,
+        }
+    }
+    return { allow: true }
+  }
+
+  if (SHELL_TOOLS.has(input.tool)) {
+    if (!policy.allowShell)
+      return {
+        allow: false,
+        rule: "shell-disabled",
+        reason:
+          "shell is disabled for this task because a command can write anywhere; " +
+          "this contract allows file edits only.",
+      }
+    const record = input.input as Record<string, unknown> | undefined
+    const command = typeof record?.["command"] === "string" ? (record["command"] as string) : ""
+    const workdir = typeof record?.["workdir"] === "string" ? (record["workdir"] as string) : cwd
+
+    // A `workdir` outside the fence is a direct escape.
+    const resolvedWorkdir = physicalPath(path.resolve(cwd, workdir))
+    if (!policy.readPaths.some((root) => contains(root, resolvedWorkdir)))
+      return {
+        allow: false,
+        rule: "shell-scope",
+        target: resolvedWorkdir,
+        reason: `the command's working directory ${resolvedWorkdir} is outside this run's readable roots.`,
+      }
+
+    // Checked against the readable roots, not the writable ones: a command may reasonably read
+    // or execute anything in the repository. Whether it *writes* through an interpreter cannot
+    // be decided from the string, which is why an allowed shell call is marked unconstrained
+    // rather than being described as safe.
+    for (const token of shellPathTokens(command)) {
+      const target = physicalPath(path.resolve(resolvedWorkdir, token))
+      if (!policy.readPaths.some((root) => contains(root, target)))
+        return {
+          allow: false,
+          rule: "shell-scope",
+          target,
+          reason:
+            `the command references ${token} (${target}), which is outside this run's readable ` +
+            `roots (${policy.readPaths.join(", ")}).`,
+        }
+    }
+
+    // Allowed, but the caller must record that a shell command is not a bounded operation.
+    return {
+      allow: true,
+      unconstrained: true,
+      note: "shell commands are not path-bounded; only their obvious path arguments were checked",
+    }
+  }
+
+  return { allow: true }
+}

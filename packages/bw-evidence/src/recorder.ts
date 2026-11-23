@@ -79,7 +79,7 @@ export function truncateBytes(text: string, maxBytes: number): string {
  * never happen. Before this phase existed, a plugin that failed to load and a session that
  * simply called no tools produced the same thing: an empty log.
  */
-export type ToolPhase = "boot" | "model" | "before" | "after"
+export type ToolPhase = "boot" | "model" | "before" | "after" | "denied" | "unconstrained"
 
 export interface ToolCallRef {
   /** OpenCode tool call id, e.g. `call_...`. */

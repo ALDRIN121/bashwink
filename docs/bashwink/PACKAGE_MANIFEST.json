@@ -43,7 +43,7 @@
       "size_bytes": 43879
     },
     "BASHWINK_TASKS_90.csv": {
-      "sha256": "004d3c3b27e7c259fe433a2438f180daf9e806308873e9f8932288626f3aaebf",
+      "sha256": "b91370d8a5889006f251c59cf688a783e5aee15f439ff2b4562ed7a13c78b7dd",
       "size_bytes": 37321
     },
     "BASHWINK_V2_FEATURE_BACKLOG.md": {
@@ -79,7 +79,7 @@
       "size_bytes": 9079
     },
     "PHASE-02-PROOF-SECURITY.md": {
-      "sha256": "94226f73388bdb9a7744304fd4ba780164dc4c897760af9aa76674e2b7177022",
+      "sha256": "9484c7e47fa5685957acb1f753441fe48989b84c4623f9676d50a7e50072ba29",
       "size_bytes": 13425
     },
     "PHASE-03-MEMORY-VERIFIER.md": {
@@ -103,7 +103,7 @@
       "size_bytes": 6165
     },
     "PHASE_GATE_CHECKLIST.md": {
-      "sha256": "809705be2e2a8ea20800d2839087aa5c4bc2f32a2e0e15fbe9f05ea6fe53b160",
+      "sha256": "cd06761fdd972ad93c531d956c56a21857aae759c0dfb1d5c680343df22d36b1",
       "size_bytes": 4557
     },
     "reports/BASHWINK_FULL_PLAN.docx": {
@@ -127,6 +127,15 @@
     },
     "LLM_INTEGRATION_AUDIT.md": {
       "sha256": "81fcaff84431064e41b997036a8fa8ebaeddb0ad3300cb77b3eb5b74fded7611"
+    },
+    "ALPHA_RELEASE_CHECKLIST.md": {
+      "sha256": "0cc0de43a8d3c1d6c9d22bcecc9947cb83fa49b750c8f1b1f6c669a71354eed4"
+    },
+    "ALPHA_TESTER_GUIDE.md": {
+      "sha256": "8f17a9a6af70981e83a0f42d535fc0d691801cbc2b110076bd8e4eaa56db7cbf"
+    },
+    "KNOWN_LIMITATIONS.md": {
+      "sha256": "13dadde831ef8b1d521a5f7259d7adec0c5097b90e1a61cc0ad6663e2f5bfb47"
     }
   }
 }

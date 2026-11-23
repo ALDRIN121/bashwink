@@ -45,6 +45,11 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { existsSync } from "node:fs"
 import { preflightCredential, readRuntimeConfig } from "./providers.js"
+import { findRuntimeFailure, renderRuntimeFailure } from "./service-health.js"
+import { writeFileSync } from "node:fs"
+import { Store } from "./store.js"
+import { readPlan } from "./commands.js"
+import { isTrusted, readTrust } from "./trust.js"
 
 /** Value of `--flag value` or `--flag=value`, or undefined. First occurrence wins. */
 function flagOf(argv: readonly string[], flag: string): string | undefined {
@@ -104,9 +109,35 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
     out(`bashwink ${VERSION}`)
     return { exitCode: 0, handled: true }
   }
-  if (first === "--help" || first === "-h" || first === undefined) {
+  if (first === "--help" || first === "-h") {
     out(renderHelp())
     return { exitCode: 0, handled: true }
+  }
+
+  // Bare `bashwink` is the interactive entry point: it forwards an empty argv to the runtime,
+  // which launches its TUI in the current directory. Printing help here instead would make the
+  // most obvious invocation the one thing that cannot start a session.
+  //
+  // Help is still what a *non-interactive* bare invocation gets: a pipeline or a CI step
+  // cannot drive a TUI, and spawning one onto a pipe produces a hung process rather than an
+  // error. `stdout.isTTY` is the discriminator, and the message says how to force either
+  // behaviour, so nobody has to guess which branch they hit.
+  if (first === undefined) {
+    // Either stream being a terminal is enough: `bashwink < /dev/null` from a real terminal
+    // should still start the TUI, and the runtime handles EOF on stdin itself. Requiring both
+    // would refuse a legitimate interactive invocation.
+    if (process.stdout.isTTY !== true && process.stdin.isTTY !== true) {
+      out(renderHelp())
+      err(
+        "note: no subcommand and stdout is not a terminal, so help was printed instead of " +
+          "starting the TUI.\n" +
+          "      run `bashwink` from an interactive terminal, or name a subcommand (e.g. `bashwink run ...`).",
+      )
+      return { exitCode: 0, handled: true }
+    }
+    // Fall through: the runtime receives no arguments and starts its interactive session.
+    out(`bashwink ${VERSION} — starting the interactive session in ${process.cwd()}`)
+    out("(the workspace and model are shown in the TUI; Ctrl-C twice exits)")
   }
 
   // Our own subcommands. A switch on the FIRST argument only, so `bashwink run --help` still
@@ -247,6 +278,80 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
     }
   })()
   if (pluginDirectory === undefined) return { exitCode: 3, handled: true }
+
+  // --- BW-059 ScopeFence: turn the contract into an enforced policy ---------------------
+  //
+  // The policy is written once, before the runtime starts, and the plugin reads it at setup.
+  // Writing it per tool call would let a mid-run write change its own fence. `off` (no approved
+  // contract, or no plan) is written too, so the plugin's absence of a policy is explicit rather
+  // than a file that happens to be missing.
+  //
+  // This is a guardrail, not a sandbox: it binds the *tool* layer, and a shell command remains
+  // able to write anywhere by invoking an interpreter. That is recorded, not hidden.
+  try {
+    const plan = readPlan()
+    let policy: {
+      mode: "off" | "enforce"
+      allowedPaths: string[]
+      readPaths: string[]
+      allowShell: boolean
+    } = { mode: "off", allowedPaths: [], readPaths: [], allowShell: true }
+    // An untrusted workspace denies writes and shell outright. `doctor` has always claimed
+    // this; until now `evaluateCall` existed but nothing called it, so the claim was false and
+    // a fresh clone was as writable as a trusted one. Enforcing it here — the same hook that
+    // enforces the contract — makes the sentence true and keeps one enforcement point.
+    const trusted = isTrusted(readTrust(path.join(resolved.config, "trust.json")), process.cwd())
+    if (!trusted) {
+      policy = { mode: "enforce", allowedPaths: [], readPaths: [process.cwd()], allowShell: false }
+    }
+
+    if (plan.plan !== undefined) {
+      const store = new Store({ file: path.join(resolved.data, "bashwink.sqlite") })
+      try {
+        const contract = store.contractForPlan(plan.plan.id)
+        // A contract cannot widen trust: an untrusted workspace stays read-only even with an
+        // approved contract, because the trust decision is about running here at all.
+        if (trusted && contract !== undefined && contract.approval === "approved") {
+          // Shell permission is derived from the contract rather than invented: a contract that
+          // forbids `shell` plainly means the task does not need it, and honouring that is a
+          // stronger boundary than anything this wrapper could infer.
+          const forbidsShell = (contract.constraints.forbiddenCommands ?? []).some(
+            (command) => command === "shell" || command === "bash",
+          )
+          policy = {
+            mode: "enforce",
+            allowedPaths: [...contract.allowedPaths],
+            // Reads and the shell's working directory stay at the run's workspace: the writable
+            // set is what a contract narrows, and narrowing reads to it would blind the agent.
+            readPaths: [process.cwd()],
+            allowShell: !forbidsShell,
+          }
+        }
+      } finally {
+        store.close()
+      }
+    }
+    writeFileSync(
+      path.join(resolved.evidence, "..", "scope.json"),
+      `${JSON.stringify(policy, null, 2)}\n`,
+      "utf8",
+    )
+    if (policy.mode === "enforce")
+      out(
+        trusted
+          ? `scope fence: enforcing ${policy.allowedPaths.join(", ") || "(no paths — all edits refused)"}` +
+              (policy.allowShell ? " (shell allowed, not path-bounded)" : " (shell disabled)")
+          : `scope fence: ${process.cwd()} is not trusted, so writes and shell are refused; ` +
+              `run \`bashwink trust ${process.cwd()}\` to allow them`,
+      )
+  } catch (error) {
+    // A fence that cannot be written must not silently disappear: say so and run unscoped,
+    // which is the honest state rather than a boundary that exists only on paper.
+    err(
+      `warning: could not write the scope policy (${error instanceof Error ? error.message : String(error)}); ` +
+        "this run is NOT path-scoped.",
+    )
+  }
   let staged: ReturnType<typeof stagePlugins> = []
   try {
     // Stage the plugin directory contents before every run (ADR-002 constraint 2). Without
@@ -325,6 +430,14 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
     })
     if (!boot.ok) {
       err("")
+      // Before blaming the evidence plugin, ask the runtime's own log why it never booted one.
+      // A launch that died on a held port produces an empty evidence log and would otherwise be
+      // reported as "the agent may have done real work" — which it plainly did not.
+      const infrastructure = findRuntimeFailure(runtimeLogHint(resolved))
+      if (infrastructure !== undefined) {
+        err(renderRuntimeFailure(infrastructure))
+        return { exitCode: exitCode === 0 ? 1 : exitCode, handled: false }
+      }
       err(
         renderMissingEvidence({
           record,

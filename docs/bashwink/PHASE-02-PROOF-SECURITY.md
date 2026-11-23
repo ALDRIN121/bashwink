@@ -2,7 +2,7 @@
 
 **Target:** v0.1 alpha gate  
 **Tasks:** 15  
-**Status:** In progress — **1 of 15 implemented (BW-055)**; gate NOT evaluated. Phase 2 began only after the Phase 1 revalidation in ADR-010.
+**Status:** In progress — **3 of 16 implemented (BW-055, BW-059, BW-091)**; gate NOT evaluated. Phase 2 began only after the Phase 1 revalidation in ADR-010.
 
 ## Objective
 
@@ -18,7 +18,7 @@ Implement TaskContract/IntentLock, immutable baseline, TestGuard, ScopeFence, Tr
 
 - [ ] Baseline snapshots and protected test inventory
 
-- [ ] Tool-bound path/command enforcement and source trust labels
+- [x] Tool-bound path enforcement (BW-059) — **Done** for file tools and shell path arguments; source trust labels (BW-066) remain open
 
 - [ ] Proof manifest and terminal evidence summary
 
@@ -59,7 +59,7 @@ Implement TaskContract/IntentLock, immutable baseline, TestGuard, ScopeFence, Tr
 
 - [ ] **BW-058 — TestGuard policy and integrity diff** (P0, L)
 
-- [ ] **BW-059 — ScopeFence tool-bound edit/command policy** (P0, M)
+- [x] **BW-059 — ScopeFence tool-bound edit/command policy** (P0, M) — **Done**: enforced at `execute.before`; traversal, absolute and symlink escapes refused; denials recorded.
 
 - [ ] **BW-060 — ProofPack evidence manifest with content hashes** (P0, M)
 
@@ -259,9 +259,76 @@ Unapproved outside-scope file write blocked even if model asks repeatedly.
 **Attach proof:** Denied/allowed adversarial fixture results, sanitized event trace and threat-model notes.
 
 
-- [ ] Implement BW-059
-- [ ] Run success and negative-path checks
-- [ ] Attach verifiable evidence and update issue status
+- [x] Implement BW-059
+- [x] Run success and negative-path checks
+- [x] Attach verifiable evidence and update issue status
+
+**Result.** `packages/bw-evidence/src/scope.ts`, wired into the plugin's `execute.before`
+hook — the one tool hook whose failure rejects the call before the tool body runs. The policy
+is written per run by the wrapper from the approved contract, and read once at plugin setup so a
+mid-run write cannot change its own fence.
+
+| Attack | Outcome |
+| --- | --- |
+| Write `../bw-scope-outside/pwned.txt` | refused; file absent |
+| Write `/tmp/bw-scope-outside/absolute.txt` | refused; file absent |
+| Symlink `link -> /etc`, write `link/passwd` | refused (containment decided on `realpath`) |
+| Shell `workdir` outside the readable roots | refused |
+| Shell argument naming an outside path | refused |
+| In-scope edit of `src/calc.py` | applied; tests pass |
+| Edit of the test file (outside `allowedPaths`) | refused; file hash unchanged |
+
+Live model, `fixtures/scope-fence/run.sh` **10/10**. Unit controls:
+`packages/bw-evidence/test/scope.test.ts` (23 tests).
+
+**Limits, stated rather than implied.** A permitted shell command can still write anywhere an
+interpreter can reach; only obvious path arguments and the working directory are checked, and
+every permitted shell call is recorded as `unconstrained`. Workspace trust is enforced through
+the same hook: an untrusted workspace refuses all writes and shell, which is what `doctor` had
+always claimed but nothing previously enforced.
+
+
+### 07b. BW-091 — Provider configuration, model selection and evidence attribution
+
+**Priority / effort:** P0 / L  
+**Dependencies:** BW-015, BW-055  
+**Area/owner:** Core  
+**Source:** v2
+
+**Work package**
+
+Make Bashwink capable of connecting to, selecting between and switching real LLMs, and record
+which model produced each piece of work, without adding a second inference engine.
+
+**Acceptance check**
+
+A provider can be configured without persisting a key; models can be listed, selected and
+switched mid-session; every tool entry names the model that served it or states that none was
+reported.
+
+- [x] Implement BW-091
+- [x] Run success and negative-path checks
+- [x] Attach verifiable evidence and update issue status
+
+**Result.** `providers.ts` and `providers-cli.ts` (`auth add|status|check|remove`,
+`model list|use|current`), plus model attribution in the evidence plugin. Inference, streaming
+and tool calls remain the pinned runtime's.
+
+Key properties, each bought with a reproduced failure:
+
+- A literal key is refused (`--key`); `--env` and `--key-file` are the routes, and no key value
+  appears in any file after a real run.
+- Wire protocol is per model: a provider-level `package` applies to every model and fails at the
+  first request on a mixed provider.
+- Attribution comes from the runtime's `session.step.started` / `session.model.selected` events,
+  per session, and is never backfilled from the configured default. A switch is its own chain
+  entry.
+- A missing credential is named before the runtime starts, instead of surfacing as
+  `Invalid 'Authorization' header or token`.
+
+Evidence: `docs/bashwink/LLM_INTEGRATION_AUDIT.md`; matrix and live results in
+`TEST_EVIDENCE.md`. **Not claimed:** a second independently credentialed provider (blocked on
+credit).
 
 
 ### 08. BW-060 — ProofPack evidence manifest with content hashes

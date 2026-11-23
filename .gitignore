@@ -24,6 +24,8 @@ fixtures/*/
 !fixtures/phase1-demo/
 !fixtures/runtime-health/
 !fixtures/contract/
+!fixtures/scope-fence/
+!fixtures/interactive-entry/
 
 # macOS
 .DS_Store

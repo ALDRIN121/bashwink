@@ -1,7 +1,7 @@
 # Bashwink — Canonical Project Documentation
 
 **Documentation bundle:** audited 22 November 2026; status refreshed 23 November 2026  
-**Implementation state:** Phase 0 and Phase 1 are implemented and gate-passed with hosted CI evidence. Phase 2 is in progress — 20 of 90 tasks Done, BW-055 (TaskContract) is the current increment. The Phase 2 gate has not been evaluated.
+**Implementation state:** Phase 0 and Phase 1 are implemented and gate-passed with hosted CI evidence. Phase 2 is in progress — 22 of 91 tasks Done; BW-055 (TaskContract), BW-059 (ScopeFence) and BW-091 (provider/model integration) are complete. The Phase 2 gate has not been evaluated.
 
 This folder is the single reference for the proposed Bashwink open-source coding agent. The `BASHWINK_TASKS_90.csv` file is the **canonical per-task status register**, not the individual historic backlogs.
 
@@ -17,7 +17,7 @@ This folder is the single reference for the proposed Bashwink open-source coding
 
 | Category | Files | Purpose |
 | --- | --- | --- |
-| Primary execution | `BASHWINK_PHASE_BY_PHASE_TASK_PLAN.md`, `BASHWINK_TASKS_90.csv` | Phase ordering and canonical 90 tasks |
+| Primary execution | `BASHWINK_PHASE_BY_PHASE_TASK_PLAN.md`, `BASHWINK_TASKS_90.csv` | Phase ordering and canonical task register |
 | Phase plans | `PHASE-00-FOUNDATION.md` through `PHASE-07-FUTURE.md` | Per-phase task instructions and gates |
 | Release controls | `PHASE_GATE_CHECKLIST.md` | Evidence-required exit criteria |
 | Baseline specification | `BASHWINK_PRODUCT_REQUIREMENTS.md`, `IMPLEMENTATION_BACKLOG.md`, `BASHWINK_FULL_PLAN.md` | Original 49 requirements and 54 tasks |

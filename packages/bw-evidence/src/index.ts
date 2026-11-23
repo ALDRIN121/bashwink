@@ -11,9 +11,10 @@
  */
 
 import { Plugin } from "@opencode/plugin"
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { EvidenceRecorder, onToolAfter, onToolBefore, verify, type ModelRef } from "./recorder.js"
+import { evaluate, parsePolicy, type ScopePolicy } from "./scope.js"
 
 export interface EvidencePluginOptions {
   /** Where to write `evidence.jsonl`. Default: `<cwd>/.bashwink/evidence`. */
@@ -65,6 +66,28 @@ function activeTaskFileOf(options: EvidencePluginOptions, evidenceDir: string): 
 }
 
 /**
+ * Read the scope policy the wrapper staged before this run.
+ *
+ * Read once at setup: the policy describes the task the run was started for, and re-reading it
+ * per call would let a mid-run file write change the fence. A policy that fails to parse is
+ * treated as **enforcing with no paths**, i.e. everything refused — a malformed fence must fail
+ * closed, never open.
+ */
+function scopePolicyOf(evidenceDir: string): ScopePolicy | undefined {
+  const file = path.join(evidenceDir, "..", "scope.json")
+  try {
+    if (!existsSync(file)) return undefined
+    const parsed = parsePolicy(JSON.parse(readFileSync(file, "utf8")))
+    if (parsed === undefined)
+      return { mode: "enforce", allowedPaths: [], readPaths: [], allowShell: false }
+    return parsed
+  } catch {
+    // Fail closed: an unreadable fence refuses everything rather than permitting everything.
+    return { mode: "enforce", allowedPaths: [], readPaths: [], allowShell: false }
+  }
+}
+
+/**
  * Create the plugin value.
  *
  * Exported separately from the default export so tests can build a plugin against an
@@ -102,6 +125,60 @@ export function create(options: EvidencePluginOptions = {}) {
           log(`before hook failed: ${error instanceof Error ? error.message : String(error)}`)
         }
       })
+
+      // --- BW-059 ScopeFence -------------------------------------------------
+      //
+      // Registered *after* the evidence hook on purpose. Upstream runs hooks in registration
+      // order, so the attempt is recorded before it is refused — a denial that leaves no trace
+      // is indistinguishable from a tool the model never asked for.
+      //
+      // Throwing here is the enforcement: `execute.before` is the one tool hook whose failure
+      // rejects the call before the tool body runs (packages/core/src/plugin/hooks.ts).
+      const policy = scopePolicyOf(recorder.file.replace(/\/[^/]+$/, ""))
+      if (policy !== undefined && policy.mode === "enforce") {
+        log(`scope fence active: ${policy.allowedPaths.join(",") || "(no paths)"}`)
+        await ctx.tool.hook("execute.before", (event) => {
+          let verdict
+          try {
+            verdict = evaluate(policy, {
+              tool: event.tool,
+              input: event.input,
+              cwd: ctx.location?.directory ?? process.cwd(),
+            })
+          } catch (error) {
+            // A policy that cannot evaluate must not silently allow the call.
+            log(
+              `scope evaluation failed: ${error instanceof Error ? error.message : String(error)}`,
+            )
+            throw new Error(
+              "bashwink scope fence: the policy could not be evaluated; refusing the call",
+            )
+          }
+          if (verdict.allow) {
+            if (verdict.unconstrained === true)
+              // A separate phase, not `denied`: this call ran. Conflating "was refused" with
+              // "ran without a path bound" would make the denial count meaningless.
+              recorder.record(
+                "unconstrained",
+                { id: `${event.id}_unconstrained`, tool: event.tool, sessionID: event.sessionID },
+                { status: "completed", note: verdict.note ?? "shell command is not path-bounded" },
+              )
+            return
+          }
+          try {
+            recorder.record(
+              "denied",
+              { id: event.id, tool: event.tool, sessionID: event.sessionID },
+              { status: "error", note: `DENIED ${verdict.reason}` },
+            )
+          } catch (error) {
+            log(
+              `could not record denial: ${error instanceof Error ? error.message : String(error)}`,
+            )
+          }
+          throw new Error(`bashwink scope fence: ${verdict.reason}`)
+        })
+      }
 
       await ctx.tool.hook("execute.after", (event) => {
         try {

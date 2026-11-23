@@ -2,11 +2,11 @@
 
 **Where we are:** **Phase 0 and Phase 1 are complete and gate-passed.** Phase 1 was
 **revalidated** after the silent-plugin-load investigation (ADR-010). **Phase 2 has started:**
-BW-055 (TaskContract / IntentLock data plane) is Done; 1 of 15 Phase 2 tasks. **Phase 2's gate
+BW-055 (TaskContract), BW-059 (ScopeFence) and BW-091 (provider/model integration) are Done; 3 of 16 Phase 2 tasks. **Phase 2's gate
 has not been evaluated**, and Phase 3 has not been started.
 
-- 20/90 tasks Done, 70 Not started, nothing Blocked.
-- **335 tests** pass; lint, formatting and typecheck are clean under the pinned Bun 1.4.4.
+- 22/91 tasks Done, 69 Not started, nothing Blocked.
+- **365 tests** pass; lint, formatting and typecheck are clean under the pinned Bun 1.4.4.
 - **Real-model execution is now proven end to end** (BW-091, not a register task): a paid
   provider configured without storing a key, model selection and switching across two wire
   protocols, real tool calls and file edits, tests run, and per-call model attribution in the

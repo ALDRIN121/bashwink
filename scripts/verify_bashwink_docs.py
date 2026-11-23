@@ -43,13 +43,13 @@ if (docs/'BASHWINK_TASKS_90.csv').exists():
         rows=list(csv.DictReader(f))
     ids=[r['ID'] for r in rows]
     taskmap={r['ID']:r for r in rows}
-    expected={f'BW-{i:03d}' for i in range(1,91)}
-    check(len(rows)==90, f'Expected 90 tasks, found {len(rows)}')
+    expected={f'BW-{i:03d}' for i in range(1,92)}
+    check(len(rows)==91, f'Expected 91 tasks, found {len(rows)}')
     check(len(set(ids))==len(ids), 'Duplicate task ID')
     check(set(ids)==expected, f'IDs missing/unexpected: {sorted(set(ids)^expected)}')
-    check(Counter(r['Source'] for r in rows)=={'v1':54,'v2':36},'Unexpected v1/v2 task totals')
+    check(Counter(r['Source'] for r in rows)=={'v1':54,'v2':37},'Unexpected v1/v2 task totals')
     phasecounts=Counter(r['Phase'] for r in rows)
-    check(phasecounts == {'P0':9,'P1':10,'P2':15,'P3':19,'P4':13,'P5':8,'P6':9,'P7':7},f'Unexpected phase task counts: {phasecounts}')
+    check(phasecounts == {'P0':9,'P1':10,'P2':16,'P3':19,'P4':13,'P5':8,'P6':9,'P7':7},f'Unexpected phase task counts: {phasecounts}')
     check(all(r['Status'] in ('Not started','In progress','Blocked','Done','Deferred') for r in rows),'Unexpected task status values')
     graph={}
     for r in rows:

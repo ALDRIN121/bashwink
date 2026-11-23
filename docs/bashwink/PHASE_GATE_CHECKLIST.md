@@ -4,10 +4,9 @@
 **Phase 1: 10/10 tasks Done, 4/4 release criteria verified; 11/11 CI jobs green on both
 supported platforms. Gate PASSED — revalidated 2026-11-23 after the silent-plugin-load
 investigation (ADR-010).**
-**Phase 2: 1/15 tasks Done (BW-055). Gate NOT evaluated. Phases 3–7: not started.**
-**Out-of-register: BW-091 (LLM provider integration) is implemented and verified — see
-`LLM_INTEGRATION_AUDIT.md`. It does not count toward the Phase 2 gate, and the gate is
-unchanged.**
+**Phase 2: 3/16 tasks Done (BW-055, BW-059, BW-091). Gate NOT evaluated. Phases 3–7: not started.**
+**BW-091 (provider/model integration) is now a register task in P2, Done — see
+`LLM_INTEGRATION_AUDIT.md`. It does not move the Phase 2 gate, which remains NOT evaluated.**
 
 Last evaluated 2026-11-23 after real GitHub Actions runs on both supported platforms
 (Phase 0 and Phase 1), and a local real-runtime pass for the Phase 1 revalidation.
@@ -18,11 +17,14 @@ Last evaluated 2026-11-23 after real GitHub Actions runs on both supported platf
       `--version` prints `bashwink 0.1.0`, `--help` documents every subcommand and exit code,
       and unknown arguments are forwarded to the pinned runtime unchanged.
 - [x] **`doctor` produces actionable messages with a nonzero exit and prints no credentials.**
-      8 checks; exits 1 when the runtime is missing and 0 when present. Credentials report
+      12 checks; exits 1 when the runtime is missing and 0 when present. Credentials report
       presence/length/fingerprint only, asserted with a planted sentinel.
 - [x] **Workspace trust is explicit and defaults to deny.** Untrusted workspaces deny
-      `write`/`shell`/`network` by construction; `--by` attribution is mandatory; an explicit
-      approval cannot override a hard deny.
+      `write`/`shell` by construction; `--by` attribution is mandatory; an explicit approval
+      cannot override a hard deny. **Correction (alpha increment):** this was recorded and
+      displayed but *not* enforced — `evaluateCall` existed and nothing called it. It is now
+      enforced through the BW-059 hook, verified with a real model: an untrusted workspace
+      refused a write that succeeded after `bashwink trust`.
 - [x] **Task/plan schema with migrations, surviving restart.** SQLite via `bun:sqlite`, one
       transaction per migration step, `SchemaTooNewError` on a newer file, rollback exercised
       by a test.

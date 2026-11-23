@@ -4,13 +4,12 @@
 Phase 1 **complete and gate-passed** — 10/10 tasks, 11/11 CI jobs green on `ubuntu-latest`
 and `macos-15` at `ad9d44e` ([run 45129207277](https://github.com/ALDRIN121/bashwink/actions/runs/45129207277)),
 and **revalidated** after the silent-plugin-load investigation (ADR-010).
-Phase 2 **in progress** — BW-055 done; **335 tests**; the runtime-health job runs on the real
-OpenCode binary on both platforms. Phase 2's gate has **not** been evaluated.
-**LLM integration (BW-091) is implemented and verified but is not a register task** — the
-90-task register has no provider/model entry, so it is recorded here and in
-`LLM_INTEGRATION_AUDIT.md` rather than being forced onto an unrelated task. Adding it to the
-register is a planning decision, not something this increment should decide by editing
-`Status`.
+Phase 2 **in progress** — BW-055, BW-059 and BW-091 done (3 of 16); **365 tests**; the
+runtime-health job runs on the real OpenCode binary on both platforms. Phase 2's gate has
+**not** been evaluated.
+**BW-091 was added to the register this increment**, so the provider/model work now has a task
+of its own instead of living in prose. The register is 91 tasks; earlier increments referenced
+90, which is a register growth, not a reassignment.
 **Canonical per-task register:** `BASHWINK_TASKS_90.csv`.
 **The block below is generated** by `scripts/generate_status_summary.py` — do not hand-edit
 it. `--check` fails if it drifts from the register.
@@ -21,13 +20,13 @@ it. `--check` fails if it drifts from the register.
 | --- | ---: | ---: | ---: | ---: | ---: |
 | P0 | 9 | 9 | 0 | 0 | 0 |
 | P1 | 10 | 10 | 0 | 0 | 0 |
-| P2 | 15 | 1 | 0 | 0 | 14 |
+| P2 | 16 | 3 | 0 | 0 | 13 |
 | P3 | 19 | 0 | 0 | 0 | 19 |
 | P4 | 13 | 0 | 0 | 0 | 13 |
 | P5 | 8 | 0 | 0 | 0 | 8 |
 | P6 | 9 | 0 | 0 | 0 | 9 |
 | P7 | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **90** | **20** | **0** | **0** | **70** |
+| **Total** | **91** | **22** | **0** | **0** | **69** |
 
 <!-- END GENERATED:status -->
 
@@ -36,6 +35,8 @@ it. `--check` fails if it drifts from the register.
 Real-model coding works end to end through the pinned runtime. What Bashwink adds is narrow
 and load-bearing: provider configuration without storing a key, model selection and switching,
 and per-call model attribution in the evidence chain.
+
+BW-091 (register task, Done):
 
 | Capability | State | Where |
 | --- | --- | --- |
@@ -48,13 +49,37 @@ and per-call model attribution in the evidence chain.
 | Model usage table in the export | **Done, tested** | `evidence export` |
 | Clean install outside the checkout | **Done, verified** | `scripts/build_alpha.sh` |
 | A second independently credentialed provider | **NOT verified — BLOCKED** | see TEST_EVIDENCE matrix |
-| Enforced filesystem boundary | **NOT implemented (BW-059)** | see risk note |
 
-**Alpha distribution risk:** `allowedPaths` in a TaskContract is recorded and displayed, and
-**nothing enforces it**. An alpha user running the agent against a real repository is relying on
-model judgement plus the runtime's permission prompts. Every real-model test in this increment
-used a disposable workspace for that reason. Recommendation: enforce BW-059, or an equivalent
-boundary, before distributing an alpha to anyone outside this machine.
+## BW-059 ScopeFence — enforced (Done)
+
+`allowedPaths` is now compiled into an execution-time policy and enforced in the plugin's
+`execute.before` hook, the one tool hook whose failure rejects a call before the tool body runs.
+The wrapper writes the policy per run from the approved contract; the plugin reads it once at
+setup, so a mid-run write cannot change its own fence.
+
+Verified with a live model (`fixtures/scope-fence/run.sh`, 10/10):
+
+| Attack | Outcome |
+| --- | --- |
+| `../bw-scope-outside/pwned.txt` | refused, file absent |
+| `/tmp/bw-scope-outside/absolute.txt` | refused, file absent |
+| symlink `link -> /etc` then `link/passwd` | refused (containment on `realpath`) |
+| shell `workdir` outside the readable roots | refused |
+| in-scope edit of `src/calc.py` | applied, tests pass |
+| edit of the test file | refused, hash unchanged |
+
+**Scope of the guarantee.** File writes are fenced and audited. A permitted shell command is
+**not** path-bounded — an interpreter can write anywhere — so obvious outside path arguments and
+the working directory are checked, and every permitted shell call is recorded as
+`unconstrained`. That marker is the honest limit, and `KNOWN_LIMITATIONS.md` §1 states it first.
+
+Also corrected this increment: **workspace trust is now enforced.** It was recorded and shown by
+`doctor` as "denied by default" while `evaluateCall` was never called, so the claim was false. An
+untrusted workspace now refuses all writes and shell, verified end to end.
+
+**Remaining alpha risk:** there is still no OS-level sandbox (BW-031), so shell remains an escape
+hatch. For a small supervised alpha that is acceptable and documented; for unattended use it is
+not.
 
 ## Phase 0 detail
 

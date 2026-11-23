@@ -50,6 +50,7 @@ import {
   standaloneArguments,
 } from "./execution-policy.js"
 import { executionTimeout, runWithBackend, selectBackend } from "./execution-backend.js"
+import { probeNativeSandbox } from "./native-sandbox.js"
 
 /** Value of `--flag value` or `--flag=value`, or undefined. First occurrence wins. */
 function flagOf(argv: readonly string[], flag: string): string | undefined {
@@ -142,6 +143,15 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
   // Our own subcommands. A switch on the FIRST argument only, so `bashwink run --help` still
   // forwards `--help` to the runtime where it means the runtime's help.
   switch (first) {
+    case "sandbox": {
+      if (rest.length !== 1 || rest[0] !== "probe") {
+        err("usage: bashwink sandbox probe")
+        return { exitCode: 2, handled: true }
+      }
+      const result = await probeNativeSandbox(process.env["BASHWINK_OPENCODE_BIN"])
+      out(JSON.stringify(result.report, null, 2))
+      return { exitCode: result.exitCode, handled: true }
+    }
     case "doctor": {
       const report = diagnose()
       out(renderDoctor(report))

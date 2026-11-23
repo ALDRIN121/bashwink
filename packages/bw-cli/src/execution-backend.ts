@@ -154,6 +154,10 @@ export const localBackend: ExecutionBackend = {
 
 export function selectBackend(mode = "local"): ExecutionBackend {
   if (mode === "local") return localBackend
+  if (mode === "native")
+    throw new Error(
+      "native coding sessions are not qualified; use bashwink sandbox probe for offline checks",
+    )
   throw new Error(`execution backend '${mode}' is unavailable`)
 }
 

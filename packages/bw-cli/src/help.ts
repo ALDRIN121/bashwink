@@ -52,6 +52,7 @@ USAGE
 
 COMMANDS
   backend                   print the selected execution backend capabilities
+  sandbox probe             run disposable native OS controls without starting an agent
   doctor                    check preconditions and report what is missing
   init                      create Bashwink's config and data directories
   trust <dir>               trust a workspace so shell/write actions are permitted there
@@ -84,7 +85,8 @@ VERSION AND PATHS
   Config:  ${pathsHelp("config")}
   Data:    ${pathsHelp("data")}
   Override everything at once with BASHWINK_HOME=/some/dir
-  BASHWINK_BACKEND=local    select direct host execution (default)
+  BASHWINK_BACKEND=local    select direct host execution (current default, unrestricted host access)
+  BASHWINK_BACKEND=native   require native coding isolation (currently refuses admission)
   BASHWINK_TIMEOUT_MS      optional positive runtime deadline in milliseconds
 
 PROVIDERS AND MODELS

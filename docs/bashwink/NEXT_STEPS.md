@@ -12,6 +12,8 @@ verified by real GitHub Actions runs on both supported platforms.
 | `verify` | [45064795624](https://github.com/ALDRIN121/bashwink/actions/runs/45064795624) | `437c742` | failure — 7/8 jobs (secret scan) |
 | `verify` | [45065505536](https://github.com/ALDRIN121/bashwink/actions/runs/45065505536) | `9b95d37` | **success — 8/8 jobs** |
 | `verify` | [45066245596](https://github.com/ALDRIN121/bashwink/actions/runs/45066245596) | `0b09620` | **success — 8/8 jobs** |
+| `verify` | [45067382809](https://github.com/ALDRIN121/bashwink/actions/runs/45067382809) | `8a3286c` | **success — 8/8 jobs** |
+| `verify` | [45111515216](https://github.com/ALDRIN121/bashwink/actions/runs/45111515216) | `c536466` | **success — 9/9 jobs** (lint gate added) |
 | `upstream-compat` | [45065638555](https://github.com/ALDRIN121/bashwink/actions/runs/45065638555) | `9b95d37` | failure — 28 `Ripgrep` tests/platform |
 | `upstream-compat` | [45066246923](https://github.com/ALDRIN121/bashwink/actions/runs/45066246923) | `0b09620` | **success — both platforms** |
 
@@ -25,6 +27,15 @@ verified by real GitHub Actions runs on both supported platforms.
    **download** it mid-test when absent — which the effect harness forbids. Invisible locally
    because Homebrew's `rg` 15.1.0 was already on `PATH`. Fixed by installing exactly the pinned
    version with a SHA-256 check.
+
+### A third gap was found by re-reading the acceptance criterion, not by CI
+
+BW-006's acceptance requires **"deterministic lint"**, and the independent review asked for a
+root lint gate. Typecheck existed; **lint did not** — no config, no script, no CI step — so
+BW-006 was Done with a genuinely unmet criterion. Now fixed: `bun fmt --check packages` (the
+pinned toolchain's own checker, no new dependency, cannot drift from Bun 1.4.4), with
+`bunfig.toml` pinning the tree's existing style. The gate was proven able to fail (injected bad
+formatting → exit 1) as well as pass. Green in CI: **9/9 jobs** in run 45111515216.
 
 ## Known risks carried into Phase 1 (none gate-blocking)
 

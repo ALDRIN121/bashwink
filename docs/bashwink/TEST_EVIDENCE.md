@@ -135,6 +135,8 @@ artifact; the run existed moments later. Nothing was wrong with the trigger conf
 | [45064795624](https://github.com/ALDRIN121/bashwink/actions/runs/45064795624) | `437c742` | `verify` | **failure** — 7/8 jobs, secret scan failed | 26 s |
 | [45065505536](https://github.com/ALDRIN121/bashwink/actions/runs/45065505536) | `9b95d37` | `verify` | **success** — 8/8 jobs | 22 s |
 | [45066245596](https://github.com/ALDRIN121/bashwink/actions/runs/45066245596) | `0b09620` | `verify` | **success** — 8/8 jobs | — |
+| [45067382809](https://github.com/ALDRIN121/bashwink/actions/runs/45067382809) | `8a3286c` | `verify` | **success** — 8/8 jobs | 29 s |
+| [45111515216](https://github.com/ALDRIN121/bashwink/actions/runs/45111515216) | `c536466` | `verify` | **success** — **9/9 jobs** (lint added) | 25 s |
 | [45065638555](https://github.com/ALDRIN121/bashwink/actions/runs/45065638555) | `9b95d37` | `upstream-compat` | **failure** — 28 `Ripgrep` tests per platform | — |
 | [45066246923](https://github.com/ALDRIN121/bashwink/actions/runs/45066246923) | `0b09620` | `upstream-compat` | **success** — both platforms, all 11 steps each | ~5 min |
 
@@ -170,6 +172,40 @@ the same 28 tests failed on both legs before it, and now none do.
 | secret scan | **success** | 9 s |
 | scope statement | **success** | 5 s |
 
+### Root lint gate — added after a missing acceptance criterion was found
+
+BW-006's acceptance reads *"PR gets deterministic **lint**, typecheck, unit, secret scan and
+supported-platform smoke status"*, and the independent review (correction item 2) asked for a
+root lint gate. Typecheck existed; **lint did not** — no linter config, no lint script, no lint
+step. BW-006 was therefore marked Done with one acceptance criterion genuinely unmet.
+
+Fixed with the pinned toolchain's own checker, `bun fmt --check`. No new dependency is added and
+the gate cannot drift from the Bun 1.4.4 the rest of CI pins. `bunfig.toml` pins
+`printWidth = 100` / `semi = false` to match the style the tree was already written in, so the
+gate lints the source instead of silently rewriting it. Scope is `packages/` deliberately:
+`bun fmt --check .` flags 45 files including every prose document, which would be a permanently
+red gate.
+
+Applying it was **formatting-only** — 5 trailing commas plus line rewraps, no semantic change
+(47/47 tests and typecheck re-run afterwards, and a whitespace-insensitive diff of `recorder.ts`
+differs only by those commas).
+
+The gate was proven to be able to fail, not just to pass:
+
+| Control | Command | Result |
+| --- | --- | --- |
+| Positive | `bun run lint` on the tree | exit **0** — `All 7 files are formatted.` |
+| Negative | inject a badly formatted `__lintprobe.ts`, `bun run lint` | exit **1** — names the offending file |
+
+In CI, run [45111515216](https://github.com/ALDRIN121/bashwink/actions/runs/45111515216) at
+commit `c536466` has **9/9 jobs green**, lint included, and the lint job's own log shows the
+command actually executing:
+
+```
+$ bun fmt --check packages
+All 7 files are formatted.
+```
+
 ### What the CI logs prove was actually executed
 
 Not inferred from a green tick — read out of the job logs:
@@ -177,6 +213,7 @@ Not inferred from a green tick — read out of the job logs:
 | Check | CI evidence |
 | --- | --- |
 | Pinned Bun | `bun-version: 1.4.4`, log: `Using a cached version of Bun: 1.4.4+38afee6c8` |
+| **Lint** | `$ bun fmt --check packages` → `All 7 files are formatted.` — 9/9 jobs in [45111515216](https://github.com/ALDRIN121/bashwink/actions/runs/45111515216) |
 | Evidence suite | `47 pass / 0 fail`, `Ran 47 tests across 1 file` — **on both** ubuntu and macos-15 |
 | Individual assertions ran | `(pass) redact > scrubs github, aws, slack and bearer tokens`, `(pass) redact > scrubs PEM private key blocks`, … |
 | Fixtures on Linux | `created 5 fixtures`, then `OK read-only-explore / one-file-edit / failed-test / cancellation / rollback`, `all 5 fixture(s) at baseline` — **the platform risk did not materialise** |

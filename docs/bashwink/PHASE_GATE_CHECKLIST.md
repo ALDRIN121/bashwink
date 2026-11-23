@@ -37,7 +37,11 @@ Last evaluated 2026-11-23 after real GitHub Actions runs on both supported platf
       counsel review is still advisable — neither blocks the gate. See
       `LICENSING_DETERMINATION.md`.
 
-**CI evidence:** `verify.yml` — 8/8 jobs green on ubuntu-latest and macos-15.
+**CI evidence:** `verify.yml` — **9/9 jobs** green on ubuntu-latest and macos-15 at commit
+`c536466` ([run 45111515216](https://github.com/ALDRIN121/bashwink/actions/runs/45111515216)):
+lint, docs integrity, evidence ×2 platforms, fixtures ×2 platforms, license scope, secret scan,
+scope statement. The ninth job is the **root lint gate**, which BW-006's acceptance named and
+which did not exist until it was added — a "Done" task with a genuinely unmet criterion.
 `upstream-compat.yml` — both platform legs green including the 8,004-test upstream baseline.
 All runs are on commits `9b95d37` and `0b09620`; links in `TEST_EVIDENCE.md`.
 

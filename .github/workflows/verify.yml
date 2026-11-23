@@ -27,6 +27,22 @@ env:
   BUN_VERSION: "1.4.4"
 
 jobs:
+  lint:
+    # BW-006 acceptance names "deterministic lint" explicitly, and the independent review
+    # asked for a root lint gate. This is the pinned toolchain's own formatter/checker
+    # (`bun fmt --check`), so the gate needs no extra dependency and cannot drift from the
+    # Bun version the rest of CI pins. bunfig.toml pins the style to the one the tree was
+    # already written in, so this lints the source instead of passively rewriting it.
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Lint (formatting is deterministic and enforced)
+        run: bun run lint
+
   docs:
     name: docs integrity
     runs-on: ubuntu-latest

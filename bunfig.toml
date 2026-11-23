@@ -1,0 +1,11 @@
+# Bun configuration for Bashwink.
+#
+# The [fmt] section pins the code style that `bun fmt --check` enforces in CI.
+# Both values are chosen to match the style this tree was already written in, so the
+# lint gate lints the source rather than quietly rewriting it:
+#   semi = false      the tree was written without semicolons (upstream OpenCode style)
+#   printWidth = 100  the tree's existing long-line habit; Bun's default of 80 would
+#                     rewrap every call chain in recorder.ts for no behavioural gain
+[fmt]
+printWidth = 100
+semi = false

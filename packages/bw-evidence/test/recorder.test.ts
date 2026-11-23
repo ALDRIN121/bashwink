@@ -113,9 +113,11 @@ describe("redact", () => {
 
   test("scrubs PEM private key blocks", () => {
     const pem = credential(
-      "-----BEGIN RSA ", "PRIVATE KEY-----\n",
+      "-----BEGIN RSA ",
+      "PRIVATE KEY-----\n",
       "MIIEowIBAAKCAQEA0000000000000000000000000000000000\n",
-      "-----END RSA ", "PRIVATE KEY-----",
+      "-----END RSA ",
+      "PRIVATE KEY-----",
     )
     const out = redact({ file: pem }) as { file: string }
     expect(out.file).not.toContain("MIIEow")
@@ -178,7 +180,11 @@ describe("EvidenceRecorder", () => {
   test("chains hashes so each entry commits to its predecessor", () => {
     const recorder = new EvidenceRecorder({ directory: dir, now: fixed })
     const first = recorder.recordTool("before", call, { input: { command: "ls" } })
-    const second = recorder.recordTool("after", { ...call, id: "call_def" }, { status: "completed", output: "ok" })
+    const second = recorder.recordTool(
+      "after",
+      { ...call, id: "call_def" },
+      { status: "completed", output: "ok" },
+    )
 
     expect(second.prevHash).toBe(first.hash)
     expect(second.hash).not.toBe(first.hash)
@@ -227,7 +233,10 @@ describe("EvidenceRecorder", () => {
   test("never writes a secret to disk", () => {
     const recorder = new EvidenceRecorder({ directory: dir, now: fixed })
     recorder.recordTool("before", call, {
-      input: { command: "curl -H 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz'", apiKey: "sk-live" },
+      input: {
+        command: "curl -H 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz'",
+        apiKey: "sk-live",
+      },
     })
     const raw = readFileSync(path.join(dir, "evidence.jsonl"), "utf8")
     expect(raw).not.toContain("sk-live")
@@ -252,7 +261,11 @@ describe("EvidenceRecorder", () => {
 
 describe("verify", () => {
   test("reports an empty or missing log as valid", () => {
-    expect(verify(path.join(dir, "nope.jsonl"))).toMatchObject({ ok: true, entries: 0, head: "0".repeat(64) })
+    expect(verify(path.join(dir, "nope.jsonl"))).toMatchObject({
+      ok: true,
+      entries: 0,
+      head: "0".repeat(64),
+    })
   })
 
   test("accepts an intact chain and reports its head", () => {
@@ -310,7 +323,15 @@ describe("verify", () => {
 
   test("rejects an unsupported record version", () => {
     const file = path.join(dir, "evidence.jsonl")
-    const body = { v: 99, seq: 1, at: fixed().toISOString(), phase: "before", call, payload: {}, prevHash: "0".repeat(64) }
+    const body = {
+      v: 99,
+      seq: 1,
+      at: fixed().toISOString(),
+      phase: "before",
+      call,
+      payload: {},
+      prevHash: "0".repeat(64),
+    }
     writeFileSync(file, `${JSON.stringify({ ...body, hash: entryHash(body as any) })}\n`)
     const result = verify(file)
     expect(result.ok).toBe(false)
@@ -391,7 +412,10 @@ describe("regressions — independent Phase 0 review F-02: object/array payloads
   })
 
   test("bounds a large array to the byte cap", () => {
-    const n = normalise(Array.from({ length: 2_000 }, (_, i) => ({ i, s: "y".repeat(50) })), 100)
+    const n = normalise(
+      Array.from({ length: 2_000 }, (_, i) => ({ i, s: "y".repeat(50) })),
+      100,
+    )
     expect(n.truncated).toBe(true)
     expect(cap(n)).toBeLessThanOrEqual(100)
   })

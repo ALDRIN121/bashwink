@@ -35,8 +35,14 @@ declare module "@opencode/plugin" {
   }
 
   export interface ToolDomain {
-    hook(name: "execute.before", callback: (event: ToolExecuteBefore) => void | Promise<void>): Promise<unknown>
-    hook(name: "execute.after", callback: (event: ToolExecuteAfter) => void | Promise<void>): Promise<unknown>
+    hook(
+      name: "execute.before",
+      callback: (event: ToolExecuteBefore) => void | Promise<void>,
+    ): Promise<unknown>
+    hook(
+      name: "execute.after",
+      callback: (event: ToolExecuteAfter) => void | Promise<void>,
+    ): Promise<unknown>
   }
 
   export interface PluginContext {

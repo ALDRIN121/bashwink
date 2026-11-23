@@ -51,7 +51,9 @@ for (const entry of entries) {
     entry.phase === "after"
       ? `status=${entry.payload.status ?? "-"} exit=${entry.payload.exit ?? "-"}`
       : "input"
-  console.log(`${String(entry.seq).padStart(3)} ${entry.at} ${entry.phase.padEnd(6)} ${entry.call.tool.padEnd(10)} ${detail}`)
+  console.log(
+    `${String(entry.seq).padStart(3)} ${entry.at} ${entry.phase.padEnd(6)} ${entry.call.tool.padEnd(10)} ${detail}`,
+  )
 }
 const final = verify(file)
 console.log(`\n${entries.length} entries; chain ${final.ok ? "valid" : "BROKEN"}`)

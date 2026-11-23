@@ -16,7 +16,8 @@ import path from "node:path"
 export const EVIDENCE_VERSION = 1
 
 /** Keys whose values are never written to the log, matched case-insensitively. */
-const SECRET_KEY = /(?:^|_|[^a-z])(?:api[_-]?key|apikey|token|secret|password|passwd|authorization|credential|cookie|private[_-]?key)s?$/i
+const SECRET_KEY =
+  /(?:^|_|[^a-z])(?:api[_-]?key|apikey|token|secret|password|passwd|authorization|credential|cookie|private[_-]?key)s?$/i
 
 /** Free-text shapes that are credentials regardless of the key they arrived under. */
 const SECRET_VALUE = [
@@ -244,7 +245,9 @@ export class EvidenceRecorder {
    */
   private resume(): void {
     if (!existsSync(this.file)) return
-    const lines = readFileSync(this.file, "utf8").split("\n").filter((line) => line.trim().length > 0)
+    const lines = readFileSync(this.file, "utf8")
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
     const last = lines.at(-1)
     if (!last) return
     let parsed: EvidenceEntry
@@ -309,7 +312,8 @@ export class EvidenceRecorder {
       }
     }
     // Preserve digests the caller supplied, but never trust them over our own values.
-    if (payload.outputDigest !== undefined && out.outputDigest === undefined) out.outputDigest = payload.outputDigest
+    if (payload.outputDigest !== undefined && out.outputDigest === undefined)
+      out.outputDigest = payload.outputDigest
     return out as EvidencePayload
   }
 
@@ -342,7 +346,13 @@ export class EvidenceRecorder {
   recordTool(
     phase: ToolPhase,
     call: ToolCallRef,
-    fields: { input?: unknown; status?: "completed" | "error"; output?: unknown; exit?: number; note?: string },
+    fields: {
+      input?: unknown
+      status?: "completed" | "error"
+      output?: unknown
+      exit?: number
+      note?: string
+    },
   ): EvidenceEntry {
     return this.record(phase, call, fields as EvidencePayload)
   }
@@ -359,7 +369,11 @@ export class EvidenceRecorder {
    * Health of this recorder. `degraded` means the chain could not be trusted or a write
    * failed, so any "verification: ok" claim about this log is unknown, not passed.
    */
-  get health(): { readonly ok: boolean; readonly degraded?: string; readonly writeFailures: number } {
+  get health(): {
+    readonly ok: boolean
+    readonly degraded?: string
+    readonly writeFailures: number
+  } {
     return this.degraded === undefined && this.writeFailures === 0
       ? { ok: true, writeFailures: 0 }
       : {
@@ -406,25 +420,53 @@ const VERIFY_LIMITATIONS = [
  * hash of the entry body. The first failure is reported with its `seq`.
  */
 export function verify(file: string): VerifyResult {
-  if (!existsSync(file)) return { ok: true, entries: 0, head: GENESIS, limitations: VERIFY_LIMITATIONS }
-  const lines = readFileSync(file, "utf8").split("\n").filter((line) => line.trim().length > 0)
+  if (!existsSync(file))
+    return { ok: true, entries: 0, head: GENESIS, limitations: VERIFY_LIMITATIONS }
+  const lines = readFileSync(file, "utf8")
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
   let prev = GENESIS
   for (let index = 0; index < lines.length; index++) {
     let entry: EvidenceEntry
     try {
       entry = JSON.parse(lines[index]!) as EvidenceEntry
     } catch {
-      return { ok: false, entries: index, reason: `entry ${index + 1} is not valid JSON`, seq: index + 1 }
+      return {
+        ok: false,
+        entries: index,
+        reason: `entry ${index + 1} is not valid JSON`,
+        seq: index + 1,
+      }
     }
     if (entry.v !== EVIDENCE_VERSION)
-      return { ok: false, entries: index, reason: `unsupported version ${String(entry.v)}`, seq: entry.seq }
+      return {
+        ok: false,
+        entries: index,
+        reason: `unsupported version ${String(entry.v)}`,
+        seq: entry.seq,
+      }
     if (entry.seq !== index + 1)
-      return { ok: false, entries: index, reason: `expected seq ${index + 1}, found ${entry.seq}`, seq: entry.seq }
+      return {
+        ok: false,
+        entries: index,
+        reason: `expected seq ${index + 1}, found ${entry.seq}`,
+        seq: entry.seq,
+      }
     if (entry.prevHash !== prev)
-      return { ok: false, entries: index, reason: `prevHash mismatch at seq ${entry.seq}`, seq: entry.seq }
+      return {
+        ok: false,
+        entries: index,
+        reason: `prevHash mismatch at seq ${entry.seq}`,
+        seq: entry.seq,
+      }
     const { hash, ...body } = entry
     if (entryHash(body) !== hash)
-      return { ok: false, entries: index, reason: `hash mismatch at seq ${entry.seq}`, seq: entry.seq }
+      return {
+        ok: false,
+        entries: index,
+        reason: `hash mismatch at seq ${entry.seq}`,
+        seq: entry.seq,
+      }
     prev = hash
   }
   return { ok: true, entries: lines.length, head: prev, limitations: VERIFY_LIMITATIONS }

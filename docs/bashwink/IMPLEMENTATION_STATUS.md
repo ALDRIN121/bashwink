@@ -24,11 +24,11 @@ it. `--check` fails if it drifts from the register.
 | P1 | 10 | 10 | 0 | 0 | 0 |
 | P2 | 16 | 3 | 1 | 0 | 12 |
 | P3 | 19 | 0 | 1 | 0 | 18 |
-| P4 | 13 | 0 | 0 | 0 | 13 |
+| P4 | 13 | 0 | 2 | 0 | 11 |
 | P5 | 8 | 0 | 0 | 0 | 8 |
 | P6 | 9 | 0 | 0 | 0 | 9 |
 | P7 | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **91** | **22** | **2** | **0** | **67** |
+| **Total** | **91** | **22** | **4** | **0** | **65** |
 
 <!-- END GENERATED:status -->
 
@@ -94,9 +94,13 @@ untrusted workspace now refuses recognized writes and shell calls.
 hatch. For a small supervised alpha that is acceptable and documented; for unattended use it is
 not.
 
-The earlier Seatbelt and Bubblewrap proposal remains historical. The independent review
-recommends the canonical Docker adapter behind BW-030, with the pinned runtime and its
-descendants confined together. **BW-031 remains Not started.** [Implementation plan](BW-031_IMPLEMENTATION_PLAN.md).
+The revised architecture makes native Seatbelt and Bubblewrap the preferred isolation
+paths and keeps Docker optional. The starting proof covers narrow macOS primitives.
+Full native policy, provider transport, platform qualification and descendant cleanup
+remain open. **BW-031 and BW-032 are In progress.** The installed offline macOS probe passed six
+controls. Native agent admission and platform qualification are still open.
+[Implementation milestone](BW-031_IMPLEMENTATION_REPORT.md) · [Qualification results](BW-032_QUALIFICATION_RESULTS.md).
+[Feasibility](BW-031-SANDBOX-PROPOSAL.md) · [Implementation plan](BW-031_IMPLEMENTATION_PLAN.md).
 
 The interactive TUI was smoke-tested with a real coding task and a session restart; that run
 found two defects, both fixed (an unattributable refusal, and "may have done real work" reported

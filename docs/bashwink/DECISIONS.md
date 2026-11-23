@@ -65,12 +65,9 @@ stated limitation**. None is silently dropped.
   matrix. Use the verified `b38dd51` runtime code for supervised internal alpha, with the newer
   hosted results credited per executed job. External alpha remains on hold.
   [CI reconciliation](CI_BASELINE_RECONCILIATION.md) · [Readiness](INTERNAL_ALPHA_READINESS.md).
-- **Proposed BW-031 design.** Retain the canonical Docker adapter behind BW-030, confine the
-  pinned runtime and descendants together, and add a bounded host inference relay only after
-  an offline proof. The independent review found that OpenCode's managed-service reuse and
-  inherited environment make a launcher-only wrapper insufficient. Backend qualification and
-  separate implementation authorization remain required.
-  [Plan and alternatives](BW-031_IMPLEMENTATION_PLAN.md).
+- **Historical BW-031 recommendation.** The 2026-11-23 review prioritized Docker and
+  established the need to confine the pinned runtime with its descendants. The native-first
+  decision below supersedes its backend choice.
 
 ## Local execution foundation (2026-11-23)
 
@@ -85,6 +82,17 @@ backend uses direct host execution. OS isolation remains a separate release requ
 The local backend gates client launch on the required plugin in its own server. The release
 gate still requires the broader evidence and test-integrity criteria.
 [ADR-012](ADR-012-PRIVATE-RUNTIME-READINESS.md).
+
+## Native execution without a container daemon (2026-11-24)
+
+The standard coding workflow must work without Docker, Podman or a VM. BW-031 will
+qualify whole-runtime native confinement using Seatbelt on macOS and unprivileged
+Bubblewrap on Linux. Both OpenCode processes stay in scope. Host provider authentication,
+evidence and export use narrow, separately audited interfaces. Native startup failure
+ends the run. An explicitly acknowledged, permission-controlled local run is a separate
+choice. Docker remains optional. This decision changes the roadmap and leaves the
+implementation and qualification tasks open.
+[Feasibility](BW-031-SANDBOX-PROPOSAL.md) · [BW-032](BW-032_PLATFORM_QUALIFICATION.md).
 
 ## Decision template
 

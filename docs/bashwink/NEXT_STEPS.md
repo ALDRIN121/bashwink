@@ -7,11 +7,13 @@ alpha remains conditional, and external alpha remains blocked. [Current test evi
 1. Reproduce the Ubuntu readiness failure with the pinned Linux binaries on a disposable
    Linux machine. Use the local substep diagnostics to identify the failing stage and qualify
    the fix before closing BW-018 and BW-030. Keep additional hosted runs paused.
-2. After independent release authorization for the next increment, begin the BW-031 offline
-   Docker proof. Require attestation from the guest-owned runtime, then demonstrate bounded
-   lifecycle cleanup, protected inputs and output validation before adding provider access.
-3. Qualify the sandbox with BW-032 on Linux and a VM-capable Mac before considering wider use.
-   [Reviewed BW-031 plan](BW-031_IMPLEMENTATION_PLAN.md).
+2. Extend the verified macOS offline probe to admit both OpenCode processes. Build and
+   verify the first Bubblewrap workload on a disposable Ubuntu host. Keep the pinned client and private server
+   within the same boundary and demonstrate protected inputs, staged outputs and cleanup.
+3. Add the narrow host provider channel, then run BW-032 using clean Docker-free installs
+   on each advertised platform. Hold external alpha until the real runtime, provider and
+   OS-level negative controls pass. Optional Docker has a separate qualification path.
+   [BW-031 plan](BW-031_IMPLEMENTATION_PLAN.md) · [BW-032 requirements](BW-032_PLATFORM_QUALIFICATION.md).
 
 The Phase 2 release gate still requires protected-test integrity, independently verified
 receipts, scenario coverage and packaged alpha acceptance. Phase 3 and Phase 4 release

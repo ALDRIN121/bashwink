@@ -19,6 +19,7 @@ This folder is the single reference for the proposed Bashwink open-source coding
 | --- | --- | --- |
 | Primary execution | `BASHWINK_PHASE_BY_PHASE_TASK_PLAN.md`, `BASHWINK_TASKS_90.csv` | Phase ordering and canonical task register |
 | Phase plans | `PHASE-00-FOUNDATION.md` through `PHASE-07-FUTURE.md` | Per-phase task instructions and gates |
+| Execution security | [BW-030 backend design](BW-030_EXECUTION_BACKEND_DESIGN.md), [BW-031 feasibility](BW-031-SANDBOX-PROPOSAL.md), [BW-032 qualification](BW-032_PLATFORM_QUALIFICATION.md) | Docker-free native roadmap and platform evidence requirements |
 | Release controls | `PHASE_GATE_CHECKLIST.md` | Evidence-required exit criteria |
 | Baseline specification | `BASHWINK_PRODUCT_REQUIREMENTS.md`, `IMPLEMENTATION_BACKLOG.md`, `BASHWINK_FULL_PLAN.md` | Original 49 requirements and 54 tasks |
 | Architecture | `ADR-001`…`ADR-010`, `DECISIONS.md`, `UPSTREAM_BASELINE.md` | Fork strategy, distribution and evidence-health decisions |

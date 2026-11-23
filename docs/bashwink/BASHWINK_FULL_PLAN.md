@@ -829,15 +829,15 @@ The list is written as GitHub-issue-ready work items. **Status: all proposed/not
 **Work:** Specify prepare/execute/sync/cancel/dispose and environment metadata contract without duplicating upstream tool dispatch.  
 **Acceptance:** Mock backend can run and be terminated; policy check occurs before backend execution.
 
-### BW-031 — Docker sandbox adapter
+### BW-031 — Native sandbox adapter
 **Priority:** P1 | **Size:** L | **Depends:** BW-030 | **Owner:** Runtime / Security  
-**Work:** Explicit mount, scoped path, non-root container, CPU/mem/time quota, network control and cleanup.  
-**Acceptance:** Unit/integration fixtures show cleanup, limits, exit propagation and no host secret mount by default.
+**Current work and acceptance:** See the [revised implementation plan](BW-031_IMPLEMENTATION_PLAN.md)
+and [canonical task register](BASHWINK_TASKS_90.csv). The preferred path runs without Docker.
 
-### BW-032 — Sandbox threat and adversarial tests
+### BW-032 — Sandbox threat and platform qualification
 **Priority:** P1 | **Size:** L | **Depends:** BW-031 | **Owner:** Security  
-**Work:** Path traversal, symlinks, `~/.ssh`, `.env`, malicious commands, network egress, denied escape and cancellation.  
-**Acceptance:** All enabled backends pass; documented threats not fully mitigated are disclosed as limits.
+**Current work and acceptance:** See the [platform controls](BW-032_PLATFORM_QUALIFICATION.md)
+and [canonical task register](BASHWINK_TASKS_90.csv).
 
 ### BW-033 — Child-task envelope and budget policy
 **Priority:** P1 | **Size:** M | **Depends:** BW-013, BW-018 | **Owner:** Orchestration  

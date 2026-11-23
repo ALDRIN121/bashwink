@@ -42,12 +42,12 @@ Add container adapter and sandbox threat tests, delegation envelope, worktree al
 
 **Demonstration:** Parallel docs+code task → two isolated changes → conflict or clean merge preview → approve → integration tests → consolidated ProofPack.
 
-**Key risk / mitigation:** Docker is not a complete hostile-code security boundary by itself; document actual isolation guarantees and platform caveats.
+**Key risk / mitigation:** The installed helper and its kernel policy vary by platform. Prove the runtime boundary and report unsupported features before advertising native execution.
 
 
 ## Ordered issue checklist
 
-- [ ] **BW-031 — Docker sandbox adapter** (P1, L)
+- [ ] **BW-031 — Native sandbox adapter** (P1, L)
 
 - [ ] **BW-032 — Sandbox threat and adversarial tests** (P1, L)
 
@@ -77,7 +77,7 @@ Add container adapter and sandbox threat tests, delegation envelope, worktree al
 ## Implementation task cards
 
 
-### 01. BW-031 — Docker sandbox adapter
+### 01. BW-031 — Native sandbox adapter
 
 **Priority / effort:** P1 / L  
 **Dependencies:** BW-030  
@@ -87,12 +87,12 @@ Add container adapter and sandbox threat tests, delegation envelope, worktree al
 
 **Work package**
 
-Explicit mount, scoped path, non-root container, CPU/mem/time quota, network control and cleanup.
+Qualify Seatbelt and unprivileged Bubblewrap for the entire pinned runtime. Enforce scoped filesystem paths, runtime privileges, network policy, resource limits and cleanup. Keep Docker optional.
 
 
 **Acceptance check**
 
-Unit/integration fixtures show cleanup, limits, exit propagation and no host secret mount by default.
+Installed Docker-free runtime fixtures show allowed edits, OS denials, limits, cleanup, exit propagation and host secret protection. Native failure refuses dispatch. See [BW-031 plan](BW-031_IMPLEMENTATION_PLAN.md).
 
 
 **Attach proof:** Denied/allowed adversarial fixture results, sanitized event trace and threat-model notes.
@@ -113,12 +113,12 @@ Unit/integration fixtures show cleanup, limits, exit propagation and no host sec
 
 **Work package**
 
-Path traversal, symlinks, `~/.ssh`, `.env`, malicious commands, network egress, denied escape and cancellation.
+Exercise clean native installs, scope and links, synthetic secrets, subprocesses, approvals, network, real-provider turns, session recovery and shutdown.
 
 
 **Acceptance check**
 
-All enabled backends pass; documented threats not fully mitigated are disclosed as limits.
+All advertised backend and platform combinations pass their applicable [qualification controls](BW-032_PLATFORM_QUALIFICATION.md). Report uncovered threats and unsupported hosts.
 
 
 **Attach proof:** Denied/allowed adversarial fixture results, sanitized event trace and threat-model notes.

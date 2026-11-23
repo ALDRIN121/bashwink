@@ -1,5 +1,50 @@
 # Bashwink — Test Evidence Register
 
+## Installed Seatbelt probe milestone (2026-11-24)
+
+Code revision `368f81173a5c39efc65ae020ac23f4333a682763`. The installed command
+`BASHWINK_OPENCODE_BIN=/absolute/path/to/pinned/opencode "$workspace/install/bin/bashwink" sandbox probe`
+ran from a disposable directory in macOS 27.0.1 build 26A434, arm64, Darwin 27.0.0.
+Bun was 1.4.4. OpenCode v2.3.2 was staged from the packaged native artifact.
+The exact runtime, helper and policy template hashes and the probe run ID are recorded
+in the [qualification matrix](NATIVE_SANDBOX_QUALIFICATION.json).
+
+| Command or check | Exit | Result |
+| --- | --- | --- |
+| `./scripts/build_alpha.sh "$workspace/install"` then installed `bashwink sandbox probe` | 0 each | Six PASS. Verified staged write/read, denied child read, denied sibling write, denied symlink write, denied TCP loopback and pinned OpenCode version. Host check verified the protected file hash and device/inode. Host connection control reached the listener exactly once. Guest connection never reached it. |
+| Early strict-profile OpenCode version probe | 133 | Bun trapped at startup. Read-only hardware and OS sysctls advanced startup to an ICU Segmenter initialization error. Allowing read-only system ICU data resolved it. All denied controls still passed with these grants. |
+| `bun run test` | 0 | 395 pass, 0 fail, 23 files |
+| `bun run typecheck`, `bun run lint`, `bun run format`, `bun run lint:gate` | 0 each | Both package checks, 58 formatted files and 6 lint gate assertions |
+| `./fixtures/runtime-health/run.sh`, `./fixtures/tool-lifecycle/run.sh`, `./fixtures/contract/run.sh`, `./fixtures/idempotent-resume/run.sh` | 0 each | 11, 19, 14 and 10 checks in the existing local execution mode using the pinned tools |
+| Installed `bashwink --prompt 'Bashwink local regression'` in an isolated PTY | 130 after SIGTERM | Local TUI rendered the startup prompt, then removed the readiness lease and reaped the owned server. No provider prompt was sent. |
+| `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_native_release_gate.py` | 0 | Four tests cover valid format, missing/failed/blocked/stale evidence, unsupported targets and probe evidence separation |
+| `./scripts/verify_native_release.py --revision 368f81173a5c39efc65ae020ac23f4333a682763` | 1 expected | Real release matrix denied external alpha. Both release targets have unmet required controls. |
+
+Docker was present and unused. Clean macOS/Ubuntu installation, real native PTY coding,
+live provider relay, detached cleanup and the current hosted workflow remain without
+release-tier results. The earlier Ubuntu runtime failure remains unresolved.
+[Qualification results](BW-032_QUALIFICATION_RESULTS.md).
+
+## Native sandbox feasibility (2026-11-24)
+
+The checks below used macOS 27.0.1 (26A434) arm64 and disposable paths and listeners.
+Docker was unused. Its CLI was present on the machine and its daemon was unavailable,
+so this was a Docker-independent run rather than the clean installation qualification.
+
+| Check | Exit | Observed result |
+| --- | ---: | --- |
+| `/usr/bin/sandbox-exec -p '(version 1) (allow default)' /usr/bin/true` | 71 inside managed parent sandbox, 0 outside it | The nested attempt reported `sandbox_apply: Operation not permitted`. The approved standalone invocation accepted the profile. |
+| Seatbelt disposable file canaries | 0 allowed write, 1 each denied operation | Workspace write succeeded. Sibling write and the same operation through a shell child returned `EPERM` and left the target absent. Reading a synthetic protected file returned `EPERM`. |
+| Seatbelt `deny network*` with a fixture-owned loopback listener | 0 positive, 1 denied | Baseline connected. The sandboxed attempt returned `EPERM` and did not reach the listener. |
+| Pinned OpenCode `--version` under the network-denied profile | 0 | v2.3.2 started. |
+| `./fixtures/tool-lifecycle/run.sh` through a temporary exec-replacing Seatbelt wrapper, Bun 1.4.4 and OpenCode v2.3.2 | 0 | 19/19 with a deliberately narrow profile that protected a synthetic subtree and permitted the loopback mock. The real runtime ran shell and produced evidence. |
+
+The narrow profile demonstrates primitive behavior and OpenCode compatibility under
+those settings. A default-deny production policy, installed interactive native workflow,
+live provider with protected credentials, detached-descendant cleanup, and clean Linux
+execution remain unverified. No new GitHub Actions run was triggered.
+[BW-031 feasibility](BW-031-SANDBOX-PROPOSAL.md) · [BW-032 platform controls](BW-032_PLATFORM_QUALIFICATION.md).
+
 ## Private runtime readiness and local backend verification (2026-11-23)
 
 Local verification used macOS arm64, Bun 1.4.4 and OpenCode v2.3.2

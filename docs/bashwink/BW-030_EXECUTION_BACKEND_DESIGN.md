@@ -20,18 +20,29 @@ the plugin and writes a run expectation before handing an argv vector to the bac
 | Sync and dispose | Local workspace changes are applied in place, so sync is a no-op. Disposal runs after exit, cancellation or startup failure after preparation. A future staged adapter must implement bounded cleanup and controlled artifact import. |
 | Report | Ordinary runtime exit status is preserved. The outcome and backend capabilities are persisted in the run record. A successful runtime exit without expected boot evidence still returns the evidence failure. |
 
-Docker is the planned first isolated adapter. The local implementation claims neither
-workspace, network nor process isolation. It reaps the direct client and server it starts during supervised shutdown. Detached descendants, an abrupt wrapper kill and host plugins are outside the verified local lifecycle. The deadline is a process deadline, not a spend,
-full cleanup or whole-system quota. [BW-018 report](BW-018_IMPLEMENTATION_REPORT.md).
+The local backend has direct host access. It reaps the direct client and server during
+supervised shutdown. Detached descendants, abrupt wrapper death and host plugins remain
+outside the verified lifecycle. Deadline evidence covers elapsed process time.
+[BW-018 report](BW-018_IMPLEMENTATION_REPORT.md).
 
-## BW-031 implementation sequence
+## Backend boundary for BW-031
 
-1. Confirm hosted BW-018 and BW-030 evidence on both supported platforms and use the exact integrated baseline.
-2. Implement a Docker adapter with digest-pinned local samples and zero tool egress. Require
-   the actual runtime and child services to boot in the guest. Fail closed if the engine,
-   prepared policy, runtime identity or required limits cannot be verified.
-3. Close run-owned service, descendant, and artifact lifecycles before importing any output.
-   Keep host credentials, home, SSH sockets, Docker sockets and host evidence outside the guest.
-4. Exercise the adversarial matrix on Linux and a VM-capable Mac before qualifying an isolated
-   case. Add narrowly mediated live inference only after that boundary is demonstrated.
-   [Reviewed sandbox plan](BW-031_IMPLEMENTATION_PLAN.md).
+Keep the existing lifecycle and capability interfaces. Native execution will be preferred
+only after qualification. Advertise the verified workspace mode, filesystem reach,
+network policy and cleanup scope independently. Backend selection and startup refusal
+are visible to the caller and recorded with the evidence.
+
+- Native prepare validates the host and compiles a policy and workspace identity.
+  Native execute owns the pinned server and client, then waits for policy readiness
+  bound to that workload before admitting a prompt. A PID namespace can change the
+  PID observed by the plugin. Preserve process identity through a trusted launcher/lease
+  binding across namespace views.
+- Native sync validates staged changes and persistence data before a reviewed host import.
+  Cancel, timeout and dispose report whether the workload actually exited and cleanup
+  completed. Supervise guest terminal I/O through a private PTY.
+- A native precondition, readiness or provider failure ends that run. An explicit,
+  permission-controlled local restart requires acknowledgment of host access and
+  risky-operation approvals. Docker is an optional explicit selection.
+
+[BW-031 feasibility](BW-031-SANDBOX-PROPOSAL.md) · [Implementation sequence](BW-031_IMPLEMENTATION_PLAN.md)
+· [Platform qualification](BW-032_PLATFORM_QUALIFICATION.md).

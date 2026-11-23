@@ -28,6 +28,13 @@ The local backend owns the direct child and applies optional deadlines. Detached
 remain outside the guaranteed cleanup scope. External alpha is blocked on OS containment.
 [BW-030 design](BW-030_EXECUTION_BACKEND_DESIGN.md) · [BW-031 plan](BW-031_IMPLEMENTATION_PLAN.md).
 
+**Proposed native mode.** Seatbelt is a deprecated launcher dependency and Linux
+user namespaces can be unavailable under active distro policy. Full provider
+connectivity, TUI compatibility, host credential protection and detached descendant
+cleanup remain platform qualification items. Docker will be an opt-in backend.
+The preferred native path and explicit local acknowledgment flow are design
+requirements. Current local execution retains normal host access.
+
 ---
 
 ## 2. Verified providers — one paid, one gateway

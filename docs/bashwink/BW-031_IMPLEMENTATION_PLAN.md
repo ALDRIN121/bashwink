@@ -1,69 +1,77 @@
-# BW-031 implementation plan
+# BW-031 native sandbox implementation plan
 
-**Status:** Proposed for maintainer review. No adapter has been implemented or qualified. The register places BW-030 in Phase 3 and BW-031/BW-032 in Phase 4. The external-alpha hold is a release decision. Moving work across gates requires an explicit sequencing decision. This review uses Bashwink `4731eaf` and OpenCode `c0ad18b402eb2827fc1ee71c171b1177b3fc02d1` (`v2.3.2`).
+**Status** Implementation in progress. The installed offline Seatbelt probe is verified.
+Native coding admission awaits integration and qualification. The existing Phase 3 and Phase 4
+dependencies and external-alpha hold still apply.
+[Architecture and trade-offs](BW-031-SANDBOX-PROPOSAL.md) · [BW-032 platform qualification](BW-032_PLATFORM_QUALIFICATION.md).
 
-## Decision
+## Installation and launch contract
 
-Use the canonical Docker adapter behind BW-030. Start with a per-run container for the **entire pinned OpenCode TUI or headless runtime and its descendants**, with a local mock provider and zero external network access. Use a rootless Docker Engine on Linux and a Docker Desktop Linux guest on macOS arm64 as qualification targets. Gate live inference on proving a narrow host-side inference relay while retaining the same boundary. This preserves the OpenCode client, model loop and tool dispatch. It also allows native package-manager support, optional backends and broader provider coverage to be evaluated separately.
-
-The existing [sandbox proposal](BW-031-SANDBOX-PROPOSAL.md) identified the interpreter and resolved-path problems and called for negative controls. Its suggested profiles grant whole-host reads on Linux, shared temporary writes on macOS, and either read-only application data that breaks evidence writes or writable data that allows record modification. Granting outbound access or credentials to a runtime whose tools share that authority also grants them to those tools. The reported Seatbelt feasibility check remains historical and covers a narrow profile. Docker is already part of the canonical BW-031 acceptance. The options below supersede the proposal's backend and fallback recommendations for this plan, subject to maintainer review.
-
-## Threat model and protection claims
-
-Assume repository content, model responses, commands, subprocesses, plugin events, and exported files can be hostile. Trust the selected local engine and guest image, host launcher, policy compiler, import code, and any approved relay. A person with host admin or engine control, a compromised trusted component, kernel or VM vulnerabilities, hardware side channels, the availability of external services, and disclosure to a provider explicitly authorized to receive task context remain outside this guarantee.
-
-A qualified run must restrict host access to a snapshot of approved inputs and prevent child processes from acquiring the host environment, sockets, evidence, checkout, and credentials. Shell children may alter their **private** writable work area and temporary files within the run's limits. Readable protected files may be copied or manipulated in scratch. Only a reviewed import can update the host checkout, using approved writable paths, unchanged base hashes and a validated change set. Where a contract requires immutable guest files, mount an approved subtree from engine-owned staged storage read-only and verify support, or refuse that contract. Snapshot-and-import authorizes host changes. It does not promise that every denied guest write returns a kernel error.
-
-Default tool networking is guest loopback only. A qualified relay creates a bounded path to the approved provider and must be reported as such. A tool that can reach the guest inference endpoint may consume the run's relay quota unless a distinct process-level caller boundary is proven. Direct network egress, provider credential visibility, and arbitrary destinations remain forbidden. Test authoring, paid model cost governance (BW-075), evidence authenticity and independence of verification remain separate requirements.
-
-## Architecture and permission model
-
-1. **Prepare in the host CLI.** BW-030 owns prepare, execute, collect, cancel and dispose, plus inspection of the applied backend policy. Resolve a trusted local engine context and pinned image digest and platform. Compile an explicit per-run manifest from workspace trust, an approved contract revision, selected input paths, host write/export scope, network mode, verified resource ceilings and deadline. Resolve against the canonical workspace root. A user-supplied contract or environment setting can narrow host authorization. It cannot grant access above it. Require an explicit staged input inventory. Exclude unapproved dotfiles, Git metadata or linked worktree state, credentials, runtime state and sockets. Reject unreviewed plugins, hooks, skills, MCP bridges, nested host delegation and project configuration in isolated mode. Supply generated OpenCode configuration and a minimal child environment.
-2. **Stage and run in a fresh guest.** Copy approved regular files and directories into isolated storage with normalized paths and size limits. Prevent symlink, hardlink, special-file and mount traversal in the trusted staging path and validate concurrently changing inputs against their snapshot identities. Use a read-only base image, private bounded scratch, a private PID and network namespace, a non-root uid, reduced capabilities, no-new-privileges and the engine seccomp profile. Pass only explicit descriptors and terminal streams. Treat guest terminal output as untrusted. Qualify control-sequence handling, clipboard and terminal queries, user input handling, rendering and resize at the host PTY boundary before release. Grant no host mounts, port publications, host devices, engine socket, or forwarded agent sockets. Keep the container alive for the session to amortize setup. Apply and functionally verify CPU, memory, PID, time and storage limits. A limit reported by configuration alone cannot qualify a backend. [Docker rootless limits](https://docs.docker.com/engine/security/rootless/troubleshoot/) · [Docker network none](https://docs.docker.com/engine/network/drivers/none/).
-3. **Bind execution to the guest.** Today `main.ts` uses a direct `Bun.spawn` and `paths.ts` copies the invoking environment before setting XDG paths. Pinned OpenCode discovers managed servers for interactive and headless sessions, so a host CLI wrapper alone may leave actual dispatch elsewhere. Constrain argv to tested entry points, start a guest-owned standalone server where required, and refuse arbitrary attach/serve/config surfaces in isolated mode. The standalone path uses guest loopback and a stdio lease. Deny host process-daemon handoff and keep even detached guest descendants under whole-container cleanup. Test the pinned `ctx.shell.hook("create.before", invocation)` as a compatibility observation seam. It does not cover every tool and should not carry the boundary. [Server selection](https://github.com/anomalyco/opencode/blob/c0ad18b402eb2827fc1ee71c171b1177b3fc02d1/packages/cli/src/services/server-connection.ts#L23-L60) · [Standalone launch](https://github.com/anomalyco/opencode/blob/c0ad18b402eb2827fc1ee71c171b1177b3fc02d1/packages/cli/src/services/standalone.ts) · [Shell hook](https://github.com/anomalyco/opencode/blob/c0ad18b402eb2827fc1ee71c171b1177b3fc02d1/packages/core/src/shell.ts#L884-L965) · [Detached daemon](https://github.com/anomalyco/opencode/blob/c0ad18b402eb2827fc1ee71c171b1177b3fc02d1/packages/core/src/persistent-pty/daemon.ts#L270-L283).
-4. **Qualify live inference as a separate integration step.** Start by spiking a trusted launcher transport with a guest-loopback inference endpoint and a narrowly framed, non-network host channel. Keep the container on the none driver. Pin the approved endpoint, protocol, TLS destination and model in the host, allow only required inference methods, reject redirects, arbitrary destinations and header forwarding, and cap request sizes, usage, wall time and concurrency. Resolve real credentials on the host and inject them after policy validation. No general proxy, host RPC, raw credential, or ambient DNS/network access in the guest. Check Anthropic Messages and OpenAI Chat streaming and cancellation before advertising either. If relay semantics, PTY and streaming cannot all be qualified, keep the isolated mode mock-only and the external-alpha hold in place.
-5. **Collect and dispose in the host.** Record engine identity, run ID, compiled policy digest, image digest, preflight, start, externally observed exit and cleanup in host-owned storage. Consume size-bounded guest evidence as untrusted telemetry. An event claiming success never controls export or sandbox state. Stop all guest writers before collecting from run-owned retained storage into host quarantine. Reject malformed or duplicate paths, filesystem case and Unicode aliases, special files, link escapes, unexpectedly large files and conflicts. Confirm removal of the engine workload and staging storage before offering a preview for separate approval. Use descriptor-anchored path validation and conflict-aware application to refuse symlink swaps, dirty work and changed base hashes through import. Refuse unsafe or partial application. Record runtime exit, timeout, cleanup and import status. A guest test result is advisory. A verified result requires a fresh verifier using an immutable baseline, the approved patch and protected tests with a host-observed verifier exit. Keep sandbox results unverified until the required BW-057/BW-058/BW-060 evidence exists.
-6. **Enforce lifecycle even when the client disappears.** Associate a run-owned engine identifier with the host run record and use a supervisor outside the worker with a deadline independent of the client process. On cancellation or expiry, stop, force-stop after grace, and verify descendant termination and removal. Reconcile abandoned owned runs after restart without touching unrelated containers. Failed or unknown cleanup blocks import and a verified result. Missing capabilities, unhealthy policy, mount/staging or broker initialization failure must refuse the isolated run with nonzero exit and a specific diagnosis. No inherited runtime, managed service or local-shell fallback.
-
-## Alternatives and operational costs
-
-| Option | Fit and trade-off |
+| Selection | Startup and failure behavior |
 | --- | --- |
-| Docker Engine / Docker Desktop | Selected. Same Linux container policy on both host families. Linux shares the host kernel. Docker Desktop runs the container inside a Linux VM. Native macOS builds, Xcode and host-specific services are outside the initial guest. Linux rootless resource controls require working systemd cgroup v2 delegation and functional resource checks. Docker Desktop use requires checking the organization's subscription terms. [Docker rootless prerequisites](https://docs.docker.com/engine/security/rootless/) · [Desktop licensing](https://docs.docker.com/subscription-billing/desktop-license/) |
-| Seatbelt / App Sandbox | Apple deprecates `sandbox-exec` and describes custom profiles as unsupported for third parties. The entitlement-based App Sandbox does not provide the proposed arbitrary per-task policy seam. A native Seatbelt spike may inform diagnostics, but release support would also need credible host-loopback restriction and detached descendant cleanup. [Apple DTS](https://developer.apple.com/forums/thread/661939) · [App Sandbox](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.app-sandbox) |
-| Linux Bubblewrap, Landlock, seccomp | Bubblewrap can compose selected mounts, user/PID/IPC/network namespaces and private temp. Availability depends on kernel and distro policy. Landlock is ABI-dependent and cannot restrict already-open file descriptors. Seccomp limits syscalls. Neither alone provides the complete network, resource and lifecycle boundary. Candidate Linux optimization after the shared adapter passes. [Bubblewrap v0.13.1](https://github.com/containers/bubblewrap/blob/v0.13.1/README.md) · [Landlock 6.12](https://docs.kernel.org/6.12/userspace-api/landlock.html) · [Seccomp](https://docs.kernel.org/userspace-api/seccomp_filter.html) |
-| Other maintained guest runtimes | Apple `container` is a separate macOS Apple-silicon candidate. Podman can use a Linux VM on macOS. Each would require its own capability, transport and lifecycle qualification. Hermes demonstrates terminal backends including Docker with a host-resident agent. The inspected Hermes Docker implementation is `b65acf3fdc1d43bd889211ea8e37032974b395a5` (v0.23.1). A command-only Bashwink backend would likewise simplify inference but needs proof that every executable path uses the backend or is disabled. [Apple container](https://github.com/apple/container) · [Podman machine](https://docs.podman.io/en/latest/markdown/podman-machine.1.html) · [Hermes backends](https://hermes-agent.nousresearch.com/docs/developer-guide/terminal-environment-plugin) · [Pinned Hermes Docker source](https://github.com/NousResearch/hermes-agent/blob/b65acf3fdc1d43bd889211ea8e37032974b395a5/tools/environments/docker.py) |
+| Default `bashwink` | Try the native adapter on a qualified host. Show the effective filesystem, network and lifecycle capabilities. Validate the helper, runtime and policy before a prompt is admitted. No container runtime discovery or installation is necessary. |
+| Native required | Refuse missing or unsupported helpers, failed self-probes, unavailable strict limits, mismatched readiness, or unavailable selected provider transport. Print the specific diagnostic. Failed admission exits nonzero before transmitting a user prompt or dispatching a tool. |
+| Permission-controlled local | A distinct interactive choice for trusted workspaces. Before the run, show “Local with approvals · unrestricted host access” and require a recorded explicit acknowledgment bound to workspace, mode and run. Require fresh approval for risky operations. Keep hard denials and active contract scope. Refuse unattended runs that require isolation or local approval. Failed native runs terminate before offering a separate restart in this mode. |
+| Docker | Explicit opt-in only, with its own preflight, engine identity and qualification. Missing Docker fails that explicit request alone. |
 
-**Compatibility and licensing.** Pin Engine/Desktop versions, image digest and each guest architecture when qualification begins. Use user-installed engine binaries, pin and review the image and toolchain inventory, and retain OpenCode's MIT and the image packages' applicable notices. Re-run the license scope check against the selected distribution model before shipping an image. Docker Engine source is Apache-2.0. Docker Desktop has distinct terms. Packaging and image redistribution remain subject to the existing artifact release gate. Windows, native macOS toolchains, alternate containers, nested Docker, host services, interactive package downloads and implicitly mounted home files are outside the first supported scope. Preserve ordinary native macOS CI and use a VM-capable Mac for guest qualification. [Moby license](https://github.com/moby/moby/blob/master/LICENSE) · [Hosted runner limitations](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#limitations-for-arm64-macos-runners).
+A packaged macOS launch uses the system helper when it qualifies. A Linux package
+may express a normal OS package dependency on a supported unprivileged Bubblewrap
+build. A standalone Linux distribution can discover a qualified helper and show an
+actionable dependency or AppArmor diagnostic. Neither install path prompts for a
+container daemon. Do not fetch helpers, runtimes or plugins from writable workspace
+paths or during policy activation. Existing local-mode behavior is described in the
+[BW-030 design](BW-030_EXECUTION_BACKEND_DESIGN.md). This section specifies future behavior.
 
-**Expected costs.** A cold guest can add daemon/VM startup and image pull time. Warm runs add container startup, snapshot copy, PTY relay and artifact import. Copying a large or metadata-dependent repository costs more than a bind mount. No timings were measured in this audit. Measure cold and warm phases separately, with ten repeated warm samples per host, one small and one representative repository, p50/p95, peak memory, CPU, copied bytes, tool latency and cancellation time. Record a native baseline on the same host. Set quantitative acceptance thresholds from the initial measurements before enabling the feature for users. Report Linux-toolchain differences, resize and terminal redraw, Git metadata handling, file watching, atomic rename, and environment-specific dependency availability.
+## Build order
 
-## Reproducible verification and acceptance
+1. **Close or resolve dependencies.** Diagnose the remaining Ubuntu readiness failure
+   with the pinned binaries in a disposable Linux environment. Qualify the existing
+   BW-018/BW-030 ownership, cancellation and readiness boundary. Keep hosted Actions
+   paused unless the maintainer authorizes their use.
+2. **Prototype native primitives independently.** Obtain passing file and child
+   canaries under default-deny Seatbelt and under the distro’s non-setuid Bubblewrap.
+   Verify process/terminal isolation on each supported runtime and host. Make namespace,
+   syscall, network and cleanup failures actionable. Include rollback and supervisor
+   death. Measure startup with a cold and a warm run. No latency promise is set yet.
+3. **Attach the pinned runtime offline.** Compile a host-owned policy snapshot and
+   stage approved inputs. Start both real OpenCode processes under identical native
+   policy, including the private readiness channel. Make staged editing and the separate host preview/apply step visible in the TUI. Use fixture-only synthetic
+   credentials and a loopback mock. Exercise a real TUI turn, in-process edit,
+   approved shell child, permissions, safe preview, cancellation and recovery. Treat
+   detached cleanup and provider relay as independent release blockers.
+4. **Enforce host boundaries.** Give the workload only minimal mounts or Seatbelt
+   paths, a synthetic home, tested terminal descriptors, per-run state and a private
+   staging area. Scope inputs with a reviewed inventory and reject special objects,
+   links crossing authorized boundaries and ambiguous aliases. Preserve readable
+   dependencies only as approved. Stop workload writers before collecting bounded
+   output. Verify identities and base hashes at import, detect conflicts, and apply
+   only approved paths after a preview. Treat guest sessions and evidence as untrusted
+   input. Record trusted host lifecycle observations separately.
+5. **Qualify network and identity.** First deny all guest external traffic. Then add an
+   explicit provider-only mode via a private channel, with host-side auth and quotas,
+   protocol and destination validation and no arbitrary forwarding. Scope credentials
+   to an authorized account/model. Test streaming, cancellation, OAuth or key flow as
+   applicable, and session resume. Qualify each promised provider separately. Keep
+   custom endpoints, remote MCP and direct internet unavailable until their boundary
+   is designed and verified.
+6. **Release qualification.** Execute BW-032 on clean supported systems with no
+   Docker/Podman or daemon, using the actual packaged entry point and binary hashes.
+   Demonstrate filesystem and network restrictions, session persistence, exit
+   propagation and cleanup. Measure and verify required resource limits or explicitly
+   block workloads that request unavailable limits. Record the supported combinations
+   and refuse all others. Qualify optional Docker independently before advertising it.
 
-Use a disposable project, fake HOME, dedicated engine context, pinned local mock, distinct canaries for each authority, and local fixture-only observers. Compare the same no-op, successful change, failing test and cancellation across native, Linux rootless, and macOS guest paths. Use native as a control for the measured workflow. Test only against fixture files, fixture processes and mock endpoints.
+## Adapter seams
 
-| Fixture | Required assertions |
-| --- | --- |
-| Files and working directory | Approved input visible and exportable edit succeeds. Sibling and fake HOME canaries stay inaccessible through absolute, relative, symlink, nested-link and changed-directory paths, through shell interpreters and child processes. Engine sockets, host mounts and inherited descriptors are absent. Private temp works and is removed or intentionally retained under an explicit policy. Host canary identity and content are unchanged. |
-| Snapshots and import | Unapproved files are absent. Symlinks, hardlinks, special files, mount boundaries, oversized output and snapshot races fail safely. A watched dirty edit made on the host after staging survives. Destination aliases, repeated paths and unsafe path replacement are rejected. A valid reviewed change applies only to declared paths. Guest test changes and guest summaries cannot satisfy the proof step. A fresh verifier must use the protected test inventory. |
-| Tools and services | Launch through real zero-argument PTY and headless entry points. Assert the path, runtime and policy identifiers. Supply a disposable unrelated service and assert it receives no dispatch. Test permitted file/tool operations, tool denials, unknown tool surfaces, disabled plugins/MCP, standalone teardown, detached descendants and arguments that request an unsupported execution path. |
-| Network and credentials | No guest egress outside isolated loopback or route to unapproved host services. A fake host-only secret is absent from environment, files, process/IPC views and exported records. Mock streaming works in guest loopback. Live-relay mock accepts only the approved schema/destination/model and expires on deadline. Test redirects, unapproved destinations and bounded relay failure with a local observer. |
-| Startup, budgets and cleanup | Missing daemon, wrong digest/arch, unsupported limits, invalid staging and broken relay cannot reach dispatch. Exercise real resource enforcement, nonzero child status, timeout, cancellation, abrupt client exit and restart reconciliation. Require bounded graceful/forced cleanup and host-confirmed absence of owned workload. |
-| Evidence | Host records distinguish tool-policy refusal, sandbox setup failure, engine exit, observed limit, caller cancellation and import rejection. Missing or forged guest events cannot create a successful run or approved import. Verify retained digests and sanitized metadata. |
+Keep the existing BW-030 prepare, execute, sync, cancel and dispose lifecycle. Native
+prepare returns a policy identity, verified platform and required capabilities. Native
+execute owns the real server/client lifetime and readiness; the host wrapper must never
+dispatch tool work itself. Sync is a staged collection and validation boundary.
+Cancellation terminates and reaps the workload where demonstrated. Failures record the
+stage and active mode and propagate nonzero exit before partial output can be interpreted
+as success. Browser login, relay and host preview remain limited host services. Keep
+OpenCode inference and tool orchestration upstream.
 
-Record commands, real exits, runtime/image revisions, engine context and observed assertions in TEST_EVIDENCE. The required host matrix must execute every supported-backend case. A missing platform or unavailable backend is explicitly unverified and blocks that platform's release qualification.
-
-## Implementation order
-
-| Task | Work and completion evidence |
-| --- | --- |
-| BW-018 | Inventory and close command execution and approval routes, including ScopeFence's permissive cases. Tests prove default and explicit denials at every supported route. |
-| BW-030 | Specify and implement the backend lifecycle at the launcher seam. A mock verifies policy-before-execute, cancellation and typed outcomes for interactive and headless requests. |
-| BW-031.1 | Qualify platform and pinned runtime with the offline whole-runtime prototype. Demonstrate working PTY and headless tool call under a guest-owned service, verified limits and teardown. If the seam fails, document why before considering a shallow upstream change. |
-| BW-031.2 | Implement staging, controlled export, host evidence and crash reconciliation. Prove scope and safe import with a throwaway checkout. |
-| BW-031.3 | Qualify the host inference relay and artifact/license checks. Record supported platform/toolchain versions, measured cost and failure behavior. |
-| BW-032 | Execute and independently review the full boundary matrix. Coordinate BW-074 and its BW-073 dependency where delegated network or credential policy is enabled. Evaluate the external-alpha hold only after sandbox and the outstanding Phase 2 criteria are evidenced. |
-
-The plan assumes disposable Linux guest state for the initial sandbox. Continuing a sandboxed session requires an explicit, isolated state design and a separate concurrency and replay test before support is advertised.
-
-Independent review checked the pinned server paths and Docker platform assumptions. The plan incorporates the resulting changes to protected-test verification, output quarantine and cleanup ordering, host path races, name collisions, and the PTY trust boundary. Runtime capability tests remain implementation work.
+Run the first two steps before adding a native mode to routine use. External alpha stays
+blocked until the installed Docker-free workflow and each advertised security capability
+have supporting evidence. [Alpha checklist](ALPHA_RELEASE_CHECKLIST.md).

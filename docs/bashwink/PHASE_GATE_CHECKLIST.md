@@ -154,7 +154,10 @@ Not started. The hash-chained log gives a baseline for "verifier cannot modify e
 - [ ] Two independent tasks complete in isolated worktrees with distinct evidence.
 - [ ] Conflicting patches cannot silently overwrite user work.
 - [ ] Child cannot acquire parent-denied privileges.
-- [ ] Network/host secret canary exfiltration fixtures are blocked in stated sandbox threat model.
+- [ ] Native installs launch and complete the advertised coding flow on supported macOS
+      and Linux without Docker, Podman, a VM or daemon.
+- [ ] OS-level filesystem and network controls, host-secret protection and workload cleanup
+      pass the [BW-032 controls](BW-032_PLATFORM_QUALIFICATION.md) for each advertised native platform.
 - [ ] The integrated checkout is freshly tested after explicit merge approval.
 
 **Known gap that will block this phase:** the evidence recorder has no concurrency control;

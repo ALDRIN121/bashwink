@@ -67,7 +67,9 @@ file was edited, and a test was run and re-run to PASS.
 - [x] Absolute paths validated (`/etc/passwd`, `/tmp/...` refused).
 - [x] Recognized shell calls with an out-of-scope working directory or obvious outside
       path are refused. Allowed shell calls are recorded as `unconstrained`.
-- [ ] OS confinement for shell, descendants, credentials and network. BW-031 is open.
+- [ ] OS confinement for the owned OpenCode server, CLI/TUI, shell and descendants.
+      Demonstrate filesystem enforcement, credential protection, network policy and cleanup
+      from a normal install without Docker, Podman or a daemon. BW-031 and BW-032 are open.
 - [x] Permission decisions are auditable: `denied` entries carry the rule, the resolved target
       and the allowed set.
 - [x] Denials recorded accurately: 2 denials in the live run, each naming the target.
@@ -100,7 +102,9 @@ file was edited, and a test was run and re-run to PASS.
       recorded as `[REDACTED]`.
 - [x] Known limitations documented (`KNOWN_LIMITATIONS.md`), including the concrete shell escape
       and the section it lives in.
-- [x] [BW-031 implementation plan](BW-031_IMPLEMENTATION_PLAN.md) independently reviewed. Platform and runtime tests remain open.
+- [ ] Qualify the revised [native-first implementation plan](BW-031_IMPLEMENTATION_PLAN.md)
+      using the [BW-032 platform matrix](BW-032_PLATFORM_QUALIFICATION.md), including real
+      provider connectivity and fail-closed startup on both supported platforms.
 - [ ] Dependency **vulnerability** audit (`bun audit` / advisory database): **not run** — no
       advisory source is configured in this environment, and inventing a clean result would be
       worse than recording the gap.
@@ -128,6 +132,13 @@ file was edited, and a test was run and re-run to PASS.
 - [x] The Phase 2 gate is **not** claimed.
 
 ---
+
+## Native qualification gate
+
+Run `./scripts/verify_native_release.py` against the exact release candidate. The installed
+macOS diagnostic passed six controls. The release gate returns exit 1 while required
+platform, native interactive, live-provider and cleanup evidence is absent.
+[Qualification results](BW-032_QUALIFICATION_RESULTS.md).
 
 ## Verdict
 

@@ -35,40 +35,40 @@
       "size_bytes": 3292
     },
     "ALPHA_RELEASE_CHECKLIST.md": {
-      "sha256": "ebcedc7bb8391da1b2b83fd3a4a4a6a340c26fc09904b26e6023b58723863a8a",
-      "size_bytes": 8459
+      "sha256": "5f693c67e423e90d82bd9c629fe7a162a05552b7291ede59e910946dd725b304",
+      "size_bytes": 9117
     },
     "ALPHA_TESTER_GUIDE.md": {
       "sha256": "9980d44cc33c0bf791388b5c54e6dcc511699a38b39c8fdf1b072d315e0bc054",
       "size_bytes": 8997
     },
     "BASHWINK_FULL_PLAN.md": {
-      "sha256": "28b5fdbfd0713fdd5cf751232eae062f28a6b4c68daaa1fdafa33639f602b37c",
-      "size_bytes": 67289
+      "sha256": "6755b92b7c8c02aae2cca92a42c61887d7b835018ae32a8b561c809d30e1c2ed",
+      "size_bytes": 67180
     },
     "BASHWINK_MASTER_AGENT_PROMPT.md": {
       "sha256": "cd78f6dea3e0620bd46c6e01cc04d3eaaf2f9bd3b7a0e7df93960c44dcdda456",
       "size_bytes": 3823
     },
     "BASHWINK_PHASE_BY_PHASE_TASK_PLAN.md": {
-      "sha256": "f7376b0ed52daebbd3c49a78fa1341b46ef7f3e3ed0fe52c6846b9c23ce1f46b",
-      "size_bytes": 85088
+      "sha256": "899cbb65fba08273f44feedeaa0e612189614d1246591aee25b290d1885e3ea8",
+      "size_bytes": 85461
     },
     "BASHWINK_PRODUCT_REQUIREMENTS.md": {
       "sha256": "4dfa0c6d84e6774c78c612df520239494d9940bb2b60794009480b1b4619a8e1",
       "size_bytes": 43879
     },
     "BASHWINK_TASKS_90.csv": {
-      "sha256": "73c813e6651a6267b599124221867e64099fa4a21e51054de8f73e0138486cbe",
-      "size_bytes": 38657
+      "sha256": "113f6f54cfe4b204a837d8d2183d36d477df1a886bcc677fd9faead6b1d530b6",
+      "size_bytes": 38826
     },
     "BASHWINK_V2_FEATURE_BACKLOG.md": {
       "sha256": "dab1980faec7101af49fc18ed638e98f2185a85f9a1711164ceeccee50e143e5",
       "size_bytes": 15744
     },
     "BASHWINK_V2_INTEGRATED_PLAN.md": {
-      "sha256": "8621f27820b67106b9775d8b247d61e4b8218512e7ef3023bb487f997010762c",
-      "size_bytes": 130284
+      "sha256": "4d8583194b3fc3c804e6aedf695c2621ddbfe821a003316b8ff849fcbcca06ea",
+      "size_bytes": 130175
     },
     "BASHWINK_V2_PRD_ADDENDUM.md": {
       "sha256": "66d58efef07cba66a2076d6e6415b02fc1e3ca273a315729dca8d9500100a9c1",
@@ -79,16 +79,28 @@
       "size_bytes": 4319
     },
     "BW-030_EXECUTION_BACKEND_DESIGN.md": {
-      "sha256": "d0aa27a54789e5b00202e1a5d2d0d70a2712c8face9c0c30364d5bcdfd078d37",
-      "size_bytes": 3472
+      "sha256": "4e76bb35187a07241298f2ed2db5bd00dac119f33a1f48692d9c3cc804ecef04",
+      "size_bytes": 3867
     },
     "BW-031-SANDBOX-PROPOSAL.md": {
-      "sha256": "aa47168101e9962e427717be9ac44a41112f5e9be6c2a754133bead128a721f5",
-      "size_bytes": 16315
+      "sha256": "12fd18a08541cbc37cb2ccd005ec5087edd705a84bbcd98773de0e81b7883433",
+      "size_bytes": 15118
     },
     "BW-031_IMPLEMENTATION_PLAN.md": {
-      "sha256": "14000fc97283c2dd4b7f4ec9862a6a6e856c4a2958aae7d38d44a2eb687e3bec",
-      "size_bytes": 19667
+      "sha256": "414b659dbb7c5f4e9204c266d1d7838bc5a5aac89c03c9ea3401587330ba1a3a",
+      "size_bytes": 6212
+    },
+    "BW-031_IMPLEMENTATION_REPORT.md": {
+      "sha256": "57a6564f54b73615e55070978de680d8fc5bf35406a8ee25ce2fb7b04c777b2d",
+      "size_bytes": 3832
+    },
+    "BW-032_PLATFORM_QUALIFICATION.md": {
+      "sha256": "b086061e8ea0a9ee6ffc688ea4bb44028b3b6cf4c6c5d91a4d26512c1e8e8db3",
+      "size_bytes": 6694
+    },
+    "BW-032_QUALIFICATION_RESULTS.md": {
+      "sha256": "7276cc345e9b44a662fbe91b46c1227f1bed5fdcc198830ff2d0bc7f208470dc",
+      "size_bytes": 3079
     },
     "CI_BASELINE_RECONCILIATION.md": {
       "sha256": "14d4f9555edbae2f3ef7e8c5d2185ddaaa83de9df6c528c7286934df6e273b47",
@@ -107,20 +119,32 @@
       "size_bytes": 8431
     },
     "IMPLEMENTATION_BACKLOG.md": {
-      "sha256": "836f9ea6f20c4429e9339a4e97849b420b438492cba6d29f454be0332b5f9f00",
-      "size_bytes": 22950
+      "sha256": "997d8bfefcf189b5df5ba97b232163b8a76bdfb661cf4e15f3ce00edc0a802f8",
+      "size_bytes": 22841
     },
     "INTERNAL_ALPHA_READINESS.md": {
       "sha256": "36d9f241ff5d303fd4b627fc32e2d7c2147bd7fcf4864e58f87f90b965e9632d",
       "size_bytes": 4119
     },
     "KNOWN_LIMITATIONS.md": {
-      "sha256": "836ff1a6dee4f1e9ba958333dd38e40c89ccee5c588880754f7e7f36d0c9ec30",
-      "size_bytes": 9407
+      "sha256": "7155568420636dbca935066072c4387752ff93b8d2af43e5ead38a01bd2a45f5",
+      "size_bytes": 9871
     },
     "LLM_INTEGRATION_AUDIT.md": {
       "sha256": "09a0da4a4f7df07586ae1db2df32f06b267f114cee6fdb639bb608615132f24e",
       "size_bytes": 14116
+    },
+    "NATIVE_SANDBOX_KNOWN_LIMITATIONS.md": {
+      "sha256": "32616af0791fd8235dbd4175378e7edef6dbd8797cf11ccc5918529df68932b1",
+      "size_bytes": 1439
+    },
+    "NATIVE_SANDBOX_QUALIFICATION.json": {
+      "sha256": "ecf079bb1512dda054f8aa65401783a642c9726621d6b3ccbdbc78743846a96a",
+      "size_bytes": 18104
+    },
+    "NATIVE_SANDBOX_SECURITY_MODEL.md": {
+      "sha256": "16047b1a076ff852cc28d8ded6a5300791eebc353023084e8ae6d14eead72a68",
+      "size_bytes": 1578
     },
     "PHASE-00-FOUNDATION.md": {
       "sha256": "991ce144e537f87298e4b19c9c63718d0e775c5f84c867475f0a5f6e571b3abf",
@@ -139,8 +163,8 @@
       "size_bytes": 15520
     },
     "PHASE-04-SANDBOX-AGENTS.md": {
-      "sha256": "1135d47bd2eabb2ee2922f4b869d23f444f20c54e44f596a807ab515c4ee1644",
-      "size_bytes": 11343
+      "sha256": "459372f1a9ffc9fc0206471bcd4a272db6c773484aad594b99401441624d363c",
+      "size_bytes": 11716
     },
     "PHASE-05-EVALUATION.md": {
       "sha256": "729300e6d96ff68bd236d0215ccfc2c6c83cbb0b1fe9fed37c2a64de797f78d7",
@@ -155,8 +179,8 @@
       "size_bytes": 6165
     },
     "PHASE_GATE_CHECKLIST.md": {
-      "sha256": "4a9586721157dc6ad7a6020a27fc6225b4fe3a7228a9e68a7e775230edc077b4",
-      "size_bytes": 12805
+      "sha256": "fee0cc29fd697e31a83a5f1cbbbbfd888af42480169d4b6d56a2c1de246a53e5",
+      "size_bytes": 13046
     },
     "reports/BASHWINK_FULL_PLAN.docx": {
       "sha256": "9ff5e24b6476785dde68336cfa5ed13d3c6bd61aafeeec565675390c0d6b49c9",

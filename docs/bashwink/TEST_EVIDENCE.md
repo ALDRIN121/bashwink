@@ -126,10 +126,20 @@ so it cannot be read as the run's directory; `location` is the workspace.
 
 ### CI for this increment
 
-Committed at `b38dd51` — **13/13 jobs success**, first attempt, no re-run
+**Code commit `b38dd51` — 13/13 jobs success, first attempt, no re-run**
 ([run 45195209661](https://github.com/ALDRIN121/bashwink/actions/runs/45195209661)).
 CI ran **293 `cli` tests / 17 files** and **76 `evidence` tests**, against 369 locally.
-The previously flaky macOS runner capacity did not recur.
+
+**Evidence commit `5ff3ff9` — 11/13 success, 2 cancelled, and the cause is not the code**
+([run 45196502945](https://github.com/ALDRIN121/bashwink/actions/runs/45196502945)).
+`runtime health (macos-15)` and `evidence (macos-15)` were cancelled after queueing 15 minutes
+with **`runner_name: ""` and `steps: []`** — GitHub never assigned them a runner, so nothing ran
+and nothing failed. The other two macOS jobs in the same run (`cli`, `fixtures`) did get runners
+and passed. This is the third occurrence of macOS runner capacity being unavailable; the code
+those two jobs cover passed on `b38dd51` minutes earlier, and on macOS locally.
+
+That distinction is recorded rather than papered over with a green tick: a cancelled job proves
+nothing, and re-running until green would hide how often macOS capacity is unavailable.
 
 ### Not tested here
 

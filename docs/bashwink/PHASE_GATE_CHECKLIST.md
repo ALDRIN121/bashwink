@@ -1,12 +1,12 @@
 # Bashwink — Phase Release Gates
 
 **Phase 0: 4 of 4 conditions met. Gate PASSED.**
-**Phase 1: 10/10 tasks Done, 4/4 release criteria locally verified. Gate PASSED locally,
-pending hosted CI.**
+**Phase 1: 10/10 tasks Done, 4/4 release criteria verified; 11/11 CI jobs green on both
+supported platforms. Gate PASSED.**
 Phases 2–7: unchecked, not started.
 
 Last evaluated 2026-11-23 after real GitHub Actions runs on both supported platforms
-(Phase 0) and full local verification (Phase 1).
+(Phase 0 and Phase 1).
 
 ## Phase 1 — CLI & durable execution substrate (Internal CLI prototype gate)
 
@@ -37,9 +37,17 @@ Last evaluated 2026-11-23 after real GitHub Actions runs on both supported platf
 - [x] **Planning mode cannot silently edit, and diff/undo is reproducible.** `assertEditable`
       plus three real git fixtures; undo is byte-identical and idempotent.
 
-**Residual, non-blocking:** Phase 1 has no hosted CI run yet — the `cli` job was added to
-`verify.yml` for both platforms but has not executed. Every claim above is a local macOS arm64
-result, reproduce the commands to check them.
+**CI evidence:** `verify.yml` — **11/11 jobs green** on `ubuntu-latest` and `macos-15` at
+`f753920` ([run 45119233542](https://github.com/ALDRIN121/bashwink/actions/runs/45119233542)).
+The `cli` job on Linux independently reports `Ran 141 tests across 8 files`, a clean
+`tsc --noEmit`, and `passed: 10  failed: 0` for the SIGKILL fixture — so the store, the git
+fixtures and the interruption semantics are verified on a second platform, not just on the
+machine they were written on.
+
+**Residual, non-blocking:** the runtime-dependent evidence (BW-014 against the real OpenCode
+binary, and the 8-stage demo) is **local macOS arm64 only** — CI skips that fixture honestly
+because installing a 225 MB platform package on every push is not worth it. The fixture prints
+`SKIP … needs the real binary` rather than passing vacuously.
 
 ## Phase 0 — Foundation / fork feasibility (Foundation gate)
 

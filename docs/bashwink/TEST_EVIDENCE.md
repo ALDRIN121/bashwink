@@ -9,13 +9,54 @@ Phase 0 CI evidence is hosted; **Phase 1's evidence below is local**, and says s
 
 ## Phase 1 evidence (2026-11-23) — implemented and locally verified
 
+### Phase 1 hosted CI — green on both platforms
+
+Run [45119233542](https://github.com/ALDRIN121/bashwink/actions/runs/45119233542) at
+**`f753920`**: **11/11 jobs, both `ubuntu-latest` and `macos-15`.**
+
+| Job | ubuntu-latest | macos-15 |
+| --- | --- | --- |
+| `cli` | success | success |
+| `evidence` | success | success |
+| `fixtures` | success | success |
+| `lint`, `docs integrity`, `license scope`, `scope statement`, `secret scan` | success (single-instance) | — |
+
+Read out of the `cli (ubuntu-latest)` job's own log, not inferred from a green tick:
+
+```
+Ran 141 tests across 8 files. [1.91s]        141 pass / 0 fail
+$ tsc --noEmit -p tsconfig.json              (clean)
+PASS  child was SIGKILLed while holding an attempt open
+passed: 10  failed: 0                        (idempotent-resume fixture)
+version: bashwink 0.1.0
+initialised /home/runner/work/_temp/bw-smoke
+8 checks, 1 failure(s): runtime              (doctor, rc=1 as asserted)
+SKIP  no OpenCode runtime available          (tool-lifecycle, honestly skipped)
+```
+
+**The three risks that this run existed to settle are settled:**
+
+1. **`bun:sqlite` on Linux** — the store passed all 141 tests including the migration,
+   durability and attempt-tracking suites. The single-writer WAL assumption holds on Linux.
+2. **Symlinked plugin staging on Linux** — no failure. The fixture could not exercise it
+   end-to-end because the runtime is absent (it skips honestly), but `stagePlugins` and
+   `stagedPluginIds` are covered by the passing unit tests on both platforms.
+3. **Git subprocess fixtures on Linux** — `git --no-color diff` behaviour differs by version;
+   the three git fixtures passed on `git 2.56.1` (Linux) as well as Apple Git 2.54.0.
+
+The first attempt, run [45118931489](https://github.com/ALDRIN121/bashwink/actions/runs/45118931489)
+at `ee4652f`, failed — **in the workflow, not the code**: the smoke step asserted
+`test -d "$BASHWINK_HOME"` after `--version`, which never touches the filesystem, and used
+`doctor || true`, discarding the exit code that *is* the BW-009 acceptance criterion. Both fixed
+in `f753920`.
+
 ### Test totals
 
 | Suite | Tests | Result | Command |
 | --- | ---: | --- | --- |
 | `@bashwink/evidence` (Phase 0 recorder) | 47 | **47 pass / 0 fail** | `bun run test:evidence` |
 | `@bashwink/cli` (Phase 1) | 141 | **141 pass / 0 fail** | `bun run test:cli` |
-| **Total** | **188** | **188 pass / 0 fail** | `bun run test` |
+| **Total** | **188** | **188 pass / 0 fail** — on Linux and macOS | `bun run test` |
 
 Typecheck: `tsc --noEmit` clean on **both** packages (`bun run typecheck`). Semantic lint:
 `oxlint --deny-warnings` clean over 32 files. Formatting: `bun fmt --check` clean.
@@ -123,15 +164,18 @@ DEMONSTRATION PASSED (8 stages)
 
 ### What Phase 1 evidence is and is not
 
-- **Verified locally on macOS arm64 only.** No Phase 1 CI run has been collected yet. The
-  `cli` job was added to `verify.yml` for both `ubuntu-latest` and `macos-15`, but seeing it
-  green requires a push.
+- **Verified on Linux and macOS.** `cli` and `evidence` jobs are green on `ubuntu-latest` and
+  `macos-15` (run 45119233542). The end-to-end runtime evidence (BW-014, the 8-stage demo) was
+  produced **locally on macOS arm64** only, because CI deliberately does not install the
+  225 MB runtime package; the fixture reports `SKIP` there rather than passing vacuously.
 - **No real model provider was used.** The agent turns went through the local mock
   (`127.0.0.1`, ADR-006). That proves the tool-lifecycle seam; it does not prove behaviour
   against a hosted model.
 - **`bun:sqlite` is a single-writer assumption.** Concurrent agents are Phase 4 (ADR-004).
 - **The doctor's `docker` check only tests presence on `PATH`.** It does not verify the daemon
   is reachable.
+- **`current-plan.json` and the SQLite store are two sources of truth**, written together by
+  the CLI. A crash between the two writes could desynchronise them.
 
 
 ## Final remediation evidence (2026-11-23)

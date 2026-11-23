@@ -1,31 +1,43 @@
 # Bashwink — Next Steps
 
-**Where we are:** **Phase 0 complete and gate-passed** with hosted CI evidence on both
-platforms. **Phase 1 implemented**: 10 of 10 tasks Done, 188 tests passing, and the Phase 1
-exit demonstration runs as one scripted walkthrough in
-`fixtures/phase1-demo/run.sh` — **DEMONSTRATION PASSED (8 stages)**.
+**Where we are:** **Phase 0 complete and gate-passed**, and **Phase 1 complete and gate-passed**.
+10 of 10 Phase 1 tasks Done, 188 tests passing on Linux and macOS, and **11/11 CI jobs green on
+both supported platforms** ([run 45119233542](https://github.com/ALDRIN121/bashwink/actions/runs/45119233542) at `f753920`).
 
-**Phase 2 must not start until the Phase 1 hosted CI run is collected.** See "The one open
-item" below.
+**Phase 2 has not been started.** The Phase 1 gate is where work stopped, deliberately.
 
-## The one open item: Phase 1 has no hosted CI run
+## Phase 1 closed with CI evidence
 
-Every Phase 1 claim in `TEST_EVIDENCE.md` is a **local macOS arm64** result. The `cli` job was
-added to `verify.yml` with a `[ubuntu-latest, macos-15]` matrix, but it has not executed yet.
-That matters for three specific reasons, not as a formality:
+| Workflow | Run | Commit | Result |
+| --- | --- | --- | --- |
+| `verify` | [45118931489](https://github.com/ALDRIN121/bashwink/actions/runs/45118931489) | `ee4652f` | **failure** — `cli` job, in the *workflow* not the code |
+| `verify` | [45119233542](https://github.com/ALDRIN121/bashwink/actions/runs/45119233542) | `f753920` | **success — 11/11 jobs, both platforms** |
 
-1. `bun:sqlite` — the store is the backbone of BW-012/016/019 and has only ever run on Darwin.
-2. **Plugin staging uses a symlink.** `stagePlugins` symlinks the real package into
-   `OPENCODE_CONFIG_DIR/plugin/`. Symlink resolution differs across filesystems, and the
-   absolute-`exports` and cross-`/tmp`-symlink variants of this already failed *silently* twice
-   on macOS. A Linux runner is where the next variant would surface.
-3. **Git subprocess fixtures** assert on diff/undo output; `git --no-color diff` was already
-   wrong once in a way that produced empty output rather than an error.
+### The CI failure, and why it was worth having
 
-To collect it: push and read `gh run view` for the `cli` job on both legs. If it is red, that is
-a Phase 1 defect to fix, not a CI problem to work around.
+The first Phase 1 run failed on both platforms — but the 141 CLI tests and the 10/10 SIGKILL
+fixture had **already passed**. The failure was in the smoke step I wrote:
 
-## Phase 1 — done, with the evidence
+- `test -d "$BASHWINK_HOME"` after `--version`. `--version` is handled by the wrapper and
+  deliberately never touches the filesystem, so that assertion could only ever fail.
+- `doctor || true` discarded the exit code — which *is* the BW-009 acceptance criterion. A step
+  that ignores the thing it is testing can only report green.
+
+Both fixed in `f753920`. This is the same class of error as the `bun fmt`-as-lint mistake in
+Phase 0: a check that looked like verification and verified nothing.
+
+### What the Linux leg actually settled
+
+Three risks were flagged before pushing, and all three held:
+
+1. **`bun:sqlite`** — migrations, durability and attempt-tracking suites all pass on
+   `ubuntu-latest`. The WAL single-writer assumption holds there too.
+2. **Symlinked plugin staging** — no failure on Linux.
+3. **Git subprocess fixtures** — passed on `git 2.56.1` as well as Apple Git 2.54.0. This one
+   had already bitten once, when `git --no-color diff` produced empty output rather than an
+   error.
+
+## Phase 1 — what was built
 
 | Task | What was built |
 | --- | --- |
@@ -51,9 +63,11 @@ a Phase 1 defect to fix, not a CI problem to work around.
 3. **No-FFmpeg native library is not byte-reproducible** (Zig embeds build paths). A PM-1
    release must assert a symbol profile, not a digest.
 4. **No legal review.** ADR-009 removes known LGPL exposure by construction; it is not advice.
-5. **`DEPENDENCY_LICENSES.json` is stale.** `oxlint` (1.94.0) and `@opencode/plugin` (2.3.2,
-   now a root devDependency so staged plugins can resolve it) are not in the inventory.
-   Regenerate before any release.
+5. **`DEPENDENCY_LICENSES.json` was regenerated for Phase 1** — `oxlint` (1.94.0) and
+   `@opencode/plugin` (2.3.2, a root devDependency so staged plugins can resolve it) are now in
+   the inventory, both verified MIT from the packages themselves, and the release gate still
+   exits 0. It remains a **snapshot**: `upstream_sync.py` does not regenerate it, so it must be
+   refreshed every time a dependency is added.
 6. **`bun audit`** has never been run.
 7. **The doctor's `docker` check only tests presence on `PATH`** — it does not verify the
    daemon answers.

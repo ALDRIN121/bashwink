@@ -78,7 +78,7 @@ async function drainEndpoint(
   }
 }
 
-function unattendedDatabase(environment: Record<string, string>): string {
+async function unattendedDatabase(environment: Record<string, string>, cancel: AbortSignal) {
   if (environment["OPENCODE_DB"] === ":memory:") return ":memory:"
   const data = environment["XDG_DATA_HOME"]
   if (data === undefined) throw new ReadinessError("OpenCode data directory is missing")
@@ -94,35 +94,54 @@ function unattendedDatabase(environment: Record<string, string>): string {
       `could not locate the OpenCode database before startup (${code ?? "unknown error"})`,
     )
   }
-  try {
-    const db = new Database(file, { readonly: true })
+  const deadline = performance.now() + 2_000
+  while (!cancel.aborted) {
     try {
+      const db = new Database(file, { readonly: true })
+      try {
+        // The pinned migration can turn old schedules into runnable automations.
+        for (const table of ["automation", "schedule"]) {
+          if (
+            db
+              .query("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?")
+              .get(table) !== null &&
+            db.query(`SELECT 1 FROM ${table} LIMIT 1`).get() !== null
+          )
+            throw new ReadinessError(
+              "OpenCode database contains saved automations or schedules; choose an automation-free Bashwink home",
+            )
+        }
+      } finally {
+        db.close()
+      }
+      return file
+    } catch (error) {
+      if (error instanceof ReadinessError) throw error
       if (
-        db
-          .query("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'automation'")
-          .get() !== null &&
-        db.query("SELECT id FROM automation LIMIT 1").get() !== null
-      )
-        throw new ReadinessError(
-          "OpenCode database contains saved automations; choose an automation-free Bashwink home",
-        )
-    } finally {
-      db.close()
+        error instanceof SQLiteError &&
+        (error.errno & 0xff) === 5 &&
+        performance.now() < deadline
+      ) {
+        // A concurrent managed service can briefly hold a SQLite bootstrap lock.
+        await Bun.sleep(50)
+        continue
+      }
+      const detail =
+        error instanceof SQLiteError ? `${error.code} / ${error.errno}` : "unknown error"
+      throw new ReadinessError(`could not inspect the OpenCode database before startup (${detail})`)
     }
-  } catch (error) {
-    if (error instanceof ReadinessError) throw error
-    const detail = error instanceof SQLiteError ? `${error.code} / ${error.errno}` : "unknown error"
-    throw new ReadinessError(`could not inspect the OpenCode database before startup (${detail})`)
   }
-  return file
+  throw new ReadinessError("private runtime launch was cancelled")
 }
 
-export function startPrivateServer(
+export async function startPrivateServer(
   command: string,
   environment: Record<string, string>,
   request: ReadinessRequest,
+  cancel: AbortSignal,
 ) {
-  const database = unattendedDatabase(environment)
+  const database = await unattendedDatabase(environment, cancel)
+  if (cancel.aborted) throw new ReadinessError("private runtime launch was cancelled")
   const directory = mkdtempSync(path.join(request.scopesDirectory, ".readiness-"))
   const ack = path.join(directory, "ready.json")
   const retiring = path.join(directory, "retire")

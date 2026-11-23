@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test"
-import { parsePrivateEndpoint, matchesReadiness } from "../src/private-server.js"
+import { Database } from "bun:sqlite"
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import {
+  parsePrivateEndpoint,
+  matchesReadiness,
+  startPrivateServer,
+} from "../src/private-server.js"
 
 test("only a bare HTTP address on the owned IPv4 loopback listener is accepted", () => {
   expect(parsePrivateEndpoint('{"url":"http://127.0.0.1:32123"}')).toBe("http://127.0.0.1:32123")
@@ -11,6 +19,40 @@ test("only a bare HTTP address on the owned IPv4 loopback listener is accepted",
     "http://127.0.0.1",
   ]) {
     expect(() => parsePrivateEndpoint(JSON.stringify({ url }))).toThrow()
+  }
+})
+
+test("waits for a transient SQLite lock then refuses a migratable schedule before spawning", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "bw-readiness-lock-"))
+  const data = path.join(root, "opencode")
+  mkdirSync(data)
+  const writer = new Database(path.join(data, "opencode.db"))
+  try {
+    writer.exec(
+      "CREATE TABLE schedule(id TEXT); INSERT INTO schedule VALUES ('fixture'); BEGIN EXCLUSIVE;",
+    )
+    const launch = startPrivateServer(
+      path.join(root, "unused"),
+      { XDG_DATA_HOME: root },
+      {
+        runId: "run_fixture",
+        workspace: root,
+        scopesDirectory: root,
+        pluginDirectory: root,
+        logFile: path.join(root, "log"),
+      },
+      new AbortController().signal,
+    )
+    const outcome = launch.catch((error: unknown) => error)
+    await Bun.sleep(125)
+    writer.exec("COMMIT")
+    expect(await outcome).toMatchObject({
+      message: expect.stringContaining("database contains saved automations or schedules"),
+    })
+    expect(readdirSync(root)).toEqual(["opencode"])
+  } finally {
+    writer.close()
+    rmSync(root, { recursive: true, force: true })
   }
 })
 

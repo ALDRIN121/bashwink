@@ -65,7 +65,7 @@ export const localBackend: ExecutionBackend = {
 
     let child: Bun.Subprocess<"inherit", "inherit", "inherit"> | undefined
     let stopping: Promise<void> | undefined
-    let server: ReturnType<typeof startPrivateServer> | undefined
+    let server: Awaited<ReturnType<typeof startPrivateServer>> | undefined
     const controller = new AbortController()
     const stopClient = async (): Promise<void> => {
       if (child === undefined || child.exitCode !== null || child.signalCode !== null) return
@@ -94,7 +94,12 @@ export const localBackend: ExecutionBackend = {
         let args = request.args
         let env = request.env
         if (request.readiness !== undefined) {
-          server = startPrivateServer(request.command, request.env, request.readiness)
+          server = await startPrivateServer(
+            request.command,
+            request.env,
+            request.readiness,
+            controller.signal,
+          )
           const endpoint = await server.ready(controller.signal)
           if (controller.signal.aborted)
             throw new ReadinessError("private runtime launch was cancelled")

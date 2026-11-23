@@ -115,6 +115,25 @@ Trust is now enforced through the same hook. Verified with a real model:
 This is the kind of defect that matters more than a missing feature: the documentation asserted a
 boundary that did not exist.
 
+### CI
+
+Committed at `93ddfd5` — **13/13 jobs success** on `ubuntu-latest` and `macos-15`
+([run 45182633571](https://github.com/ALDRIN121/bashwink/actions/runs/45182633571)).
+
+| Job | ubuntu-latest | macos-15 |
+| --- | --- | --- |
+| lint / docs integrity / scope statement / license scope / secret scan | success | single-platform |
+| `cli` | success — **292 tests / 17 files** | success |
+| `evidence` | success — **73 tests** + 50 in the recorder job | success |
+| `fixtures` | success | success |
+| `runtime health` | success | success |
+
+**The first run of this commit reported failure, and the reason matters.** All four macOS jobs
+were `cancelled` with an **empty `runner_name`** and no logs at all — GitHub never assigned a
+runner, they queued for exactly 15 minutes and were reaped. Re-running the failed jobs gave
+13/13. The distinction is worth keeping straight: that was infrastructure, not code, and the
+evidence for it is the absent runner rather than a red assertion.
+
 ### Totals
 
 | Gate | Result |

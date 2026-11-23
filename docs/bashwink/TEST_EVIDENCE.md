@@ -169,8 +169,38 @@ scope is a release decision that has not been taken.
 
 ### Test totals and CI
 
-See the final section of this register for the committed totals and the GitHub Actions run
-that produced them.
+Committed at `d586bea` — **13/13 jobs success** on `ubuntu-latest` and `macos-15`
+([run 45172805516](https://github.com/ALDRIN121/bashwink/actions/runs/45172805516)).
+
+| Job | ubuntu-latest | macos-15 |
+| --- | --- | --- |
+| lint / docs integrity / scope statement / license scope / secret scan | success | single-platform jobs |
+| `cli` | success — **285 tests / 16 files** | success |
+| `evidence` | success | success |
+| `fixtures` | success — 8 scenarios | success |
+| `runtime health` | success — **17/17** and **13/13** | same |
+
+Local suite under the pinned Bun 1.4.4: **335 tests / 17 files, 973 expect() calls, 0 fail**,
+typecheck clean, oxlint `--deny-warnings` clean, `bun fmt --check` clean (44 files).
+
+**The `cli` CI job runs 285 of the 335 tests** because it runs only `packages/bw-cli`; the
+remaining 50 run in the `evidence` job. Both jobs are green, so the full 335 are executed
+across the two.
+
+**Skipped tests: one, in the `fixtures` job.** The Phase 1 demo's mock-provider leg skips when
+the mock provider is not started in that job; it is not a pass and is reported as
+`skipped: 1`. It is exercised by the local `fixtures/phase1-demo/run.sh` (8/8 stages) and is
+not relied on by any claim above.
+
+### A CI failure this increment produced, and what it taught
+
+The first run at `9b0ed24` failed **both** `cli` legs with exit 127 while all other 11 jobs
+passed. Two pre-flight tests assumed "there is no runtime here"; that held on this machine
+(a runtime is on PATH) and not on the Linux runner. They now supply an explicit stub runtime,
+which also proves the refusal happened *before* spawning and that the runtime's exit code is
+propagated when the call is allowed through. Re-run with no runtime on `PATH` locally to
+reproduce the CI condition: **335 pass** — so the suite no longer depends on the environment
+it happens to run in.
 
 ## Phase 2 evidence (2026-11-23) — runtime reliability and BW-055
 

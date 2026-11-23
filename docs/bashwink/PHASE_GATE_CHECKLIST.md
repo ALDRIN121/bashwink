@@ -44,8 +44,9 @@ scope statement. The lint job runs a **semantic** linter (`oxlint --deny-warning
 rules as errors) plus a self-test that proves the gate can fail; a separate step keeps the
 formatting check (`bun fmt --check`). A formatter was previously presented as satisfying this
 criterion — it does not, and that is corrected rather than re-described.
-`upstream-compat.yml` — both platform legs green including the 8,004-test upstream baseline,
-most recently at commit `bf33e20` (see `TEST_EVIDENCE.md` for the exact run and its SHA).
+`upstream-compat.yml` — both platform legs green including the 8,004-test upstream baseline at
+the lint-gate commit `bf33e20` ([run 45113462602](https://github.com/ALDRIN121/bashwink/actions/runs/45113462602)):
+ubuntu-latest **7,251 pass / 0 fail**, macos-15 **7,561 pass / 0 fail**.
 
 **Demo:** `create_fixtures.sh` → `reset.sh --check` → build → run against the mock provider
 → read `evidence.jsonl` → verify the chain → `upstream_sync.py` → read the verdict.

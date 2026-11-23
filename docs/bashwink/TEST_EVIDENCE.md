@@ -144,6 +144,27 @@ artifact; the run existed moments later. Nothing was wrong with the trigger conf
 | [45066246923](https://github.com/ALDRIN121/bashwink/actions/runs/45066246923) | `0b09620` | `upstream-compat` | **success** — both platforms, all 11 steps each | ~5 min |
 | [45110993064](https://github.com/ALDRIN121/bashwink/actions/runs/45110993064) | `8a3286c` | `upstream-compat` | **success** — both legs | 9 m 46 s |
 | [45112577853](https://github.com/ALDRIN121/bashwink/actions/runs/45112577853) | `8a3286c` | `upstream-compat` | **cancelled** — superseded by the run below | — |
+| [45113462602](https://github.com/ALDRIN121/bashwink/actions/runs/45113462602) | `bf33e20` | `upstream-compat` | **success — both legs at the lint-gate commit** | 10 m 4 s |
+
+### `upstream-compat` results, run 45113462602 (commit `bf33e20`)
+
+Re-dispatched at the commit carrying the real lint gate. This proves the **upstream** OpenCode
+baseline, not Bashwink code, and it is the run that satisfies the documented gate at the current
+commit rather than three commits behind it.
+
+| Step | ubuntu-latest | macos-15 |
+| --- | --- | --- |
+| Check out the pinned upstream | success (`v2.3.2`) | success |
+| Install upstream dependencies | success | success |
+| Ensure bash >= 4 | success | success |
+| Install the pinned ripgrep | success (`15.1.0`, SHA-256 checked) | success |
+| **Upstream core suite** | **7,251 pass / 0 fail** (`Ran 7596 tests across 326 files`) | **7,561 pass / 0 fail** (`Ran 7595 tests`) |
+| Upstream SDK suite | success — 40 tests / 0 fail | success — 40 tests / 0 fail |
+
+Note the commit relationship honestly: `verify` ran at `bf33e20` (the lint gate) and
+`upstream-compat` also ran at `bf33e20`. HEAD moved to `b76c8f2` afterwards, which is a
+**documentation-only** commit — `git diff bf33e20..b76c8f2` touches four `.md` files and no
+source, workflow or lockfile, so the upstream baseline result carries over unchanged.
 
 ### `upstream-compat` results, run 45066246923 (commit `0b09620`)
 

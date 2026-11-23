@@ -21,6 +21,7 @@ verified by real GitHub Actions runs on both supported platforms.
 | `upstream-compat` | [45066246923](https://github.com/ALDRIN121/bashwink/actions/runs/45066246923) | `0b09620` | **success — both platforms** |
 | `upstream-compat` | [45110993064](https://github.com/ALDRIN121/bashwink/actions/runs/45110993064) | `8a3286c` | **success — both legs** |
 | `upstream-compat` | [45112577853](https://github.com/ALDRIN121/bashwink/actions/runs/45112577853) | `8a3286c` | cancelled — superseded |
+| `upstream-compat` | [45113462602](https://github.com/ALDRIN121/bashwink/actions/runs/45113462602) | `bf33e20` | **success — both legs at the lint-gate commit** |
 
 ### The two defects CI found that local validation could not
 

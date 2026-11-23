@@ -429,6 +429,14 @@ export class EvidenceRecorder {
   recordBoot(detail: {
     readonly plugin: string
     readonly pid: number
+    /**
+     * The plugin host's own working directory.
+     *
+     * Not the workspace: the plugin runs in the runtime's shared host process, whose cwd is
+     * wherever that host was started. A probe recorded `cwd=/Users/me` for a workspace at
+     * `/Users/me/repo`, and reading that as the run's directory would be wrong every time.
+     * `location` is the workspace.
+     */
     readonly cwd: string
     /** Wrapper-assigned run id; keeps a boot record attributable to one process, not one pid. */
     readonly runID?: string
@@ -445,7 +453,7 @@ export class EvidenceRecorder {
       {
         status: "completed",
         note:
-          `plugin initialised run=${runID} pid=${detail.pid} cwd=${detail.cwd}` +
+          `plugin initialised run=${runID} pid=${detail.pid} hostcwd=${detail.cwd}` +
           (detail.location === undefined ? "" : ` location=${detail.location}`),
       },
     )

@@ -295,6 +295,7 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
       allowedPaths: string[]
       readPaths: string[]
       allowShell: boolean
+      origin?: "trust" | "contract"
     } = { mode: "off", allowedPaths: [], readPaths: [], allowShell: true }
     // An untrusted workspace denies writes and shell outright. `doctor` has always claimed
     // this; until now `evaluateCall` existed but nothing called it, so the claim was false and
@@ -302,7 +303,13 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
     // enforces the contract — makes the sentence true and keeps one enforcement point.
     const trusted = isTrusted(readTrust(path.join(resolved.config, "trust.json")), process.cwd())
     if (!trusted) {
-      policy = { mode: "enforce", allowedPaths: [], readPaths: [process.cwd()], allowShell: false }
+      policy = {
+        mode: "enforce",
+        allowedPaths: [],
+        readPaths: [process.cwd()],
+        allowShell: false,
+        origin: "trust",
+      }
     }
 
     if (plan.plan !== undefined) {
@@ -325,6 +332,7 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
             // set is what a contract narrows, and narrowing reads to it would blind the agent.
             readPaths: [process.cwd()],
             allowShell: !forbidsShell,
+            origin: "contract",
           }
         }
       } finally {

@@ -277,8 +277,13 @@ export function renderMissingEvidence(input: {
   // an unknown flag, a refused command), nothing ran to record — the honest statement is
   // "nothing happened", not "work happened but was not recorded". Only a run that actually
   // started, with no boot record, is the alarming case.
+  // `boot.entries` is the length of the whole chain, not this run's entries. Testing it against
+  // zero therefore stops working the moment any earlier run has logged anything: a typo'd
+  // subcommand then reported "the agent may have done real work" about a process that exited
+  // immediately, and the evidence log's previous boot record was the reason. What matters is
+  // that no boot record exists *for this run*, and that the child exited nonzero.
   const exitCode = input.record.exitCode
-  const neverStarted = exitCode !== undefined && exitCode !== 0 && input.boot.entries === 0
+  const neverStarted = exitCode !== undefined && exitCode !== 0 && !input.boot.ok
   if (neverStarted) {
     lines.push(
       `  the runtime exited ${String(exitCode)} before any evidence was written, so no work was`,

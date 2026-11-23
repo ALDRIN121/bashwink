@@ -20,6 +20,117 @@ Phase 2 increment 2 (LLM integration, BW-091) evidence is in
 
 
 
+
+## Phase 2 increment 4 — interactive TUI smoke test (2026-11-23)
+
+### What was actually driven, and what was only observed
+
+This distinction is the point of the section, so it comes first.
+
+| Claim | Evidence class |
+| --- | --- |
+| Bare `bashwink` starts the TUI in the CWD | **Observed** — real PTY, three directories, boot entry carries the resolved workspace |
+| Typing a prompt into the chat works | **Executed** — keystrokes written to the PTY, prompt rendered, model replied |
+| Model selection is live | **Observed** — status bar reads `Build · Claude Sonnet 5 CommandCode`; the runtime reported `claude-sonnet-5` in `session.step.started` |
+| A real coding task completes | **Executed** — model ran the test, edited the file, re-ran, reported PASS; verified independently afterwards |
+| Session recovery after restart | **Executed** — `--continue` restored the prior conversation and the model answered a follow-up about its own earlier fix |
+| Evidence-plugin health | **Executed** — boot record per launch, chain re-verified independently, 9/9 tool calls attributed to a model |
+| Model *switching* from inside the TUI | **NOT tested** — switching was verified via `--model` and `model use`, not via an in-session picker |
+
+The last row is the gap. An interactive user changing models mid-session through the TUI was not
+exercised; only the configuration path was. Do not read this section as "the interactive model
+picker was validated".
+
+### The coding task
+
+Disposable repo at `~/Developer/bw-alpha-smoke/repo`, `add` implemented as subtraction:
+
+```
+$ python3 run_tests.py
+FAIL add(2,3) -> -1, expected 5
+1 FAILED                                                        (rc=1)
+```
+
+Prompt typed into the TUI:
+
+> Run python3 run_tests.py then fix calc.py so the tests pass. Do not modify run_tests.py.
+
+The TUI showed `add was subtracting instead of adding. Fixing it:`, then an edit, then a shell
+call, then:
+
+> Fixed. The bug was in calc.py's add function — it used subtraction (a - b) instead of addition.
+> Changed it to a + b, and `python3 run_tests.py` now outputs PASS.
+
+Verified independently after the session, not taken from the model's claim:
+
+```
+$ cat calc.py          -> return a + b
+$ python3 run_tests.py -> PASS                                  (rc=0)
+$ git status --short   ->  M calc.py        (run_tests.py untouched)
+```
+
+### Session recovery
+
+Exiting the TUI printed the continuation hint:
+
+```
+  Session   calc.py test failures
+  Continue  opencode -s ses_df7363038ffe0N4WrzUiYQ6ZLY
+```
+
+Relaunched with `--continue` and asked, in a fresh process, *"What was the exact bug you fixed,
+and what is the current test output?"*. The model answered with the original defect (`a - b`),
+the fix (`a + b`), and the current result (`PASS`, exit 0) in 3.1 s. Conversation and workspace
+context survived the restart.
+
+### Evidence health
+
+```
+phases: boot 3, model 3, before 9, denied 2, after 7
+model-attributed before entries: 9/9
+denials: 2
+```
+
+Boot records appeared once per launch, each naming its `location`. The chain was re-verified by
+recomputing the linkage independently of Bashwink's own verifier: every entry chains to its
+predecessor, 24 entries, no breaks.
+
+### Two defects the smoke test found, both fixed
+
+**1. A refusal that could not say why.** On an untrusted workspace the fence returned
+`outside this task's allowed paths ()` and "this contract allows file edits only" — when there
+was no contract at all. The model could only tell the user its permissions were wrong, not that
+`bashwink trust` was the missing step, and it looped. Refusals now carry an `origin` and name the
+cause and the command that fixes it:
+
+```
+DENIED this workspace is not trusted, so no file may be written. '/…/calc.py' would have written
+       /…/calc.py. Run `bashwink trust /…/repo` to allow edits here.
+```
+
+Three tests in `scope.test.ts` pin this, including that the misleading "this contract" wording
+cannot return.
+
+**2. "May have done real work" about a process that never started.** `bashwink sessions` (the
+runtime spells it `session`) exited 1 immediately. The wrapper reported *"the agent may have done
+real work; none of it was recorded"*. Cause: the never-started branch tested the **whole chain**
+for zero entries, so any earlier run's boot record disabled it. Now keyed on "no boot record for
+*this* run" plus a nonzero exit, with a regression test that seeds an earlier run's boot record
+first.
+
+### Also corrected
+
+Boot records labelled `cwd=<plugin host cwd>`, which is the runtime's shared host process, not the
+workspace — observed as `cwd=/Users/me` for a workspace at `/Users/me/repo`. Renamed to `hostcwd`
+so it cannot be read as the run's directory; `location` is the workspace.
+
+### Not tested here
+
+- In-session model switching via the TUI picker.
+- Windows, in any form.
+- Any sandbox: there is none yet, which is why the shell escape in `KNOWN_LIMITATIONS.md` §1
+  remains the external-alpha blocker. `BW-031-SANDBOX-PROPOSAL.md` specifies the fix.
+
 ## Phase 2 increment 3 — alpha stabilisation (BW-059, BW-091 register entry, 2026-11-23)
 
 ### The interactive entry point was broken

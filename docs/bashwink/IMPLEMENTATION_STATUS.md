@@ -4,7 +4,7 @@
 Phase 1 **complete and gate-passed** — 10/10 tasks, 11/11 CI jobs green on `ubuntu-latest`
 and `macos-15` at `ad9d44e` ([run 45129207277](https://github.com/ALDRIN121/bashwink/actions/runs/45129207277)),
 and **revalidated** after the silent-plugin-load investigation (ADR-010).
-Phase 2 **in progress** — BW-055, BW-059 and BW-091 done (3 of 16); **365 tests**; the
+Phase 2 **in progress** — BW-055, BW-059 and BW-091 done (3 of 16); **368 tests**; the
 runtime-health job runs on the real OpenCode binary on both platforms. Phase 2's gate has
 **not** been evaluated.
 **BW-091 was added to the register this increment**, so the provider/model work now has a task
@@ -80,6 +80,17 @@ untrusted workspace now refuses all writes and shell, verified end to end.
 **Remaining alpha risk:** there is still no OS-level sandbox (BW-031), so shell remains an escape
 hatch. For a small supervised alpha that is acceptable and documented; for unattended use it is
 not.
+
+`BW-031-SANDBOX-PROPOSAL.md` now specifies the fix: a Seatbelt (macOS) + bubblewrap (Linux)
+adapter driven by the same `ScopePolicy`, 21 negative tests, and an explicit decision list. Its
+feasibility was verified on this machine rather than assumed — a profile denied outside writes
+and all network while allowing in-scope writes, and the `/tmp` → `/private/tmp` resolved-path
+trap was reproduced before it could break legitimate work. **BW-031 remains Not started; a
+proposal is not an implementation.**
+
+The interactive TUI was smoke-tested with a real coding task and a session restart; that run
+found two defects, both fixed (an unattributable refusal, and "may have done real work" reported
+for a process that never started). The TUI's own in-session model picker was **not** exercised.
 
 ## Phase 0 detail
 

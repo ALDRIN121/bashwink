@@ -11,7 +11,7 @@ Last evaluated: 2026-11-23.
 ## A. Build health
 
 - [x] `bun run typecheck` clean (both packages).
-- [x] `bun test packages` — **365 pass / 0 fail**, 18 files.
+- [x] `bun test packages` — **368 pass / 0 fail**, 19 files.
 - [x] `oxlint --deny-warnings packages` clean.
 - [x] `bun fmt --check packages` clean.
 - [x] `scripts/verify_bashwink_docs.py` → `Audit: PASS`.
@@ -19,6 +19,9 @@ Last evaluated: 2026-11-23.
 - [x] No secret in the working tree or the diff (scanned).
 
 ## B. Interactive entry point (Priority 1)
+
+Driven for real in a PTY, not merely observed booting: a prompt was typed, a model answered, a
+file was edited, and a test was run and re-run to PASS.
 
 - [x] Bare `bashwink` launches the runtime TUI rather than printing help.
       **Was broken:** `first === undefined` printed help. Fixed, and the no-argument branch now
@@ -39,6 +42,14 @@ Last evaluated: 2026-11-23.
 - [x] Startup failure is now reported by cause: a held service port is named with its PID and a
       way out, instead of being misreported as an evidence-plugin failure.
 - [x] Fixture passes **7/7**.
+- [x] A real coding task completes interactively: `add` fixed from `a - b` to `a + b`, tests
+      `PASS`, only `calc.py` modified.
+- [x] Session recovery after restart: `--continue` restored the conversation and the model
+      recalled its own earlier fix.
+- [x] Evidence health: 3 boot records for 3 launches, 9/9 tool calls attributed, chain re-verified
+      independently.
+- [ ] **In-session model switching via the TUI picker: NOT tested.** Switching was verified via
+      `--model`/`model use` only.
 
 ## C. Security boundary (Priority 2, BW-059)
 
@@ -87,7 +98,10 @@ Last evaluated: 2026-11-23.
       searched for across the install and data roots and found in **no** file.
 - [x] Redaction proven at the boundary: a credential-shaped string echoed by the agent was
       recorded as `[REDACTED]`.
-- [x] Known limitations documented (`KNOWN_LIMITATIONS.md`).
+- [x] Known limitations documented (`KNOWN_LIMITATIONS.md`), including the concrete shell escape
+      and the section it lives in.
+- [x] BW-031 sandbox proposal written with feasibility evidence and 21 negative tests
+      (`BW-031-SANDBOX-PROPOSAL.md`). No sandbox is implemented.
 - [ ] Dependency **vulnerability** audit (`bun audit` / advisory database): **not run** — no
       advisory source is configured in this environment, and inventing a clean result would be
       worse than recording the gap.

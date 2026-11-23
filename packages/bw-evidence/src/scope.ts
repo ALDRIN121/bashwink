@@ -51,8 +51,15 @@ export interface ScopePolicy {
    * file edits.
    */
   readonly allowShell: boolean
-  /** Tool names that mutate the filesystem. Anything absent from this list is not path-checked. */
-  readonly readonly_?: true
+  /**
+   * Why this policy exists, so a refusal can name its cause and its fix.
+   *
+   * A refusal that cannot say why is a dead end: the first real interactive session on an
+   * untrusted workspace told the user "outside this task's allowed paths ()" and "this
+   * contract allows file edits only" when there was no contract at all. The model could only
+   * report that its permissions were wrong, not that `bashwink trust` was the missing step.
+   */
+  readonly origin?: "trust" | "contract"
 }
 
 /** Tools that mutate one file. */
@@ -134,6 +141,7 @@ export function makePolicy(input: {
   /** Defaults to the workspace root, which is what a run always has. */
   readonly readPaths?: readonly string[]
   readonly allowShell?: boolean
+  readonly origin?: "trust" | "contract"
   readonly cwd: string
 }): ScopePolicy {
   return {
@@ -143,6 +151,7 @@ export function makePolicy(input: {
       physicalPath(path.resolve(input.cwd, entry)),
     ),
     allowShell: input.allowShell ?? true,
+    ...(input.origin === undefined ? {} : { origin: input.origin }),
   }
 }
 
@@ -162,11 +171,14 @@ export function parsePolicy(document: unknown): ScopePolicy | undefined {
     (!Array.isArray(rawRead) || rawRead.some((e) => typeof e !== "string"))
   )
     return undefined
+  const origin = record["origin"]
+  if (origin !== undefined && origin !== "trust" && origin !== "contract") return undefined
   return {
     mode,
     allowedPaths: raw as string[],
     readPaths: (rawRead as string[] | undefined) ?? (raw as string[]),
     allowShell: allowShell ?? true,
+    ...(origin === undefined ? {} : { origin }),
   }
 }
 
@@ -234,11 +246,14 @@ export function evaluate(policy: ScopePolicy, input: ScopeInput): ScopeVerdict {
       rule: "write-scope",
       target,
       reason:
-        policy.allowedPaths.length === 0
-          ? `no file writes are permitted here: the workspace is not trusted, or the task's ` +
-            `contract allows no paths. '${raw}' would have written ${target}.`
-          : `'${raw}' resolves to ${target}, which is outside this task's allowed paths ` +
-            `(${policy.allowedPaths.join(", ")}).`,
+        policy.origin === "trust"
+          ? `this workspace is not trusted, so no file may be written. '${raw}' would have ` +
+            `written ${target}. Run \`bashwink trust ${cwd}\` to allow edits here.`
+          : policy.allowedPaths.length === 0
+            ? `no file writes are permitted here: the workspace is not trusted, or the task's ` +
+              `contract allows no paths. '${raw}' would have written ${target}.`
+            : `'${raw}' resolves to ${target}, which is outside this task's allowed paths ` +
+              `(${policy.allowedPaths.join(", ")}).`,
     }
   }
 
@@ -252,10 +267,13 @@ export function evaluate(policy: ScopePolicy, input: ScopeInput): ScopeVerdict {
       rule: "read-scope",
       target,
       reason:
-        policy.readPaths.length === 0
-          ? `no reads are permitted here: the workspace is not trusted.`
-          : `'${raw}' resolves to ${target}, which is outside this run's readable roots ` +
-            `(${policy.readPaths.join(", ")}).`,
+        policy.origin === "trust"
+          ? `this workspace is not trusted, so reads are refused. Run ` +
+            `\`bashwink trust ${cwd}\` to allow them.`
+          : policy.readPaths.length === 0
+            ? `no reads are permitted here.`
+            : `'${raw}' resolves to ${target}, which is outside this run's readable roots ` +
+              `(${policy.readPaths.join(", ")}).`,
     }
   }
 
@@ -283,8 +301,11 @@ export function evaluate(policy: ScopePolicy, input: ScopeInput): ScopeVerdict {
         allow: false,
         rule: "shell-disabled",
         reason:
-          "shell is disabled for this task because a command can write anywhere; " +
-          "this contract allows file edits only.",
+          policy.origin === "trust"
+            ? `this workspace is not trusted, so shell commands are refused. Run ` +
+              `\`bashwink trust ${cwd}\` to allow them.`
+            : "shell is disabled for this task because a command can write anywhere; " +
+              "this contract allows file edits only.",
       }
     const record = input.input as Record<string, unknown> | undefined
     const command = typeof record?.["command"] === "string" ? (record["command"] as string) : ""

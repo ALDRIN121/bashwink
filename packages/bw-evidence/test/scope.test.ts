@@ -361,3 +361,72 @@ describe("policy documents", () => {
       expect(parsePolicy(bad)).toBeUndefined()
   })
 })
+
+describe("refusals name their cause", () => {
+  // Observed in a real interactive session: an untrusted workspace refused every edit with
+  // "outside this task's allowed paths ()". True, useless. The user had no way to learn that
+  // `bashwink trust` was the missing step, and the model could only apologise.
+  test("an untrusted workspace tells the user to trust it, not that a contract forbade it", () => {
+    const { root, cleanup } = workspace()
+    try {
+      const policy = makePolicy({
+        mode: "enforce",
+        allowedPaths: [],
+        allowShell: false,
+        origin: "trust",
+        cwd: root,
+      })
+      const write = evaluate(policy, { tool: "write", input: { path: "a.ts" }, cwd: root })
+      expect(write.allow).toBe(false)
+      if (write.allow) return
+      expect(write.reason).toContain("not trusted")
+      expect(write.reason).toContain("bashwink trust")
+      // The wording that confused the first alpha user must not appear.
+      expect(write.reason).not.toContain("this contract")
+
+      const shell = evaluate(policy, { tool: "shell", input: { command: "ls" }, cwd: root })
+      expect(shell.allow).toBe(false)
+      if (shell.allow) return
+      expect(shell.reason).toContain("not trusted")
+      expect(shell.reason).toContain("bashwink trust")
+    } finally {
+      cleanup()
+    }
+  })
+
+  test("a contract refusal still names the contract and the allowed paths", () => {
+    const { root, cleanup } = workspace()
+    try {
+      const policy = makePolicy({
+        mode: "enforce",
+        allowedPaths: ["src"],
+        allowShell: false,
+        origin: "contract",
+        cwd: root,
+      })
+      const verdict = evaluate(policy, { tool: "write", input: { path: "b.ts" }, cwd: root })
+      expect(verdict.allow).toBe(false)
+      if (verdict.allow) return
+      expect(verdict.reason).toContain("allowed paths")
+      expect(verdict.reason).not.toContain("bashwink trust")
+    } finally {
+      cleanup()
+    }
+  })
+
+  test("origin survives the JSON round trip the wrapper uses", () => {
+    for (const origin of ["trust", "contract"] as const) {
+      const parsed = parsePolicy({
+        mode: "enforce",
+        allowedPaths: ["src"],
+        readPaths: ["."],
+        allowShell: true,
+        origin,
+      })
+      expect(parsed?.origin).toBe(origin)
+    }
+    // An unrecognised origin is not silently dropped: the policy is rejected and the caller
+    // falls back to fail-closed.
+    expect(parsePolicy({ mode: "enforce", allowedPaths: [], origin: "nonsense" })).toBeUndefined()
+  })
+})

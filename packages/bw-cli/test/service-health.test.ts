@@ -14,6 +14,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { findRuntimeFailure, renderRuntimeFailure } from "../src/service-health.js"
+import { checkBoot, renderMissingEvidence } from "../src/run-health.js"
+import type { RunRecord } from "../src/run-health.js"
+import { EvidenceRecorder } from "@bashwink/evidence"
 
 function withLog(body: (file: string) => void): void {
   const directory = mkdtempSync(path.join(tmpdir(), "bw-svc-"))
@@ -97,5 +100,49 @@ describe("runtime failure classification", () => {
       // The reader needs the failure that just happened, not the one from earlier.
       expect(findRuntimeFailure(file)?.holderPID).toBe(222)
     })
+  })
+})
+
+describe("never-started diagnosis after an earlier run has logged", () => {
+  // Observed in a real alpha session: `bashwink sessions` (the runtime spells it `session`)
+  // exited 1 immediately. The wrapper reported "the agent may have done real work; none of it
+  // was recorded" — about a process that never started the agent at all. The cause was that the
+  // never-started branch keyed on the whole chain being empty, and a previous run's boot record
+  // had filled it.
+  test("a typo'd subcommand is reported as nothing having happened", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "bw-neverstarted-"))
+    try {
+      const evidenceFile = path.join(dir, "evidence.jsonl")
+      const recorder = new EvidenceRecorder({ directory: dir })
+      // An earlier, successful run booted and did some work.
+      recorder.recordBoot({ plugin: "bashwink-evidence", pid: 1, cwd: "/tmp", runID: "run_old" })
+      recorder.record(
+        "before",
+        { id: "c1", tool: "read", sessionID: "s" },
+        { status: "completed", note: "earlier run" },
+      )
+
+      const record: RunRecord = {
+        runId: "run_typo",
+        startedAt: new Date().toISOString(),
+        exitCode: 1,
+        plugin: { id: "bashwink-evidence", entry: "/p/index.ts" },
+      } as RunRecord
+      const boot = checkBoot(evidenceFile, "run_typo")
+      expect(boot.ok).toBe(false)
+
+      const text = renderMissingEvidence({
+        record,
+        boot,
+        evidenceFile,
+        logFile: path.join(dir, "opencode.log"),
+      })
+      expect(text).toContain("before any evidence was written")
+      expect(text).toContain("none is known to have happened")
+      // The wording that misled the alpha user must not come back.
+      expect(text).not.toContain("may have done real work")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

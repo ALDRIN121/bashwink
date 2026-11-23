@@ -135,7 +135,10 @@
       "sha256": "8f17a9a6af70981e83a0f42d535fc0d691801cbc2b110076bd8e4eaa56db7cbf"
     },
     "KNOWN_LIMITATIONS.md": {
-      "sha256": "13dadde831ef8b1d521a5f7259d7adec0c5097b90e1a61cc0ad6663e2f5bfb47"
+      "sha256": "ceffb99efc2cceedbbe05724ef210e2059b26743941438b8ab801a8825d0f6bc"
+    },
+    "BW-031-SANDBOX-PROPOSAL.md": {
+      "sha256": "aa47168101e9962e427717be9ac44a41112f5e9be6c2a754133bead128a721f5"
     }
   }
 }

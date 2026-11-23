@@ -39,7 +39,7 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -56,8 +56,8 @@ jobs:
     name: docs integrity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Verify documentation bundle
@@ -71,7 +71,7 @@ jobs:
         os: [ubuntu-latest, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -97,7 +97,7 @@ jobs:
         os: [ubuntu-latest, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -161,7 +161,7 @@ jobs:
         os: [ubuntu-latest, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -198,10 +198,16 @@ jobs:
           ./fixtures/reset.sh one-file-edit
           ./fixtures/reset.sh --check one-file-edit
       - name: Fixture tests fail at baseline for the documented reason
-        run: |
+        run: |-
           set -euo pipefail
           cd fixtures/failed-test
-          if bun test; then
+          # GITHUB_ACTIONS=true makes `bun test` emit every assertion failure as an
+          # `::error::` workflow command. That is right for a real suite, but here the
+          # failure IS the pass condition, so it painted a red X annotation on a job
+          # whose every step succeeded — a green run that reads as a failed check in the
+          # UI. Unset it for this one command so the job's annotations match its result.
+          # The exit code is still the signal, and `bun test` fails identically without it.
+          if env -u GITHUB_ACTIONS bun test; then
             echo "FAIL: failed-test fixture passed at baseline; it no longer reproduces a bug"
             exit 1
           fi
@@ -215,7 +221,7 @@ jobs:
     name: secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Positive control and real scan
         run: |
           set -euo pipefail
@@ -250,8 +256,8 @@ jobs:
     name: license scope
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Every dependency with copyleft must have a recorded decision
@@ -265,7 +271,7 @@ jobs:
     name: scope statement
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: State what this workflow does and does not prove
         run: |
           cat <<'EOF'

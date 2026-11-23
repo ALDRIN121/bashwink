@@ -141,6 +141,32 @@ those two jobs cover passed on `b38dd51` minutes earlier, and on macOS locally.
 That distinction is recorded rather than papered over with a green tick: a cancelled job proves
 nothing, and re-running until green would hide how often macOS capacity is unavailable.
 
+**Escalation over the next hour, all with zero steps executed:**
+
+| Run | Commit | macOS jobs cancelled | Runners assigned |
+| --- | --- | --- | --- |
+| 45195209661 | `b38dd51` (code) | 0 — 13/13 green | 4 of 4 |
+| 45196502945 | `5ff3ff9` (docs) | 2 of 4 | 2 of 4 |
+| 45203060880 | `dcbe050` (docs) | **3 of 3** | **0 of 3** |
+
+Every cancelled job had `runner_name: ""`, `steps: []`, and was reaped after exactly 15 minutes.
+GitHub's status API reported "All Systems Operational" throughout, so the public status page does
+not capture this. `actions/runners` returns 0 registered runners, which is expected for
+GitHub-hosted ones and therefore not diagnostic either way.
+
+**The decisive point:** every commit after `b38dd51` changes **only `docs/`** —
+`git diff --name-only b38dd51..HEAD` returns two Markdown/JSON files and no source. The
+`evidence`, `cli`, `fixtures` and `runtime health` jobs contain no step that depends on the docs
+bundle, and all four passed on `b38dd51` on both platforms. So the cancellations cannot be caused
+by the code, and the green `b38dd51` run is the authoritative result for this increment.
+
+**Unresolved:** why macOS runner assignment regressed for this repository within the hour. It is
+outside the codebase and outside what a workflow change can fix. If it persists, the options are
+(a) drop `macos-15` from the matrix and lose macOS CI coverage, (b) add a self-hosted macOS
+runner, or (c) accept that macOS is verified locally only. All three are decisions for the owner,
+not for this increment — changing the matrix to make CI look green would be the one option that is
+not acceptable.
+
 ### Not tested here
 
 - In-session model switching via the TUI picker.

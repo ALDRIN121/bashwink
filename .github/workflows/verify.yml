@@ -181,7 +181,11 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/runtime"
           cd "$RUNNER_TEMP/runtime"
-          echo '{"name":"runtime-probe","private":true}' > package.json
+          # Bun 1.4 blocks postinstall scripts by default, and @opencode/cli's postinstall is
+          # what places the platform binary. Without this allow-list `bun add` succeeds but the
+          # binary is a stub — CI found that, not a local run, because the local install had
+          # already run with scripts enabled.
+          printf '%s\n' '{"name":"runtime-probe","private":true,"trustedDependencies":["@opencode/cli"]}' > package.json
           bun add "@opencode/cli@2.3.2"
           test -x node_modules/.bin/opencode
           echo "BASHWINK_OPENCODE_BIN=$RUNNER_TEMP/runtime/node_modules/.bin/opencode" >> "$GITHUB_ENV"

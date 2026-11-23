@@ -1,25 +1,58 @@
 # Bashwink — Test Evidence Register
 
-**Revision under test:** Bashwink working tree at 2026-11-23 (Phase 2 increment 1); foundation =
-OpenCode `v2.3.2` (`c0ad18b402eb2827fc1ee71c171b1177b3fc02d1`).
-**Environment:** macOS 27.0.1, arm64 (Darwin 27.0.0), **Bun 1.4.4** (the exact pinned
-version — the suite was re-run under it, closing the earlier 1.4.5 drift), Git 2.54.0.
-Phase 0 and Phase 1 CI evidence is hosted; **Phase 2's evidence below is hosted** at
-`0fd50b0` and re-confirmed at `394b02f`
-([45150430237](https://github.com/ALDRIN121/bashwink/actions/runs/45150430237)) and at the
-current HEAD `c731ab6` ([45151661558](https://github.com/ALDRIN121/bashwink/actions/runs/45151661558),
-13/13 green). Commits after `394b02f` change documentation only; no code claim in this
-register depends on them.
-**Evidence is authoritative only if reproducible at this revision.**
+## Independent handoff audit (2026-11-23)
 
-Phase 2 increment 2 (LLM integration, BW-091) evidence is in
-"Phase 2 increment 2 — real-model integration" below. It was gathered at working tree
-`f8fa85a + LLM integration` and is reproduced by
-`packages/bw-cli/test/providers*.test.ts`, `model-attribution.test.ts`,
-`plugin-resolution.test.ts`, and `scripts/build_alpha.sh`.
+**Revision:** `4731eaf11a447fe3a0f3d27c10cbe9a500d42f8a`. The worktree started clean.
+**Local environment:** macOS 27.0.1 (26A434), arm64, Apple Git 2.54.0, Bun 1.4.4 (38afee6c8),
+OpenCode v2.3.2. The shell default was Bun 1.4.5. Checks below used the pinned binary first
+on PATH and local fixture state. Real-runtime fixtures used a throwaway HOME and loopback mock
+provider. Hosted results were independently fetched through authenticated `gh api`. [Exact CI runs and attempts](CI_BASELINE_RECONCILIATION.md).
 
+| Command or check | Exit | Observed result |
+| --- | ---: | --- |
+| `bun --version`, `opencode --version` | 0 each | 1.4.4 and v2.3.2 with isolated XDG paths. An initial bare runtime version probe with the real home hit a sandbox file-write restriction |
+| `bun run test` | 0 | 369 pass, 0 fail, 19 files, 1,049 assertions |
+| `bun run typecheck`, `bun run lint`, `bun run format` | 0 each | Both packages typechecked. Lint clean. 48 files formatted |
+| `bun run lint:gate` | 0 | 6/6. Planted violation exits 1 with actual lint diagnostics |
+| `./fixtures/contract/run.sh` | 0 | 14/14 |
+| `./fixtures/idempotent-resume/run.sh` | 0 | 10/10. SIGKILL recovery writes exactly once and stays unverified |
+| `./fixtures/runtime-health/run.sh` | 0 | 17/17, 0 skipped. Real runtime and mock provider |
+| `./fixtures/tool-lifecycle/run.sh` | 0 | 13/13, 0 skipped. Real runtime and mock provider |
+| `./fixtures/phase1-demo/run.sh` | 0 | Eight stages. Joined shell lifecycle, check exit 0, interrupted task remains unverified |
+| `python3 scripts/check_license_scope.py --inventory docs/bashwink/DEPENDENCY_LICENSES.json --fail-on-open` | 0 | 1,643 inventoried, 48 decisions, no recorded release-blocking open item |
+| `python3 scripts/verify_bashwink_docs.py`, `python3 scripts/verify_bashwink_docs.py --check-manifest`, `python3 scripts/generate_status_summary.py --check` | 0 each | Initial checks passed. Independent CSV comparison found outdated manifest metadata. The manifest and release guidance were reconciled |
+| `git archive HEAD` into a temporary checkout, `bun install --frozen-lockfile`, separate `bun add @opencode/cli@2.3.2` and `./scripts/build_alpha.sh <temporary-alpha-dir>` | 0 each | Clean source install, pinned runtime postinstall and relocatable wrapper build. The initial build in the restricted environment exited 1 when installing the SDK. The build with registry access passed |
+| Installed `bashwink --version`, `bashwink doctor`, and bare `bashwink` with neither stream a terminal | 0 each | Unrelated working directory. Version 0.1.0, doctor 12 checks/8 warnings/0 failures, bare noninteractive prints help |
+| Installed bare `bashwink` through Python `pty.fork` in disposable Git, non-Git and nested CWDs | harness 0, children −15 by design | Each launch produced an alternate-screen frame and a boot entry with the expected resolved location, then received SIGTERM from the harness |
+| `bun run packages/bw-evidence/src/cli.ts verify <preserved-log>` | 0 on four logs | 17 and 25 entries in two live-coding homes, 31 in a provider verification home and 6 boot entries in a historical PTY home |
+| `git -C <preserved-repo> diff --exit-code -- run_tests.py`, `PYTHONDONTWRITEBYTECODE=1 python3 <preserved-repo>/run_tests.py` | 0 each | Tracked test script unchanged. Test output PASS. The tracked edit was `calc.py` only, with pre-existing untracked bytecode in the fixture |
 
+The final docs checks, manifest check, generated status check, license-scope check and
+`git diff --check` all exited 0. An independent check matched the 91 CSV tasks and all 36
+listed documentation hashes and size fields, resolved relative Markdown file links and scanned
+the 16 changed files using the workflow's credential patterns. An installed
+`bashwink trust . --by "Bashwink audit"` exited 0 in the disposable non-Git directory. The
+subsequent `doctor` exited 0 with six warnings and zero failures.
 
+The PTY harness used an empty runtime argv, fresh Bashwink state per directory and
+`{"disabled":true}` in the OpenCode `service.json` at `BASHWINK_HOME` for the successful
+three-directory run. It disabled catalogue refresh and auto-update, checked the terminal's
+alternate-screen control sequence and matched `location=` in fresh boot evidence. It did not
+send a prompt. The first default managed-service case booted but the attempted graceful quit
+failed to terminate the launcher in time. Two subsequent cases timed out on its occupied port
+because the test placed `service.json` under the wrong config root. The smoke test's own
+registered service was identified by PID and executable under its temporary tree and stopped.
+This corroborates the documented managed-service lifecycle limitation. The repository fixture
+uses broad process-name cleanup and fixed paths, so this audit used a disposable bounded harness
+instead.
+
+The preserved live coding fixture had nine CommandCode-attributed before entries, including
+shell, read and edit events, two denials, seven after entries and four boot records in the
+25-entry chain. The dated historical snapshot below had 24 entries before another boot.
+Installed live coding and continuation are supported by the preserved artifacts and historical
+transcript. No paid provider call was issued during this audit. The older provider and scope
+increments below are historical records. Linux was checked using hosted evidence. No local Linux,
+Windows, BW-031 sandbox, dependency advisory scan or new upstream-parity suite was run.
 
 ## Phase 2 increment 4 — interactive TUI smoke test (2026-11-23)
 
@@ -134,45 +167,27 @@ CI ran **293 `cli` tests / 17 files** and **76 `evidence` tests**, against 369 l
 ([run 45196502945](https://github.com/ALDRIN121/bashwink/actions/runs/45196502945)).
 `runtime health (macos-15)` and `evidence (macos-15)` were cancelled after queueing 15 minutes
 with **`runner_name: ""` and `steps: []`** — GitHub never assigned them a runner, so nothing ran
-and nothing failed. The other two macOS jobs in the same run (`cli`, `fixtures`) did get runners
+and those steps could not report a test result. The other two macOS jobs in the same run (`cli`, `fixtures`) did get runners
 and passed. This is the third occurrence of macOS runner capacity being unavailable; the code
 those two jobs cover passed on `b38dd51` minutes earlier, and on macOS locally.
 
 That distinction is recorded rather than papered over with a green tick: a cancelled job proves
 nothing, and re-running until green would hide how often macOS capacity is unavailable.
 
-**Escalation over the next hour, all with zero steps executed:**
-
-| Run | Commit | macOS jobs cancelled | Runners assigned |
-| --- | --- | --- | --- |
-| 45195209661 | `b38dd51` (code) | 0 — 13/13 green | 4 of 4 |
-| 45196502945 | `5ff3ff9` (docs) | 2 of 4 | 2 of 4 |
-| 45203060880 | `dcbe050` (docs) | **3 of 3** | **0 of 3** |
-
-Every cancelled job had `runner_name: ""`, `steps: []`, and was reaped after exactly 15 minutes.
-GitHub's status API reported "All Systems Operational" throughout, so the public status page does
-not capture this. `actions/runners` returns 0 registered runners, which is expected for
-GitHub-hosted ones and therefore not diagnostic either way.
-
-**The decisive point:** every commit after `b38dd51` changes **only `docs/`** —
-`git diff --name-only b38dd51..HEAD` returns two Markdown/JSON files and no source. The
-`evidence`, `cli`, `fixtures` and `runtime health` jobs contain no step that depends on the docs
-bundle, and all four passed on `b38dd51` on both platforms. So the cancellations cannot be caused
-by the code, and the green `b38dd51` run is the authoritative result for this increment.
-
-**Unresolved:** why macOS runner assignment regressed for this repository within the hour. It is
-outside the codebase and outside what a workflow change can fix. If it persists, the options are
-(a) drop `macos-15` from the matrix and lose macOS CI coverage, (b) add a self-hosted macOS
-runner, or (c) accept that macOS is verified locally only. All three are decisions for the owner,
-not for this increment — changing the matrix to make CI look green would be the one option that is
-not acceptable.
+Authenticated job metadata corrected the later counts. `45196502945` reached 11/13
+success across each attempt view. macOS evidence and runtime health cancelled twice.
+`45203060880` reached 10/13, including one successful macOS evidence job.
+`45207176296` reached 12/13 with only macOS evidence cancelled. All cancelled jobs had
+an empty runner name and no steps. All three workflows concluded failure. Use the green
+`b38dd51` result as the cross-platform runtime code baseline and keep macOS CI active.
+[Job-by-job reconciliation](CI_BASELINE_RECONCILIATION.md).
 
 ### Not tested here
 
 - In-session model switching via the TUI picker.
 - Windows, in any form.
 - Any sandbox: there is none yet, which is why the shell escape in `KNOWN_LIMITATIONS.md` §1
-  remains the external-alpha blocker. `BW-031-SANDBOX-PROPOSAL.md` specifies the fix.
+  remains the external-alpha blocker. The reviewed approach is in [BW-031_IMPLEMENTATION_PLAN.md](BW-031_IMPLEMENTATION_PLAN.md).
 
 ## Phase 2 increment 3 — alpha stabilisation (BW-059, BW-091 register entry, 2026-11-23)
 

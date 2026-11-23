@@ -59,6 +59,19 @@ stated limitation**. None is silently dropped.
   2026-11-22. The spike showed a pinned dependency plus a wrapper CLI achieves the same
   branding outcome without the rebase burden.
 
+## Alpha baseline and sandbox disposition (2026-11-23)
+
+- **Accepted alpha operating decision from the handoff.** Keep the existing Ubuntu and macOS
+  matrix. Use the verified `b38dd51` runtime code for supervised internal alpha, with the newer
+  hosted results credited per executed job. External alpha remains on hold.
+  [CI reconciliation](CI_BASELINE_RECONCILIATION.md) · [Readiness](INTERNAL_ALPHA_READINESS.md).
+- **Proposed BW-031 design.** Retain the canonical Docker adapter behind BW-030, confine the
+  pinned runtime and descendants together, and add a bounded host inference relay only after
+  an offline proof. The independent review found that OpenCode's managed-service reuse and
+  inherited environment make a launcher-only wrapper insufficient. Backend qualification and
+  separate implementation authorization remain required.
+  [Plan and alternatives](BW-031_IMPLEMENTATION_PLAN.md).
+
 ## Decision template
 
 ### ADR-XXX — Decision title

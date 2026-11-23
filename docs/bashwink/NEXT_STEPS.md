@@ -1,45 +1,28 @@
-# Bashwink — Next Steps
+# Bashwink next steps
 
-**Where we are:** **Phase 0 and Phase 1 are complete and gate-passed.** Phase 1 was
-**revalidated** after the silent-plugin-load investigation (ADR-010). **Phase 2 has started:**
-BW-055 (TaskContract), BW-059 (ScopeFence) and BW-091 (provider/model integration) are Done; 3 of 16 Phase 2 tasks. The interactive TUI is smoke-tested and completes a real coding task, including across a session restart. **The external-alpha blocker is BW-031**: shell is not path-bounded, and `BW-031-SANDBOX-PROPOSAL.md` is wait-ready but unimplemented. **Phase 2's gate
-has not been evaluated**, and Phase 3 has not been started.
+The baseline audit is complete at `4731eaf`. Phase 0 and Phase 1 retain their evidence-backed gates. Phase 2 is open with **3/16 Done** (BW-055, BW-059, BW-091). The canonical register has **22/91 Done**. Supervised internal alpha is **CONDITIONAL** on the documented baseline and trusted workspaces. External alpha is **FAIL** while an OS boundary and the outstanding Phase 2 gate evidence are absent. [State review](CURRENT_STATE_REVIEW.md) · [Internal alpha readiness](INTERNAL_ALPHA_READINESS.md).
 
-- 22/91 tasks Done, 69 Not started, nothing Blocked.
-- **368 tests** pass; lint, formatting and typecheck are clean under the pinned Bun 1.4.4.
-- **Real-model execution is now proven end to end** (BW-091, not a register task): a paid
-  provider configured without storing a key, model selection and switching across two wire
-  protocols, real tool calls and file edits, tests run, and per-call model attribution in the
-  evidence chain. One paid provider verified; a second independently credentialed provider is
-  **BLOCKED** on credit.
-- Runtime evidence: `fixtures/runtime-health` 17/17 and `fixtures/tool-lifecycle` 13/13
-  against the real OpenCode v2.3.2 binary; `fixtures/contract` 14/14; the Phase 1 demo 8/8;
-  the SIGKILL fixture 10/10.
+## Next five engineering tasks
 
-## Next priority: the enforced boundary, not more features
+1. **BW-018 — Protect permissions and command execution paths.** Eligible in Phase 2. Include ScopeFence's missing-policy/disabled-plugin behavior, unknown execution surfaces and trust defaults in the review. BW-059 is recorded Done for its delivered hook even though BW-018 remains an unmet dependency.
+2. **BW-030 — Execution backend interface.** After BW-018 and the applicable Phase 3 gate entry or an explicit sequencing decision. Prove policy-before-execution, cancellation and disposal with a mock backend. BW-014 is Done.
+3. **BW-031 — Docker sandbox adapter.** After BW-030 and authorized Phase 4 sequencing. Implement in the order proposed by the reviewed plan. The design is ready for maintainer review. Sandbox execution is still Not started.
+4. **BW-032 — Sandbox threat and adversarial tests.** After BW-031. Require real engine runs on Linux and macOS, including the default no-egress profile, startup refusal and descendant cleanup. BW-074 separately depends on BW-073 for delegated network/credential checks.
+5. **BW-057 — Immutable baseline and protected test inventory.** Independently eligible in Phase 2 and can proceed before the later-phase slots. Pair its result with BW-018 to unblock BW-058. Verify a preexisting failure and preserve dirty user work.
 
-The LLM integration works well enough to code against a real repository, which makes the
-missing safety boundary the top risk: **`TaskContract.allowedPaths` is recorded but not
-enforced (BW-059)**. A wrapper that measures what an agent did, accurately, while the agent can
-write anywhere, is a good measurement tool and a poor safety story.
+BW-018 is the immediate eligible task on the sandbox path. BW-057 is the immediate eligible test-integrity task. The register also makes BW-017, BW-056 and BW-075 eligible for a future Phase 2 increment. BW-058 needs BW-018 and BW-057, BW-060 needs BW-057, and BW-020 needs BW-017 and BW-018. No implementation status changed in this audit.
 
-Recommended order:
+Keep `macos-15` active and retain the green `b38dd51` baseline for this supervised window. Reconfirm changed runtime code on both platforms and use only executed hosted jobs as evidence. Continue host evidence hardening and real-command observations when working on BW-060/ClaimGuard. Carry the license inventory refresh, advisory scan, and distribution-specific checks into packaging. [CI reconciliation](CI_BASELINE_RECONCILIATION.md) · [Sandbox implementation plan](BW-031_IMPLEMENTATION_PLAN.md).
 
-1. **BW-059 ScopeFence** — enforce the contract's paths at the tool boundary. This is the
-   alpha blocker, and it is also the cheapest of the P2 tasks to prove, because the contract
-   data plane (BW-055) already exists and the tool hooks are already in place.
-2. **BW-057/BW-058** — protected test inventory and TestGuard, so a passing suite cannot be
-   achieved by editing the tests.
-3. **BW-075 BudgetPilot** — cost and turn ceilings before anyone runs this unattended.
-4. **BW-020** — packaged alpha, once the above justify distributing it.
+This handoff ends at audit, reconciliation and plan review. BW-031 implementation requires separate authorization.
 
-Do not add fallback chains, model aliases, auxiliary models, or a second inference engine in
-this window. Each multiplies the model-attribution surface, and nothing about the alpha needs
-them.
+## Phase 1 history
 
-## What changed in this increment
+The following implementation and CI notes document the prior handoff.
 
-### 1. Evidence health is now proven, not assumed (Phase 1 revalidation)
+### Phase 1 revalidation and the first Phase 2 increment
+
+#### 1. Evidence health is now proven, not assumed (Phase 1 revalidation)
 
 Phase 1's risk list said the evidence plugin must be staged or nothing is recorded. The
 reproduced failure was broader: **a plugin can stage successfully, fail to load, and leave a
@@ -60,7 +43,7 @@ Fixed by ADR-010:
 - a new `runtime-health` CI job installs the pinned runtime on both platforms and runs the
   four-case fixture — the guarantee is now enforced in CI, not only on a laptop.
 
-### 2. BW-055 — TaskContract / IntentLock data plane
+#### 2. BW-055 — TaskContract / IntentLock data plane
 
 - Schema v2: `contract`, `contract_revision`, `criterion`, `criterion_evidence`, with the
   documented rollback extended to both versions.
@@ -74,7 +57,7 @@ Fixed by ADR-010:
   and covers that task.
 - CLI: `contract new | show | approve | revise | status`.
 
-## Phase 1 closed with CI evidence
+### Phase 1 closed with CI evidence
 
 | Workflow | Run | Commit | Result |
 | --- | --- | --- | --- |
@@ -93,7 +76,7 @@ Both failures were in the checks, not the product, and both are worth rememberin
 The Linux leg settled three flagged risks: `bun:sqlite` behaviour, symlinked plugin staging,
 and git subprocess differences (`git 2.56.1` vs Apple Git 2.54.0).
 
-## Phase 1 — what was built
+### Phase 1 implementation
 
 | Task | What was built |
 | --- | --- |
@@ -107,60 +90,3 @@ and git subprocess differences (`git 2.56.1` vs Apple Git 2.54.0).
 | BW-015 | Export keeping `pass`/`fail`/`not_run` distinct, plus md/json and a raw-result digest |
 | BW-016 | `taskID` on every event from a durable marker; explicit `unassignedReason` otherwise |
 | BW-019 | Real SIGKILL fixture: `writes=1`, resume reopens to `in_progress`, never `verified` |
-
-## Next eligible Phase 2 tasks (dependency-checked against the register)
-
-1. **BW-017 — proof-of-work terminal summary** (BW-015, BW-016 done). Must render `not_run`
-   distinctly and make every claim resolve to a recorded event.
-2. **BW-018 — protect permissions and command execution paths** (BW-010, BW-014 done).
-   Compound commands, symlinks, denied paths; the adversarial half of the policy.
-3. **BW-056 — IntentLock command and confirmation UX** (BW-008, BW-055 done). Interactive
-   `contract edit`, assumption ledger, and the contradictory-goal fixture. BW-055 deliberately
-   stopped at the data plane plus the commands approval/revision require.
-4. **BW-057 — immutable baseline and protected test inventory** (BW-007, BW-014 done).
-   Prerequisite for TestGuard (BW-058) and ProofPack (BW-060).
-
-After those: BW-059 needs BW-018; BW-060 needs BW-057; BW-075 is unblocked now (BW-014 +
-BW-055); BW-084 needs BW-057.
-
-## Foundation hardening, in the order it should happen
-
-These are prerequisites for the Phase 2 proof chain, not new tasks:
-
-1. **Make SQLite authoritative over `current-plan.json`.** Two writers still exist; BW-060's
-   manifest needs one source of truth for plan + criteria + observations.
-2. **Drive `plan observe` from a real check runner.** Today the caller supplies the outcome.
-   BW-017 and BW-060 need the CLI to execute the declared command and record the exit code
-   itself, so "a check passed" is never a claim made by the party being checked.
-3. **Publish a per-session evidence head hash** (ADR-007) so tail truncation becomes
-   detectable; it belongs with BW-060's manifest.
-4. **Concurrency-safe evidence recording** before Phase 4's parallel worktrees (ADR-004).
-   `bun:sqlite` is a single-writer assumption today.
-
-## Risks carried forward (none gate-blocking)
-
-1. **Evidence health is a startup check.** A plugin that loads and then fails mid-session
-   degrades the log from that point; the recorder reports it, but the boot entry cannot.
-2. **The contract gates task start, not tool calls.** Until BW-059, a running agent can still
-   write outside `allowedPaths`.
-3. **Staged plugins are symlinks into this repository.** Fine for a working copy; a real
-   distribution must copy or resolve them, and that is a PM-1 packaging question (ADR-009).
-4. **No-FFmpeg native library is not byte-reproducible** (Zig embeds build paths). A PM-1
-   release must assert a symbol profile, not a digest.
-5. **No legal review.** ADR-009 removes known LGPL exposure by construction; it is not advice.
-6. **`DEPENDENCY_LICENSES.json` is a snapshot** — `upstream_sync.py` does not regenerate it, so
-   it must be refreshed whenever a dependency is added.
-7. **`bun audit`** has never been run.
-8. **The doctor's `docker` check only tests presence on `PATH`** — it does not verify the
-   daemon answers.
-9. **`upstream-compat` is weekly + manual**, deliberately: a 2.7 GB install and ~5 min suite
-   per PR is too expensive.
-
-## Housekeeping
-
-- Remote: `https://github.com/ALDRIN121/bashwink`, branch `main`.
-- The pinned OpenCode clone lives outside this repository, so ~2.7 GB of dependencies never
-  enter Git.
-- The 3 upstream bash-3.2 failures stay unpatched by design (BW-002). CI must have bash >= 4.
-- The real OpenCode runtime is **not** a repository dependency. The `runtime-health` CI job
-  installs it only for the case that needs it; locally, set `BASHWINK_OPENCODE_BIN`.

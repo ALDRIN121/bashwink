@@ -11,12 +11,12 @@ Last evaluated: 2026-11-23.
 ## A. Build health
 
 - [x] `bun run typecheck` clean (both packages).
-- [x] `bun test packages` — **368 pass / 0 fail**, 19 files.
+- [x] `bun test packages` — **369 pass / 0 fail**, 19 files.
 - [x] `oxlint --deny-warnings packages` clean.
 - [x] `bun fmt --check packages` clean.
 - [x] `scripts/verify_bashwink_docs.py` → `Audit: PASS`.
 - [x] `scripts/generate_status_summary.py --check` → status block matches the register.
-- [x] No secret in the working tree or the diff (scanned).
+- [x] Hosted credential-pattern scan succeeded at the audited code baseline. The handoff diff was checked locally with the workflow patterns.
 
 ## B. Interactive entry point (Priority 1)
 
@@ -35,13 +35,13 @@ file was edited, and a test was run and re-run to PASS.
       independently confirms the same `location`.
 - [x] Model selection reflected in the TUI status bar (`Build · Claude Sonnet 5 CommandCode`).
 - [x] Interactive chat and tool execution work (a `shell` call ran and was recorded).
-- [x] Piped bare invocation prints help instead of hanging (a TUI cannot render into a pipe).
+- [x] Bare invocation with neither stdin nor stdout attached to a terminal prints help.
 - [x] All existing subcommands preserved: `--version`, `--help`, `doctor`, `plan`, `contract`,
       `evidence`, `trust`, `resume`, `auth`, `model`.
 - [x] Runs from an installed distribution outside the checkout.
 - [x] Startup failure is now reported by cause: a held service port is named with its PID and a
       way out, instead of being misreported as an evidence-plugin failure.
-- [x] Fixture passes **7/7**.
+- [x] Historical fixture 7/7. Fresh installed CLI PTY smoke passed in three directory types using a private local runtime service.
 - [x] A real coding task completes interactively: `add` fixed from `a - b` to `a + b`, tests
       `PASS`, only `calc.py` modified.
 - [x] Session recovery after restart: `--continue` restored the conversation and the model
@@ -61,30 +61,26 @@ file was edited, and a test was run and re-run to PASS.
       ancestor, so `link -> /etc` then `link/passwd` is refused even though the lexical path is
       inside the workspace.
 - [x] Absolute paths validated (`/etc/passwd`, `/tmp/...` refused).
-- [x] Shell cannot **silently** bypass: out-of-scope `workdir` and obvious outside path
-      arguments are refused, and every permitted shell call is recorded as `unconstrained`.
-- [x] Shell **can** still bypass through an interpreter — documented, not hidden. This is why the
-      item above says "silently".
+- [x] Recognized shell calls with an out-of-scope working directory or obvious outside
+      path are refused. Allowed shell calls are recorded as `unconstrained`.
+- [ ] OS confinement for shell, descendants, credentials and network. BW-031 is open.
 - [x] Permission decisions are auditable: `denied` entries carry the rule, the resolved target
       and the allowed set.
 - [x] Denials recorded accurately: 2 denials in the live run, each naming the target.
-- [x] Workspace trust is **enforced**, not merely recorded. It previously was not: `evaluateCall`
-      existed but nothing called it, so `doctor`'s "denied by default" was false. Now an
-      untrusted workspace refuses writes and shell, verified with a real model.
+- [x] The loaded plugin refuses recognized writes and shell for an untrusted workspace. Evidence-off or absent scope policy removes this protection.
 - [x] Unconstrained calls are recorded under their own phase, so the denial count stays truthful.
 - [x] Fixture `fixtures/scope-fence/run.sh` → **10/10** against a live model.
-- [ ] **Not claimed:** full sandbox isolation. There is none.
+
 
 ## D. First-run experience (Priority 3)
 
-- [x] `doctor` on a clean `BASHWINK_HOME` exits 0 with actionable guidance and no credential
-      values (`12 checks, 0 failures`).
+- [x] `doctor` on a clean home exits 0 (12 checks, 8 warnings, 0 failures) from an unrelated directory.
 - [x] Missing credentials produce a named variable plus an `export ...` line, before the runtime
-      starts.
+      starts when an explicit configured model is requested.
 - [x] Provider connection works from an install outside the checkout.
 - [x] Model selection works from the installed binary.
 - [x] A real coding task succeeds from the installed binary.
-- [x] Sessions persist, including across a model switch between two wire protocols.
+- [x] Prior live evidence covers continuation across invocations using two wire protocols.
 - [x] Evidence and logs remain available after the process exits, and survive `SIGKILL`.
 - [x] Uninstall is documented (delete the directory and `BASHWINK_HOME`).
 - [x] Installation method documented honestly, including that `npm install -g` does **not** work.
@@ -100,8 +96,7 @@ file was edited, and a test was run and re-run to PASS.
       recorded as `[REDACTED]`.
 - [x] Known limitations documented (`KNOWN_LIMITATIONS.md`), including the concrete shell escape
       and the section it lives in.
-- [x] BW-031 sandbox proposal written with feasibility evidence and 21 negative tests
-      (`BW-031-SANDBOX-PROPOSAL.md`). No sandbox is implemented.
+- [x] [BW-031 implementation plan](BW-031_IMPLEMENTATION_PLAN.md) independently reviewed. Platform and runtime tests remain open.
 - [ ] Dependency **vulnerability** audit (`bun audit` / advisory database): **not run** — no
       advisory source is configured in this environment, and inventing a clean result would be
       worse than recording the gap.
@@ -115,8 +110,8 @@ file was edited, and a test was run and re-run to PASS.
 - [x] BW-091 added to the task register for the already-implemented provider/model work.
 - [x] `README.md`, `IMPLEMENTATION_STATUS.md`, `TEST_EVIDENCE.md`, `NEXT_STEPS.md`,
       `PHASE_GATE_CHECKLIST.md`, `DECISIONS.md`, ADR-011 updated.
-- [x] Committed and pushed.
-- [x] GitHub Actions green on both platforms.
+- [x] Last fully green cross-platform code baseline confirmed at `b38dd51`, 13/13 on first attempt.
+- [ ] All hosted jobs passed at `4731eaf`. Twelve passed and macOS evidence was cancelled before allocation. [CI reconciliation](CI_BASELINE_RECONCILIATION.md).
 - [ ] **Release published:** NO — requires explicit approval. Not requested, not done.
 - [ ] **Repository visibility changed:** NO — out of scope, not done.
 
@@ -132,17 +127,11 @@ file was edited, and a test was run and re-run to PASS.
 
 ## Verdict
 
-**Private-alpha readiness: FAIL as a public release, PASS as a supervised internal alpha.**
+**Supervised internal alpha: CONDITIONAL.** Use the verified code baseline with evidence
+enabled in trusted, disposable or backed-up projects under supervision. Check changes and test
+results independently.
 
-The distinction is the shell boundary. Every *file* write is fenced and audited, but a shell
-command can still write anywhere the interpreter can reach, and `KNOWN_LIMITATIONS.md` says so in
-the first section. For a small group of developers running against their own repositories with
-someone watching the first sessions, that is an acceptable and honestly-stated risk. For an
-unattended run, or a beta audience, it is not.
-
-**To lift to PASS for a wider alpha:**
-
-1. BW-031 (sandbox) or an equivalent OS-level boundary — this is the blocker.
-2. BW-057/BW-058 (protected tests) so "tests pass" cannot be earned by editing the tests.
-3. BW-075 (budget) so an unattended run cannot run away.
-4. Windows either verified or explicitly unsupported in the install docs.
+**External developer alpha: FAIL. Public release: FAIL.** BW-031 is the primary external
+blocker. Phase 2 test integrity, independently linked verification and packaged alpha criteria
+remain open. Hard execution and spend ceilings are required for unattended use.
+[Internal alpha readiness](INTERNAL_ALPHA_READINESS.md).

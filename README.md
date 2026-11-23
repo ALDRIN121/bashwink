@@ -5,8 +5,8 @@ outputs, hash-chained and independently verifiable — instead of reporting what
 have done.
 
 **Status:** Phase 0 and Phase 1 are complete and gate-passed with hosted CI evidence. Phase 2
-is in progress — BW-055 (TaskContract / IntentLock data plane) is implemented; the Phase 2 gate
-has not been evaluated. See `docs/bashwink/IMPLEMENTATION_STATUS.md` and
+is in progress with 3/16 tasks Done (BW-055, BW-059 and BW-091). The Phase 2 gate remains open.
+Supervised internal alpha is conditional. External alpha is blocked on OS containment. See `docs/bashwink/IMPLEMENTATION_STATUS.md` and
 `docs/bashwink/NEXT_STEPS.md`.
 
 ## Layout
@@ -45,13 +45,10 @@ it substitutes at run time, and `--key` is refused outright. A `:protocol` suffi
 required when one provider serves models on different wire protocols — a provider-level
 package applies to every model, so a mixed provider gets none.
 
-Install outside the checkout:
-
-```bash
-./scripts/build_alpha.sh                    # -> dist/bashwink
-export PATH="$PWD/dist/bashwink/bin:$PATH"
-bashwink --version && bashwink doctor
-```
+Build the alpha from the private source checkout and install the pinned OpenCode runtime
+separately. Follow the [alpha installation guide](docs/bashwink/ALPHA_TESTER_GUIDE.md#1-install)
+for Bun 1.4.4, OpenCode 2.3.2, the runtime binary path and the wrapper build. Use the
+[readiness decision](docs/bashwink/INTERNAL_ALPHA_READINESS.md) to select a trusted alpha workspace.
 
 Development:
 
@@ -94,7 +91,7 @@ Commands:
 | --- | --- |
 | `auth status` | every configured provider, its credential route, and whether it resolves |
 | `auth add <id> …` | declare a provider; the key is referenced, never stored |
-| `auth check <id>` | exit 1 when the provider cannot authenticate |
+| `auth check <id>` | check that the configured credential resolves locally |
 | `auth remove <id>` | remove it, and repoint a default model that pointed at it |
 | `model list` | models **the config declares**, default marked |
 | `model use <provider>/<model>` | set the default for every run |
@@ -106,17 +103,19 @@ not start a server, so it reports the config rather than pretending to be the ca
 ## Evidence log
 
 `@bashwink/evidence` is an OpenCode plugin. It hooks `execute.before`/`execute.after` and
-appends one JSON line per event to `<project>/.bashwink/evidence/evidence.jsonl`. Each line
-carries the SHA-256 of the previous line, so any edit, deletion or reordering is detectable.
+appends one JSON line per event under Bashwink’s data root at `evidence/evidence.jsonl`. The
+data root is `$BASHWINK_HOME/data` when overridden, and otherwise uses the XDG data directory.
+The chain detects inconsistent changes within the retained entries. An omitted suffix can still verify, and a writer can recompute the chain.
 
 On start-up the plugin writes a `boot` entry after both hooks are registered, keyed by the
 wrapper's run id. `bashwink` then checks that entry after the child exits; if it is missing, the
 run exits **3** and prints the run id, plugin entry, evidence path and runtime log path instead
 of reporting the child's 0 as success. `bashwink evidence status` lists recent runs and whether
-each recorded evidence. `BASHWINK_EVIDENCE=off` is the explicit, recorded unverified mode.
+each recorded evidence. `BASHWINK_EVIDENCE=off` disables the plugin and the tool scope hook.
+Keep the plugin enabled for supervised use.
 
-Credentials are redacted by key name *and* by value shape before anything is written, and the
-digest covers the redacted form — so a digest can never be used to confirm a guessed secret.
+Evidence redaction matches known credential keys and value patterns before hashing.
+Unrecognized formats can still appear in recorded output.
 
 ### Two hard-won constraints (see ADR-002)
 
@@ -150,14 +149,14 @@ PATH="/opt/homebrew/bin:$PATH" bun run --cwd packages/core test
 Fixtures are generated, not committed. `fixtures/BASELINES.txt` records each baseline SHA.
 
 The mock provider (`fixtures/mock_provider.py`) speaks the OpenAI streaming protocol and asks
-for whichever shell tool the client advertised — no API key, no network. It tests plumbing,
-not model quality.
+for the available shell tool over a local loopback endpoint with no API key. It tests the
+runtime and tool lifecycle.
 
 ## Known limitations
 
-- **No enforced filesystem boundary.** A TaskContract's `allowedPaths` is recorded and shown,
-  but nothing enforces it (BW-059). Use a disposable workspace, and do not distribute an alpha
-  before this is enforced.
+- **Tool-level scope only.** BW-059 enforces `allowedPaths` at the loaded plugin for
+  recognized file calls. Permitted shells inherit host access. OS containment is required
+  before external alpha (BW-031).
 - Verified on macOS arm64 and Linux; Windows was never run.
 - **One paid provider verified end to end.** A second independently credentialed provider was
   blocked on credit — see `docs/bashwink/TEST_EVIDENCE.md` for the matrix.

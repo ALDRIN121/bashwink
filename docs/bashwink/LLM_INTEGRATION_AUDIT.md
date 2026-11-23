@@ -214,13 +214,10 @@ increment.
 
 Ordered by what would actually hurt a first user.
 
-1. **No enforced filesystem boundary (BW-059).** `TaskContract.allowedPaths` is recorded and
-   shown, but **nothing enforces it**. An alpha user running an agent against a real repository
-   is trusting the model's judgement plus the runtime's permission prompts. This is the single
-   largest gap, and it is why every real-model test in this increment used a disposable
-   workspace. **Recommendation: do not distribute an alpha to third parties before BW-059 or an
-   equivalent enforced boundary exists.** Bashwink's own leaks are bounded by the contract
-   *gate* on task start, not by a sandbox.
+1. **No OS containment (BW-031).** Since the provider increment, BW-059 added an
+   `execute.before` policy for recognized tools. Permitted shell commands retain host
+   access, and the policy depends on the loaded evidence plugin and scope. External alpha
+   remains blocked on an enforced OS boundary. [Review and plan](BW-031_IMPLEMENTATION_PLAN.md).
 2. **One verified paid provider.** `commandcode` was verified end to end. Ollama Cloud and
    DeepSeek both returned HTTP 402 (no credit); GitHub Copilot needs interactive OAuth. So the
    multi-provider claim rests on one paid provider plus the runtime's free gateway. See the
@@ -243,7 +240,5 @@ The integration work is internally consistent and verified: configure a provider
 storing a key, select a model, switch it mid-session, run real tools against a real repository,
 and read back an evidence log that names the model per call. That is a usable coding workflow.
 
-It is **not** safe to hand to a third party yet, and the reason is not this increment — it is
-BW-059. A wrapper that records what an agent did, accurately, while the agent can write
-anywhere, is a good measurement tool and a poor safety story. Ship the alpha after the boundary
-is enforced, not before.
+Use the supervised internal alpha conditions in [INTERNAL_ALPHA_READINESS.md](INTERNAL_ALPHA_READINESS.md).
+The external-alpha hold remains in place while BW-031 and the Phase 2 release gate are open.

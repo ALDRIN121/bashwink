@@ -1,16 +1,16 @@
 {
   "package_name": "BASHWINK_DOCS_COMPLETE_AUDITED",
-  "date": "2026-11-22",
+  "date": "2026-11-23",
   "root": "docs/bashwink/",
-  "task_count": 90,
+  "task_count": 91,
   "task_sources": {
     "v1": 54,
-    "v2": 36
+    "v2": 37
   },
   "phase_task_counts": {
     "P0": 9,
     "P1": 10,
-    "P2": 15,
+    "P2": 16,
     "P3": 19,
     "P4": 13,
     "P5": 8,
@@ -20,7 +20,7 @@
   "files": {
     "ADR-001-FOUNDATION-AND-FORK.md": {
       "sha256": "7a029a0cbb3e3726a241fd10b4415894543c7a3039f5f14534cb055316fda9f2",
-      "size_bytes": 4339
+      "size_bytes": 6687
     },
     "AGENT_WORKFLOW.md": {
       "sha256": "e09c84106fd0a609ad42bc37c835e86622a25c121409e08ace4179dfc9506d92",
@@ -44,7 +44,7 @@
     },
     "BASHWINK_TASKS_90.csv": {
       "sha256": "b91370d8a5889006f251c59cf688a783e5aee15f439ff2b4562ed7a13c78b7dd",
-      "size_bytes": 37321
+      "size_bytes": 38657
     },
     "BASHWINK_V2_FEATURE_BACKLOG.md": {
       "sha256": "dab1980faec7101af49fc18ed638e98f2185a85f9a1711164ceeccee50e143e5",
@@ -80,7 +80,7 @@
     },
     "PHASE-02-PROOF-SECURITY.md": {
       "sha256": "9484c7e47fa5685957acb1f753441fe48989b84c4623f9676d50a7e50072ba29",
-      "size_bytes": 13425
+      "size_bytes": 17401
     },
     "PHASE-03-MEMORY-VERIFIER.md": {
       "sha256": "e121268e00589f769c6e0e42a33f390100e64400d3e3e520cd14eacc83e3a8fd",
@@ -103,8 +103,8 @@
       "size_bytes": 6165
     },
     "PHASE_GATE_CHECKLIST.md": {
-      "sha256": "cd06761fdd972ad93c531d956c56a21857aae759c0dfb1d5c680343df22d36b1",
-      "size_bytes": 4557
+      "sha256": "6c8f7f6985be123f880e6eb24d71fe3f92a4c1ba8040e84548691993e82c6fcd",
+      "size_bytes": 12342
     },
     "reports/BASHWINK_FULL_PLAN.docx": {
       "sha256": "9ff5e24b6476785dde68336cfa5ed13d3c6bd61aafeeec565675390c0d6b49c9",
@@ -126,19 +126,35 @@
       "sha256": "d2b27fa8dd80b75ccbbed222a40dbb2bbe1a0b6769ab2b6b71a08a123b53d93b"
     },
     "LLM_INTEGRATION_AUDIT.md": {
-      "sha256": "81fcaff84431064e41b997036a8fa8ebaeddb0ad3300cb77b3eb5b74fded7611"
+      "sha256": "09a0da4a4f7df07586ae1db2df32f06b267f114cee6fdb639bb608615132f24e"
     },
     "ALPHA_RELEASE_CHECKLIST.md": {
-      "sha256": "1abda41e21064d87a0fa89c70b869077d8c2f59f2bcaec0803ee7c9448471c52"
+      "sha256": "86c4c0620a825d0ce3b3bb209edb860057890ae156ffc7249bc5581795aee55f"
     },
     "ALPHA_TESTER_GUIDE.md": {
-      "sha256": "8f17a9a6af70981e83a0f42d535fc0d691801cbc2b110076bd8e4eaa56db7cbf"
+      "sha256": "4882b2011164eecf1bc3039b6fe41a75dcd6d157adfe0ebe552c6f71fabd024c"
     },
     "KNOWN_LIMITATIONS.md": {
-      "sha256": "ceffb99efc2cceedbbe05724ef210e2059b26743941438b8ab801a8825d0f6bc"
+      "sha256": "ea6a43c05492a42d19828322751acaa83683b60d6a1780b4187454de5710c4d5"
     },
     "BW-031-SANDBOX-PROPOSAL.md": {
       "sha256": "aa47168101e9962e427717be9ac44a41112f5e9be6c2a754133bead128a721f5"
+    },
+    "BW-031_IMPLEMENTATION_PLAN.md": {
+      "sha256": "14000fc97283c2dd4b7f4ec9862a6a6e856c4a2958aae7d38d44a2eb687e3bec",
+      "size_bytes": 19667
+    },
+    "CI_BASELINE_RECONCILIATION.md": {
+      "sha256": "14d4f9555edbae2f3ef7e8c5d2185ddaaa83de9df6c528c7286934df6e273b47",
+      "size_bytes": 4945
+    },
+    "CURRENT_STATE_REVIEW.md": {
+      "sha256": "826271d3167e69841e735b4ac6e8b49471c9623da35a383fd65dac7c4fb5380c",
+      "size_bytes": 8588
+    },
+    "INTERNAL_ALPHA_READINESS.md": {
+      "sha256": "36d9f241ff5d303fd4b627fc32e2d7c2147bd7fcf4864e58f87f90b965e9632d",
+      "size_bytes": 4119
     }
   }
 }

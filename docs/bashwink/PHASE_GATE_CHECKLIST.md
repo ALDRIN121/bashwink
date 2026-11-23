@@ -50,10 +50,10 @@ The `cli` job on Linux independently reports `Ran 141 tests across 8 files`, a c
 fixtures and the interruption semantics are verified on a second platform, not just on the
 machine they were written on.
 
-**Residual, non-blocking:** the runtime-dependent evidence (BW-014 against the real OpenCode
-binary, and the 8-stage demo) is **local macOS arm64 only** — CI skips that fixture honestly
-because installing a 225 MB platform package on every push is not worth it. The fixture prints
-`SKIP … needs the real binary` rather than passing vacuously.
+**Runtime revalidation.** The early CLI jobs skipped the real-runtime cases when the
+binary was unavailable. The current runtime-health jobs install the pinned binary on both
+platforms and enforce those cases. The green `b38dd51` run covered both. The eight-stage
+Phase 1 demo was rerun locally on macOS arm64. [CI reconciliation](CI_BASELINE_RECONCILIATION.md) · [Test evidence](TEST_EVIDENCE.md).
 
 ## Phase 0 — Foundation / fork feasibility (Foundation gate)
 
@@ -102,7 +102,9 @@ ubuntu-latest **7,251 pass / 0 fail**, macos-15 **7,561 pass / 0 fail**.
 → read `evidence.jsonl` → verify the chain → `upstream_sync.py` → read the verdict.
 **Every step has been executed individually; the demo has not been scripted end-to-end.**
 
-## Phase 1 — CLI & durable execution substrate (Internal CLI prototype)
+## Phase 1 — original planned checks
+
+The original criteria below are retained for reference. The evaluated Phase 1 gate is above.
 
 - [ ] Run the one-file bug-fix fixture from a clean install.
 - [ ] Tool events have task/run identifiers, exit statuses and redacted outputs.
@@ -122,8 +124,9 @@ session IDs but no task/run taxonomy.
 - [ ] Untrusted repository text cannot obtain elevated tool permissions.
 - [ ] Alpha package installation works on advertised target environment.
 
-**Only 5 fixtures exist, not 12.** Test-integrity enforcement (refusing to weaken a test) is
-not implemented — the `failed-test` fixture only demonstrates the risk, it does not prevent it.
+The five Git baseline fixtures do not meet the proposed 12-scenario target. Additional
+integration fixtures cover newer capabilities, while the complete Phase 2 acceptance suite
+and protected-test enforcement still lack evidence.
 
 **Demo:** Ask agent to fix a bug → malicious test deletion attempt → denied → real tests executed → proof report with hashes; force cost cap to verify stop.
 

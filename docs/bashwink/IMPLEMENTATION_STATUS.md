@@ -4,12 +4,14 @@
 Phase 1 **complete and gate-passed** — 10/10 tasks, 11/11 CI jobs green on `ubuntu-latest`
 and `macos-15` at `ad9d44e` ([run 45129207277](https://github.com/ALDRIN121/bashwink/actions/runs/45129207277)),
 and **revalidated** after the silent-plugin-load investigation (ADR-010).
-Phase 2 **in progress** — BW-055, BW-059 and BW-091 done (3 of 16); **368 tests**; the
+Phase 2 **in progress** — BW-055, BW-059 and BW-091 done (3 of 16). The independent audit ran **369 tests** under Bun 1.4.4; the
 runtime-health job runs on the real OpenCode binary on both platforms. Phase 2's gate has
 **not** been evaluated.
-**BW-091 was added to the register this increment**, so the provider/model work now has a task
+**BW-091 was added to the register during alpha stabilization**, so the provider/model work now has a task
 of its own instead of living in prose. The register is 91 tasks; earlier increments referenced
 90, which is a register growth, not a reassignment.
+**Internal alpha CONDITIONAL. External alpha FAIL.** See [readiness](INTERNAL_ALPHA_READINESS.md) and [CI reconciliation](CI_BASELINE_RECONCILIATION.md).
+
 **Canonical per-task register:** `BASHWINK_TASKS_90.csv`.
 **The block below is generated** by `scripts/generate_status_summary.py` — do not hand-edit
 it. `--check` fails if it drifts from the register.
@@ -30,7 +32,7 @@ it. `--check` fails if it drifts from the register.
 
 <!-- END GENERATED:status -->
 
-## LLM integration (BW-091) — implemented, not a phase-gate task
+## LLM integration (BW-091)
 
 Real-model coding works end to end through the pinned runtime. What Bashwink adds is narrow
 and load-bearing: provider configuration without storing a key, model selection and switching,
@@ -68,25 +70,23 @@ Verified with a live model (`fixtures/scope-fence/run.sh`, 10/10):
 | in-scope edit of `src/calc.py` | applied, tests pass |
 | edit of the test file | refused, hash unchanged |
 
-**Scope of the guarantee.** File writes are fenced and audited. A permitted shell command is
-**not** path-bounded — an interpreter can write anywhere — so obvious outside path arguments and
-the working directory are checked, and every permitted shell call is recorded as
-`unconstrained`. That marker is the honest limit, and `KNOWN_LIMITATIONS.md` §1 states it first.
+**Scope of the guarantee.** The loaded evidence plugin checks recognized file tool calls and
+rejects recognized shell calls with disallowed working directories or evident out-of-scope
+paths. Allowed shell calls are recorded as `unconstrained` and run with the user’s access.
+Unknown tool shapes, missing policy and evidence-off mode limit the guardrail. BW-018 remains
+open, even though the narrower BW-059 work is marked Done.
 
 Also corrected this increment: **workspace trust is now enforced.** It was recorded and shown by
-`doctor` as "denied by default" while `evaluateCall` was never called, so the claim was false. An
-untrusted workspace now refuses all writes and shell, verified end to end.
+`doctor` as "denied by default" while `evaluateCall` was never called, so the claim was false. With the policy loaded, an
+untrusted workspace now refuses recognized writes and shell calls.
 
 **Remaining alpha risk:** there is still no OS-level sandbox (BW-031), so shell remains an escape
 hatch. For a small supervised alpha that is acceptable and documented; for unattended use it is
 not.
 
-`BW-031-SANDBOX-PROPOSAL.md` now specifies the fix: a Seatbelt (macOS) + bubblewrap (Linux)
-adapter driven by the same `ScopePolicy`, 21 negative tests, and an explicit decision list. Its
-feasibility was verified on this machine rather than assumed — a profile denied outside writes
-and all network while allowing in-scope writes, and the `/tmp` → `/private/tmp` resolved-path
-trap was reproduced before it could break legitimate work. **BW-031 remains Not started; a
-proposal is not an implementation.**
+The earlier Seatbelt and Bubblewrap proposal remains historical. The independent review
+recommends the canonical Docker adapter behind BW-030, with the pinned runtime and its
+descendants confined together. **BW-031 remains Not started.** [Implementation plan](BW-031_IMPLEMENTATION_PLAN.md).
 
 The interactive TUI was smoke-tested with a real coding task and a session restart; that run
 found two defects, both fixed (an unattributable refusal, and "may have done real work" reported
@@ -223,12 +223,11 @@ risks carried forward.
 - `upstream-compat` runs weekly + manually, not per-PR (deliberate cost trade-off, documented).
 - The no-FFmpeg library is functionally but not byte-reproducible (Zig embeds 194 build paths).
 - OpenTUI's own native test suite was not run against the no-FFmpeg build.
-- No real-model agent run; all agent turns used the local mock provider.
+- The original foundation suite used the mock provider. Later CommandCode coding and OpenCode gateway evidence is documented above.
 - No legal review. The determination removes known LGPL exposure; it is not legal advice.
 - **BW-056** (interactive `contract edit`, assumption ledger, contradiction fixture) is not
   built. BW-055 ships the data plane and the commands approval/revision require.
-- **BW-059** (ScopeFence) is not built: the contract gates *starting* a task, not each file or
-  shell action. A running agent can still write outside `allowedPaths` until that lands.
+- **BW-059** covers recognized tool calls under an active policy. A permitted shell still has the user’s OS access.
 - Evidence health is proven at plugin *startup*. A plugin that loads and then fails to write
   mid-session degrades the log from that point; the recorder reports degradation, but the boot
   entry alone cannot detect it.

@@ -4,8 +4,8 @@
 
 Local verification used macOS arm64, Bun 1.4.4 and OpenCode v2.3.2
 (`c0ad18b402eb2827fc1ee71c171b1177b3fc02d1`). The real-runtime runs used disposable
-workspaces, local state and an instrumented loopback mock provider. Updated hosted results
-are pending. [Historical hosted baseline](CI_BASELINE_RECONCILIATION.md).
+workspaces, local state and an instrumented loopback mock provider.
+[Historical hosted baseline](CI_BASELINE_RECONCILIATION.md).
 
 | Command or check | Exit | Observed result |
 | --- | ---: | --- |
@@ -22,6 +22,28 @@ Local execution evidence covers the directly owned client and runtime during sup
 shutdown. There is no evidence for detached descendants, OS isolation or a paid-provider
 run on this revision. The pinned client surface and host trust assumptions are recorded in
 [ADR-012](ADR-012-PRIVATE-RUNTIME-READINESS.md) and the [backend design](BW-030_EXECUTION_BACKEND_DESIGN.md).
+
+### Hosted qualification and follow-up (2026-11-24)
+
+- `937c496` passed both hosted CLI jobs and macOS runtime health. Ubuntu executed and failed
+  the real-runtime readiness fixture during database inspection. [First run](https://github.com/ALDRIN121/bashwink/actions/runs/45227264915).
+- `8cfd7d1` identified the Ubuntu database error as `SQLITE_BUSY / 5`. [Ubuntu job](https://github.com/ALDRIN121/bashwink/actions/runs/45266347725/job/138014153559).
+- `ce74b4e` added bounded retries for the transient lock and a safe refusal for persisted
+  legacy schedules. Its pinned local suite passed 392 tests and its real-runtime fixture
+  exited 0. Hosted CLI passed on Ubuntu and macOS. Both real-runtime fixture steps passed
+  on macOS. On Ubuntu, readiness failed after database inspection and the downstream tool
+  lifecycle step was skipped. The exact readiness substep remains unverified on Ubuntu.
+  [Hosted run](https://github.com/ALDRIN121/bashwink/actions/runs/45266792026).
+
+The local follow-up adds readiness substep diagnostics and preserves the pinned TUI prompt
+and session arguments. The pinned local suite exited 0 with 393 passed across 22 files.
+Typecheck, Oxlint, lint controls, formatting, runtime health (11 checks), tool lifecycle
+(19/19), and documentation checks exited 0. The installed TUI showed the native `--prompt`
+text after readiness. With the harness continuing to read terminal output through shutdown,
+SIGTERM returned 130 and reaped the owned runtime. A prior harness attempt stopped reading
+the PTY during shutdown and timed out. The local follow-up has no hosted result. The task
+register retains BW-018 and BW-030 as In progress. Hosted execution is paused at the
+maintainer’s request.
 
 ## BW-018 and BW-030 foundation verification (2026-11-23)
 

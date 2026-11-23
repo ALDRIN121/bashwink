@@ -133,8 +133,9 @@ and protected-test enforcement still lack evidence.
 **Execution foundation update.** The local readiness fixture refuses client launch for
 missing, import-failed and malformed policy initialization. Delayed initialization holds
 the client until registration. The owned server and admission endpoint bind the client to
-the attested workspace. Hosted Ubuntu and macOS checks are pending for this code revision.
-The Phase 2 release gate remains open. [Execution evidence](TEST_EVIDENCE.md).
+the attested workspace. Hosted macOS runtime health passed. Hosted Ubuntu executed and
+failed the readiness fixture. The Phase 2 release gate remains open.
+[Execution evidence](TEST_EVIDENCE.md).
 
 ## Phase 3 — Project brain & independent QA (v0.2 gate)
 

@@ -13,8 +13,9 @@ setup cleanup kills the leased server if the policy plugin unloads unexpectedly.
 The client receives a separate authenticated loopback endpoint. It admits the pinned
 session actions in the verified workspace, refuses foreign saved-session actions and
 excludes service, raw process, automation and policy mutation routes. The source
-runtime database is checked read-only for saved automations before the server starts,
-because the pinned server's scheduler begins before endpoint readiness. The workspace
+runtime database is checked read-only for saved automations and legacy schedules before
+the server starts. A short retry handles transient SQLite bootstrap locks. The pinned
+server's scheduler begins before endpoint readiness. The workspace
 policy pin is reapplied after project configuration, file watching is disabled for this
 server and untrusted client TUI plugin discovery is refused when applicable.
 

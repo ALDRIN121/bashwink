@@ -20,6 +20,22 @@ const CONTROL_COMMANDS = new Set([
   "service",
 ])
 
+function firstPosition(argv: readonly string[]): string | undefined {
+  for (let index = 0; index < argv.length; index++) {
+    const arg = argv[index]!
+    if (arg === "--") {
+      const directory = argv[index + 1]
+      return directory === undefined ? undefined : path.resolve(directory)
+    }
+    if (arg === "--session" || arg === "-s" || arg === "--prompt") {
+      index++
+      continue
+    }
+    if (!arg.startsWith("-")) return arg
+  }
+  return undefined
+}
+
 export function standaloneArguments(argv: readonly string[]): string[] {
   const delimiter = argv.indexOf("--")
   const flags = argv.slice(0, delimiter < 0 ? argv.length : delimiter)
@@ -27,7 +43,7 @@ export function standaloneArguments(argv: readonly string[]): string[] {
     throw new Error("Bashwink requires its own standalone OpenCode server")
   if (flags.some((token) => /^(?:--worktree(?:=|$)|-w)/.test(token)))
     throw new Error("start Bashwink from the authorized worktree instead of using --worktree")
-  const command = flags.find((token) => !token.startsWith("-"))
+  const command = firstPosition(argv)
   if (command !== undefined && CONTROL_COMMANDS.has(command))
     throw new Error(`Bashwink does not authorize the OpenCode '${command}' service command`)
   if (
@@ -46,7 +62,7 @@ export function admitInteractiveConfig(
   workspace: string,
   trusted: boolean,
 ) {
-  if (trusted || CLIENT_COMMANDS.has(argv.find((arg) => !arg.startsWith("-")) ?? "")) return
+  if (trusted || CLIENT_COMMANDS.has(firstPosition(argv) ?? "")) return
   for (let directory = workspace; ; directory = path.dirname(directory)) {
     for (const file of [
       ".opencode/plugins",

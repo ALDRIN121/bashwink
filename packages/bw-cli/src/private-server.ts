@@ -214,14 +214,16 @@ export async function startPrivateServer(
     exited: child.exited,
     async ready(cancel: AbortSignal) {
       const signal = AbortSignal.any([cancel, AbortSignal.timeout(12_000)])
-      const failed = new ReadinessError(
-        `required policy plugin did not become ready; check its install, activation and server log at ${request.logFile}`,
-      )
+      let stage = "waiting for the owned server endpoint"
+      const failed = () =>
+        new ReadinessError(
+          `required policy plugin did not become ready (${stage}); check its install, activation and server log at ${request.logFile}`,
+        )
       const interrupted = Promise.withResolvers<never>()
-      const abort = () => interrupted.reject(failed)
+      const abort = () => interrupted.reject(failed())
       signal.addEventListener("abort", abort, { once: true })
       try {
-        if (signal.aborted) throw failed
+        if (signal.aborted) throw failed()
         const url = await Promise.race([endpoint.promise, interrupted.promise])
         const headers = {
           Authorization: authorization(password),
@@ -229,8 +231,12 @@ export async function startPrivateServer(
         const inventory = new URL("/api/plugin", url)
         inventory.searchParams.set("location[directory]", request.workspace)
         while (!signal.aborted && child.exitCode === null && child.signalCode === null) {
+          stage = "reading private plugin inventory"
           const response = await fetch(inventory, { headers, signal, redirect: "error" })
-          if (!response.ok) throw failed
+          if (!response.ok) {
+            stage = `private plugin inventory returned HTTP ${response.status}`
+            throw failed()
+          }
           const listed = (await response.json()) as {
             location?: { directory?: string }
             data?: Array<{
@@ -239,8 +245,10 @@ export async function startPrivateServer(
               state?: { status?: string }
             }>
           }
-          if (listed.location?.directory !== request.workspace || !Array.isArray(listed.data))
-            throw failed
+          if (listed.location?.directory !== request.workspace || !Array.isArray(listed.data)) {
+            stage = "plugin inventory workspace or response shape did not match"
+            throw failed()
+          }
           const plugins = listed.data.filter(
             (entry) =>
               entry.id === "bashwink-evidence" ||
@@ -254,7 +262,8 @@ export async function startPrivateServer(
               `required policy plugin failed to activate; see ${request.logFile}`,
             )
           if (existsSync(ack)) {
-            if (!matchesReadiness(JSON.parse(readFileSync(ack, "utf8")), expected)) throw failed
+            stage = "policy acknowledgment did not match the run, server or workspace"
+            if (!matchesReadiness(JSON.parse(readFileSync(ack, "utf8")), expected)) throw failed()
             if (
               plugins.some(
                 (entry) =>
@@ -264,8 +273,9 @@ export async function startPrivateServer(
                   entry.state?.status === "active",
               )
             ) {
+              stage = "opening the local session endpoint"
               if (signal.aborted || child.exitCode !== null || child.signalCode !== null)
-                throw failed
+                throw failed()
               const clientPassword = randomBytes(32).toString("base64url")
               admission = startAdmission(
                 url,
@@ -276,11 +286,12 @@ export async function startPrivateServer(
               return { url: admission.url.origin, password: clientPassword }
             }
           }
+          stage = "waiting for the required plugin acknowledgment and active inventory entry"
           await Bun.sleep(50)
         }
-        throw failed
+        throw failed()
       } catch (error) {
-        throw error instanceof ReadinessError ? error : failed
+        throw error instanceof ReadinessError ? error : failed()
       } finally {
         signal.removeEventListener("abort", abort)
       }

@@ -27,8 +27,8 @@
       "size_bytes": 4474
     },
     "ADR-012-PRIVATE-RUNTIME-READINESS.md": {
-      "sha256": "7de7d331d91ffdaa971af849b3a0ce797ca3e0544f0b55ad822423c06f52459d",
-      "size_bytes": 1844
+      "sha256": "bc7f0b3e4545fc1ae93366f62844f91399dad1ae37e14fd0d1434bc141c4e1cf",
+      "size_bytes": 1913
     },
     "AGENT_WORKFLOW.md": {
       "sha256": "e09c84106fd0a609ad42bc37c835e86622a25c121409e08ace4179dfc9506d92",
@@ -155,8 +155,8 @@
       "size_bytes": 6165
     },
     "PHASE_GATE_CHECKLIST.md": {
-      "sha256": "4fd5a6b9d02e4d927f13b87d902008b9fb5623766eb494bcdedda1b9de6359c1",
-      "size_bytes": 12779
+      "sha256": "4a9586721157dc6ad7a6020a27fc6225b4fe3a7228a9e68a7e775230edc077b4",
+      "size_bytes": 12805
     },
     "reports/BASHWINK_FULL_PLAN.docx": {
       "sha256": "9ff5e24b6476785dde68336cfa5ed13d3c6bd61aafeeec565675390c0d6b49c9",

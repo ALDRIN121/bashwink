@@ -12,8 +12,20 @@ import {
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { standaloneArguments } from "../src/execution-policy.js"
 
 const cli = fileURLToPath(new URL("../src/bin.ts", import.meta.url))
+
+test("TUI prompt and session options preserve the attested working directory", () => {
+  for (const args of [
+    ["--prompt", "hello"],
+    ["-s", "ses_fixture"],
+    ["--session", "ses_fixture"],
+  ])
+    expect(standaloneArguments(args)).toEqual(["--standalone", ...args])
+  expect(() => standaloneArguments(["--prompt", "hello", ".."])).toThrow("intended workspace")
+  expect(() => standaloneArguments(["--", ".."])).toThrow("intended workspace")
+})
 
 async function withRuntime(
   check: (

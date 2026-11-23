@@ -1,11 +1,12 @@
 # Bashwink next steps
 
-The pre-dispatch readiness and local backend foundation have local evidence. Check the
-exact source revision on the active Ubuntu and macOS CI legs before closing BW-018 and
-BW-030. The supervised internal alpha remains conditional, and external alpha remains
-blocked. [Current test evidence](TEST_EVIDENCE.md).
+The pre-dispatch readiness and local backend foundation have local evidence. Hosted macOS
+runtime health passed. The Ubuntu readiness failure remains open. The supervised internal
+alpha remains conditional, and external alpha remains blocked. [Current test evidence](TEST_EVIDENCE.md).
 
-1. Confirm cross-platform readiness, permission and lifecycle evidence for BW-018 and BW-030.
+1. Reproduce the Ubuntu readiness failure with the pinned Linux binaries on a disposable
+   Linux machine. Use the local substep diagnostics to identify the failing stage and qualify
+   the fix before closing BW-018 and BW-030. Keep additional hosted runs paused.
 2. After independent release authorization for the next increment, begin the BW-031 offline
    Docker proof. Require attestation from the guest-owned runtime, then demonstrate bounded
    lifecycle cleanup, protected inputs and output validation before adding provider access.

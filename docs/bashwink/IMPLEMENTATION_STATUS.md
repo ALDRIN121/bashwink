@@ -34,11 +34,13 @@ it. `--check` fails if it drifts from the register.
 
 ## Permission and backend foundation
 
-**BW-018 and BW-030 await updated hosted qualification.** The private server now validates
+**BW-018 and BW-030 remain In progress.** Hosted macOS runtime checks and both CLI jobs passed.
+The Ubuntu real-runtime readiness fixture failed, and further hosted execution is paused.
+The private server validates
 policy readiness before prompt admission. The local backend owns client and server and reports
 cancellation, deadlines, exits and readiness failures. Phase 2 has **3/16 Done** and Phase 3
 remains open. There is still no OS sandbox.
-[BW-018 implementation](BW-018_IMPLEMENTATION_REPORT.md) · [BW-030 design](BW-030_EXECUTION_BACKEND_DESIGN.md).
+[BW-018 implementation](BW-018_IMPLEMENTATION_REPORT.md) · [BW-030 design](BW-030_EXECUTION_BACKEND_DESIGN.md) · [Test evidence](TEST_EVIDENCE.md).
 
 ## LLM integration (BW-091)
 

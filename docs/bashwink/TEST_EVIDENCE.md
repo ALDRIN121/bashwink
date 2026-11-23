@@ -136,11 +136,14 @@ artifact; the run existed moments later. Nothing was wrong with the trigger conf
 | [45065505536](https://github.com/ALDRIN121/bashwink/actions/runs/45065505536) | `9b95d37` | `verify` | **success** — 8/8 jobs | 22 s |
 | [45066245596](https://github.com/ALDRIN121/bashwink/actions/runs/45066245596) | `0b09620` | `verify` | **success** — 8/8 jobs | — |
 | [45067382809](https://github.com/ALDRIN121/bashwink/actions/runs/45067382809) | `8a3286c` | `verify` | **success** — 8/8 jobs | 29 s |
-| [45111515216](https://github.com/ALDRIN121/bashwink/actions/runs/45111515216) | `c536466` | `verify` | **success** — **9/9 jobs** (lint added) | 25 s |
-| [45112004423](https://github.com/ALDRIN121/bashwink/actions/runs/45112004423) | `0c299df` | `verify` | **success** — **9/9 jobs** (at HEAD) | 27 s |
+| [45111515216](https://github.com/ALDRIN121/bashwink/actions/runs/45111515216) | `c536466` | `verify` | **success** — 9/9 jobs (format-only gate) | 25 s |
+| [45112004423](https://github.com/ALDRIN121/bashwink/actions/runs/45112004423) | `0c299df` | `verify` | **success** — 9/9 jobs | 27 s |
+| [45112152598](https://github.com/ALDRIN121/bashwink/actions/runs/45112152598) | `a86de7a` | `verify` | **success** — 9/9 jobs | 34 s |
+| [45112989970](https://github.com/ALDRIN121/bashwink/actions/runs/45112989970) | `bf33e20` | `verify` | **success** — 9/9 jobs, **semantic lint + gate self-test** | 28 s |
 | [45065638555](https://github.com/ALDRIN121/bashwink/actions/runs/45065638555) | `9b95d37` | `upstream-compat` | **failure** — 28 `Ripgrep` tests per platform | — |
 | [45066246923](https://github.com/ALDRIN121/bashwink/actions/runs/45066246923) | `0b09620` | `upstream-compat` | **success** — both platforms, all 11 steps each | ~5 min |
-| [45110993064](https://github.com/ALDRIN121/bashwink/actions/runs/45110993064) | `8a3286c` | `upstream-compat` | **success** — dispatched on demand at HEAD, both legs | 9 m 46 s |
+| [45110993064](https://github.com/ALDRIN121/bashwink/actions/runs/45110993064) | `8a3286c` | `upstream-compat` | **success** — both legs | 9 m 46 s |
+| [45112577853](https://github.com/ALDRIN121/bashwink/actions/runs/45112577853) | `8a3286c` | `upstream-compat` | **cancelled** — superseded by the run below | — |
 
 ### `upstream-compat` results, run 45066246923 (commit `0b09620`)
 
@@ -174,36 +177,70 @@ the same 28 tests failed on both legs before it, and now none do.
 | secret scan | **success** | 9 s |
 | scope statement | **success** | 5 s |
 
-### Root lint gate — added after a missing acceptance criterion was found
+### Lint gate — the criterion was unmet twice, and how it was finally satisfied
 
 BW-006's acceptance reads *"PR gets deterministic **lint**, typecheck, unit, secret scan and
 supported-platform smoke status"*, and the independent review (correction item 2) asked for a
-root lint gate. Typecheck existed; **lint did not** — no linter config, no lint script, no lint
-step. BW-006 was therefore marked Done with one acceptance criterion genuinely unmet.
+root lint gate. Typecheck existed; **lint did not** — no linter config, no script, no step. So
+BW-006 was marked Done while the criterion was unmet.
 
-Fixed with the pinned toolchain's own checker, `bun fmt --check`. No new dependency is added and
-the gate cannot drift from the Bun 1.4.4 the rest of CI pins. `bunfig.toml` pins
-`printWidth = 100` / `semi = false` to match the style the tree was already written in, so the
-gate lints the source instead of silently rewriting it. Scope is `packages/` deliberately:
-`bun fmt --check .` flags 45 files including every prose document, which would be a permanently
-red gate.
+**First attempt was insufficient.** `bun fmt --check` was added and described as the lint gate.
+That was wrong: `bun fmt` is a **formatter**. It rewrites whitespace and reports nothing about
+unused bindings, unreachable code, `debugger` statements, or any other semantic defect. A tree
+can be perfectly formatted and full of real lint errors. Presenting it as lint is precisely the
+kind of criterion-relabelling this gate exists to prevent.
 
-Applying it was **formatting-only** — 5 trailing commas plus line rewraps, no semantic change
-(47/47 tests and typecheck re-run afterwards, and a whitespace-insensitive diff of `recorder.ts`
-differs only by those commas).
+**Actual lint gate.** `oxlint` 1.94.0, pinned exactly in `package.json` and `bun.lock`. Chosen
+over ESLint because it is one self-contained binary with no plugin resolution, so a runner
+installs and runs it deterministically. `categories.correctness: error` in `.oxlintrc.json`,
+and `--deny-warnings` so a warning cannot exit 0.
 
-The gate was proven to be able to fail, not just to pass:
+Two gates, deliberately separate — neither substitutes for the other:
 
-| Control | Command | Result |
+| Gate | Command | What it proves |
 | --- | --- | --- |
-| Positive | `bun run lint` on the tree | exit **0** — `All 7 files are formatted.` |
-| Negative | inject a badly formatted `__lintprobe.ts`, `bun run lint` | exit **1** — names the offending file |
+| Semantic lint | `bun run lint` → `oxlint --deny-warnings packages` | no correctness defects |
+| Formatting | `bun run format` → `bun fmt --check packages` | style is deterministic |
+| Gate self-test | `bun run lint:gate` → `scripts/check_lint_gate.sh` | both directions actually work |
 
-In CI, run [45111515216](https://github.com/ALDRIN121/bashwink/actions/runs/45111515216) at
-commit `c536466` has **9/9 jobs green**, lint included, and the lint job's own log shows the
-command actually executing:
+`check_lint_gate.sh` asserts four independent things, because a nonzero exit alone proves
+nothing about a working gate:
+
+| # | Assertion | Why it is needed |
+| --- | --- | --- |
+| 1 | the real tree lints clean | the positive control |
+| 2 | the scope linted **>0 files** | oxlint exits **0** on `No files found to lint` — a scope typo would otherwise be a vacuous green |
+| 3 | `fixtures/lint-violation/bad.ts` is rejected | the negative control |
+| 4 | rejection names `no-unused-vars` **and** `no-debugger`, and is not a crash/config error | an exit 1 from a broken invocation is not a detection |
+
+Negative controls exercised by hand as well:
+
+| Control | Result |
+| --- | --- |
+| Committed fixture with `no-unused-vars` + `no-debugger` | exit **1**, both rules named |
+| Scope typo (`packges`) | gate **FAILS** as vacuous — `linted ZERO files` |
+| `.oxlintrc.json` categories gutted | still exit 1 — rules fire from defaults, not only the config |
+
+Applying the formatting gate earlier was **formatting-only** (5 trailing commas plus rewraps);
+47/47 tests and typecheck were re-run afterwards.
+
+### CI results for both gates, run 45112989970 (commit `bf33e20`)
+
+Read out of the lint job's own log, not inferred from a green tick:
 
 ```
+$ oxlint --deny-warnings packages
+Found 0 warnings and 0 errors.
+Finished in 5ms on 5 files with 82 rules using 2 threads.
+
+PASS  tree lints clean (exit 0)
+PASS  lint scope 'packages' actually contained 5 file(s)
+PASS  fixture rejected with exit 1
+PASS  fixture rejected for no-unused-vars (a semantic rule actually fired)
+PASS  fixture rejected for no-debugger (a second independent rule fired)
+PASS  failure came from lint diagnostics, not from a broken invocation
+passed: 6  failed: 0
+
 $ bun fmt --check packages
 All 7 files are formatted.
 ```
@@ -215,7 +252,9 @@ Not inferred from a green tick — read out of the job logs:
 | Check | CI evidence |
 | --- | --- |
 | Pinned Bun | `bun-version: 1.4.4`, log: `Using a cached version of Bun: 1.4.4+38afee6c8` |
-| **Lint** | `$ bun fmt --check packages` → `All 7 files are formatted.` — 9/9 jobs in [45111515216](https://github.com/ALDRIN121/bashwink/actions/runs/45111515216) |
+| **Lint** | `$ oxlint --deny-warnings packages` → `Found 0 warnings and 0 errors. Finished in 5ms on 5 files with 82 rules` |
+| **Lint gate self-test** | `passed: 6  failed: 0` — tree clean, scope non-empty, fixture rejected for both rules |
+| **Formatting** | `$ bun fmt --check packages` → `All 7 files are formatted.` |
 | Evidence suite | `47 pass / 0 fail`, `Ran 47 tests across 1 file` — **on both** ubuntu and macos-15 |
 | Individual assertions ran | `(pass) redact > scrubs github, aws, slack and bearer tokens`, `(pass) redact > scrubs PEM private key blocks`, … |
 | Fixtures on Linux | `created 5 fixtures`, then `OK read-only-explore / one-file-edit / failed-test / cancellation / rollback`, `all 5 fixture(s) at baseline` — **the platform risk did not materialise** |

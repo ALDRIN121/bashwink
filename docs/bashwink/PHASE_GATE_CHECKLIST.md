@@ -38,12 +38,14 @@ Last evaluated 2026-11-23 after real GitHub Actions runs on both supported platf
       `LICENSING_DETERMINATION.md`.
 
 **CI evidence:** `verify.yml` — **9/9 jobs** green on ubuntu-latest and macos-15 at commit
-`c536466` ([run 45111515216](https://github.com/ALDRIN121/bashwink/actions/runs/45111515216)):
+`bf33e20` ([run 45112989970](https://github.com/ALDRIN121/bashwink/actions/runs/45112989970)):
 lint, docs integrity, evidence ×2 platforms, fixtures ×2 platforms, license scope, secret scan,
-scope statement. The ninth job is the **root lint gate**, which BW-006's acceptance named and
-which did not exist until it was added — a "Done" task with a genuinely unmet criterion.
-`upstream-compat.yml` — both platform legs green including the 8,004-test upstream baseline.
-All runs are on commits `9b95d37` and `0b09620`; links in `TEST_EVIDENCE.md`.
+scope statement. The lint job runs a **semantic** linter (`oxlint --deny-warnings`, correctness
+rules as errors) plus a self-test that proves the gate can fail; a separate step keeps the
+formatting check (`bun fmt --check`). A formatter was previously presented as satisfying this
+criterion — it does not, and that is corrected rather than re-described.
+`upstream-compat.yml` — both platform legs green including the 8,004-test upstream baseline,
+most recently at commit `bf33e20` (see `TEST_EVIDENCE.md` for the exact run and its SHA).
 
 **Demo:** `create_fixtures.sh` → `reset.sh --check` → build → run against the mock provider
 → read `evidence.jsonl` → verify the chain → `upstream_sync.py` → read the verdict.

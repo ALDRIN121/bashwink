@@ -13,11 +13,14 @@ verified by real GitHub Actions runs on both supported platforms.
 | `verify` | [45065505536](https://github.com/ALDRIN121/bashwink/actions/runs/45065505536) | `9b95d37` | **success — 8/8 jobs** |
 | `verify` | [45066245596](https://github.com/ALDRIN121/bashwink/actions/runs/45066245596) | `0b09620` | **success — 8/8 jobs** |
 | `verify` | [45067382809](https://github.com/ALDRIN121/bashwink/actions/runs/45067382809) | `8a3286c` | **success — 8/8 jobs** |
-| `verify` | [45111515216](https://github.com/ALDRIN121/bashwink/actions/runs/45111515216) | `c536466` | **success — 9/9 jobs** (lint gate added) |
-| `verify` | [45112004423](https://github.com/ALDRIN121/bashwink/actions/runs/45112004423) | `0c299df` | **success — 9/9 jobs** (at HEAD) |
+| `verify` | [45111515216](https://github.com/ALDRIN121/bashwink/actions/runs/45111515216) | `c536466` | **success — 9/9 jobs** (format-only gate) |
+| `verify` | [45112004423](https://github.com/ALDRIN121/bashwink/actions/runs/45112004423) | `0c299df` | **success — 9/9 jobs** |
+| `verify` | [45112152598](https://github.com/ALDRIN121/bashwink/actions/runs/45112152598) | `a86de7a` | **success — 9/9 jobs** |
+| `verify` | [45112989970](https://github.com/ALDRIN121/bashwink/actions/runs/45112989970) | `bf33e20` | **success — 9/9 jobs, semantic lint + gate self-test** |
 | `upstream-compat` | [45065638555](https://github.com/ALDRIN121/bashwink/actions/runs/45065638555) | `9b95d37` | failure — 28 `Ripgrep` tests/platform |
 | `upstream-compat` | [45066246923](https://github.com/ALDRIN121/bashwink/actions/runs/45066246923) | `0b09620` | **success — both platforms** |
-| `upstream-compat` | [45110993064](https://github.com/ALDRIN121/bashwink/actions/runs/45110993064) | `8a3286c` | **success — dispatched on demand** |
+| `upstream-compat` | [45110993064](https://github.com/ALDRIN121/bashwink/actions/runs/45110993064) | `8a3286c` | **success — both legs** |
+| `upstream-compat` | [45112577853](https://github.com/ALDRIN121/bashwink/actions/runs/45112577853) | `8a3286c` | cancelled — superseded |
 
 ### The two defects CI found that local validation could not
 
@@ -34,10 +37,19 @@ verified by real GitHub Actions runs on both supported platforms.
 
 BW-006's acceptance requires **"deterministic lint"**, and the independent review asked for a
 root lint gate. Typecheck existed; **lint did not** — no config, no script, no CI step — so
-BW-006 was Done with a genuinely unmet criterion. Now fixed: `bun fmt --check packages` (the
-pinned toolchain's own checker, no new dependency, cannot drift from Bun 1.4.4), with
-`bunfig.toml` pinning the tree's existing style. The gate was proven able to fail (injected bad
-formatting → exit 1) as well as pass. Green in CI: **9/9 jobs** in run 45111515216.
+BW-006 was Done with a genuinely unmet criterion.
+
+The first fix was also wrong: `bun fmt --check` was added and called the lint gate. `bun fmt` is
+a **formatter** — it rewrites whitespace and reports nothing about unused bindings, unreachable
+code or `debugger` statements. Real lint is now `oxlint` 1.94.0 (pinned exactly), run as
+`oxlint --deny-warnings packages` with `categories.correctness: error`. Formatting is kept as a
+separate `bun fmt --check` step; it is no longer presented as lint.
+
+`scripts/check_lint_gate.sh` proves the gate works in both directions and guards against the
+three ways a lint gate silently passes without linting anything: it asserts the tree is clean,
+that the scope contained **>0 files** (oxlint exits 0 on "No files found"), that a committed
+violation fixture is rejected, and that the rejection names both expected rules rather than
+coming from a crash. Green in CI: **9/9 jobs** in run 45112989970.
 
 ## Known risks carried into Phase 1 (none gate-blocking)
 
@@ -49,10 +61,13 @@ formatting → exit 1) as well as pass. Green in CI: **9/9 jobs** in run 4511151
 3. **No legal review.** ADR-009 removes known LGPL exposure from the artifact by construction;
    it is not legal advice.
 4. **`bun audit`** has never been run.
-5. **`DEPENDENCY_LICENSES.json`** is a snapshot; `upstream_sync.py` does not regenerate it.
-6. **`upstream-compat` is weekly + manual**, not per-PR — deliberate (a 2.7 GB install and a
+5. **`DEPENDENCY_LICENSES.json`** is a snapshot; `upstream_sync.py` does not regenerate it, so
+   the newly added `oxlint` dependency is not yet in the inventory. Regenerate before release.
+6. **`oxlint` scope is `packages/`** (5 files) — the same scope typecheck and tests use. It does
+   not lint `scripts/*.py` or the docs. Widening it is a Phase 1 decision, not a gate item.
+7. **`upstream-compat` is weekly + manual**, not per-PR — deliberate (a 2.7 GB install and a
    ~5 min suite per PR is too expensive), and stated in the workflow.
-7. **PM-1 is unimplemented.** The wrapper CLI (ADR-003) does not exist; only PM-0 is real today.
+8. **PM-1 is unimplemented.** The wrapper CLI (ADR-003) does not exist; only PM-0 is real today.
 
 ## Phase 1 — first tasks
 

@@ -80,11 +80,55 @@ jobs:
       - name: Unit tests
         run: bun run test:evidence
       - name: Typecheck
-        run: bun run --cwd packages/bw-evidence typecheck
+        run: bun run typecheck
       # The evidence recorder is Bashwink's security-critical component. Run its suite
       # against the exact lockfile-pinned toolchain, not whatever the runner default is.
       - name: Evidence suite under the pinned Bun
         run: bun --version && bun test packages/bw-evidence/test/recorder.test.ts
+
+  cli:
+    # BW-008…BW-019. Runs on both platforms because the CLI is where platform assumptions
+    # surface: `bun:sqlite`, symlinked plugin staging and git subprocesses all behave
+    # differently on Linux.
+    name: cli (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: CLI unit and integration tests
+        run: bun run test:cli
+      - name: Typecheck the CLI
+        run: bun run --cwd packages/bw-cli typecheck
+      # The real acceptance criterion for BW-019: kill a run, resume it, and prove it neither
+      # double-applies nor falsely verifies. Not a unit test — a real SIGKILL.
+      - name: Interruption and idempotent resume fixture
+        run: ./fixtures/idempotent-resume/run.sh
+      - name: CLI smoke (--help and --version from a clean home)
+        run: |
+          set -euo pipefail
+          export BASHWINK_HOME="$RUNNER_TEMP/bw-smoke"
+          bun run packages/bw-cli/src/bin.ts --version
+          bun run packages/bw-cli/src/bin.ts --help > /dev/null
+          bun run packages/bw-cli/src/bin.ts doctor || true
+          # `doctor` is expected to be nonzero on a runner without the runtime installed,
+          # so its exit code is asserted at the level that matters: it ran and reported.
+          test -d "$BASHWINK_HOME"
+      # BW-014's end-to-end proof needs the real OpenCode binary (a ~225 MB platform package).
+      # Installing it on every PR is too expensive for a workflow that runs in ~30s, so the
+      # fixture detects its absence and reports SKIP with a reason rather than failing or —
+      # worse — passing vacuously. `upstream-compat` installs the real tree and is where the
+      # runtime is genuinely exercised; the local evidence for BW-014 is recorded in
+      # TEST_EVIDENCE.md with the actual run output.
+      - name: Tool lifecycle against a real runtime (skips without one)
+        run: ./fixtures/tool-lifecycle/run.sh
 
   fixtures:
     name: fixtures (${{ matrix.os }})

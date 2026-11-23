@@ -1,88 +1,83 @@
 # Bashwink — Next Steps
 
-**Where we are:** **Phase 0 complete. Gate PASSED.** 9 of 9 tasks Done, 4 of 4 conditions met,
-verified by real GitHub Actions runs on both supported platforms.
+**Where we are:** **Phase 0 complete and gate-passed** with hosted CI evidence on both
+platforms. **Phase 1 implemented**: 10 of 10 tasks Done, 188 tests passing, and the Phase 1
+exit demonstration runs as one scripted walkthrough in
+`fixtures/phase1-demo/run.sh` — **DEMONSTRATION PASSED (8 stages)**.
 
-**Phase 1 may begin.**
+**Phase 2 must not start until the Phase 1 hosted CI run is collected.** See "The one open
+item" below.
 
-## Phase 0 closed with CI evidence
+## The one open item: Phase 1 has no hosted CI run
 
-| Workflow | Run | Commit | Result |
-| --- | --- | --- | --- |
-| `verify` | [45064795624](https://github.com/ALDRIN121/bashwink/actions/runs/45064795624) | `437c742` | failure — 7/8 jobs (secret scan) |
-| `verify` | [45065505536](https://github.com/ALDRIN121/bashwink/actions/runs/45065505536) | `9b95d37` | **success — 8/8 jobs** |
-| `verify` | [45066245596](https://github.com/ALDRIN121/bashwink/actions/runs/45066245596) | `0b09620` | **success — 8/8 jobs** |
-| `verify` | [45067382809](https://github.com/ALDRIN121/bashwink/actions/runs/45067382809) | `8a3286c` | **success — 8/8 jobs** |
-| `verify` | [45111515216](https://github.com/ALDRIN121/bashwink/actions/runs/45111515216) | `c536466` | **success — 9/9 jobs** (format-only gate) |
-| `verify` | [45112004423](https://github.com/ALDRIN121/bashwink/actions/runs/45112004423) | `0c299df` | **success — 9/9 jobs** |
-| `verify` | [45112152598](https://github.com/ALDRIN121/bashwink/actions/runs/45112152598) | `a86de7a` | **success — 9/9 jobs** |
-| `verify` | [45112989970](https://github.com/ALDRIN121/bashwink/actions/runs/45112989970) | `bf33e20` | **success — 9/9 jobs, semantic lint + gate self-test** |
-| `upstream-compat` | [45065638555](https://github.com/ALDRIN121/bashwink/actions/runs/45065638555) | `9b95d37` | failure — 28 `Ripgrep` tests/platform |
-| `upstream-compat` | [45066246923](https://github.com/ALDRIN121/bashwink/actions/runs/45066246923) | `0b09620` | **success — both platforms** |
-| `upstream-compat` | [45110993064](https://github.com/ALDRIN121/bashwink/actions/runs/45110993064) | `8a3286c` | **success — both legs** |
-| `upstream-compat` | [45112577853](https://github.com/ALDRIN121/bashwink/actions/runs/45112577853) | `8a3286c` | cancelled — superseded |
-| `upstream-compat` | [45113462602](https://github.com/ALDRIN121/bashwink/actions/runs/45113462602) | `bf33e20` | **success — both legs at the lint-gate commit** |
+Every Phase 1 claim in `TEST_EVIDENCE.md` is a **local macOS arm64** result. The `cli` job was
+added to `verify.yml` with a `[ubuntu-latest, macos-15]` matrix, but it has not executed yet.
+That matters for three specific reasons, not as a formality:
 
-### The two defects CI found that local validation could not
+1. `bun:sqlite` — the store is the backbone of BW-012/016/019 and has only ever run on Darwin.
+2. **Plugin staging uses a symlink.** `stagePlugins` symlinks the real package into
+   `OPENCODE_CONFIG_DIR/plugin/`. Symlink resolution differs across filesystems, and the
+   absolute-`exports` and cross-`/tmp`-symlink variants of this already failed *silently* twice
+   on macOS. A Linux runner is where the next variant would surface.
+3. **Git subprocess fixtures** assert on diff/undo output; `git --no-color diff` was already
+   wrong once in a way that produced empty output rather than an error.
 
-1. **Secret scan** flagged the redaction tests' own placeholder inputs. My earlier "local
-   validation" had only checked the scanner's *logic*, never run it against the tree. Fixed by
-   assembling fixtures at runtime via a `credential()` helper; the `--exclude='*.md'` and
-   `--exclude='mock_provider.py'` workarounds were removed rather than relied on.
-2. **`upstream-compat`** failed because the upstream suite shell-outs to `rg` and tries to
-   **download** it mid-test when absent — which the effect harness forbids. Invisible locally
-   because Homebrew's `rg` 15.1.0 was already on `PATH`. Fixed by installing exactly the pinned
-   version with a SHA-256 check.
+To collect it: push and read `gh run view` for the `cli` job on both legs. If it is red, that is
+a Phase 1 defect to fix, not a CI problem to work around.
 
-### A third gap was found by re-reading the acceptance criterion, not by CI
+## Phase 1 — done, with the evidence
 
-BW-006's acceptance requires **"deterministic lint"**, and the independent review asked for a
-root lint gate. Typecheck existed; **lint did not** — no config, no script, no CI step — so
-BW-006 was Done with a genuinely unmet criterion.
+| Task | What was built |
+| --- | --- |
+| BW-008 | `bashwink` wrapper: own `--version`/`--help`, arg passthrough, `BASHWINK_HOME`, XDG isolation |
+| BW-009 | `doctor`: 8 checks, nonzero exit on a missing precondition, credential fingerprints only |
+| BW-010 | Workspace trust: untrusted denies write/shell/network by construction; `--by` required |
+| BW-011 | `assertEditable` edit gate + three real git fixtures for diff/undo/cancel |
+| BW-012 | SQLite plan/task store: atomic migrations, schema-version refusal, exercised rollback |
+| BW-013 | Plan contract + hand-written validator (cycles, unknown deps, approval attribution) |
+| BW-014 | Tool lifecycle against the **real** runtime: joined `before`/`after`, `exit=0`, task-linked |
+| BW-015 | Export keeping `pass`/`fail`/`not_run` distinct, plus md/json and a raw-result digest |
+| BW-016 | `taskID` on every event from a durable marker; explicit `unassignedReason` otherwise |
+| BW-019 | Real SIGKILL fixture: `writes=1`, resume reopens to `in_progress`, never `verified` |
 
-The first fix was also wrong: `bun fmt --check` was added and called the lint gate. `bun fmt` is
-a **formatter** — it rewrites whitespace and reports nothing about unused bindings, unreachable
-code or `debugger` statements. Real lint is now `oxlint` 1.94.0 (pinned exactly), run as
-`oxlint --deny-warnings packages` with `categories.correctness: error`. Formatting is kept as a
-separate `bun fmt --check` step; it is no longer presented as lint.
+## Known risks carried into Phase 2 (none gate-blocking)
 
-`scripts/check_lint_gate.sh` proves the gate works in both directions and guards against the
-three ways a lint gate silently passes without linting anything: it asserts the tree is clean,
-that the scope contained **>0 files** (oxlint exits 0 on "No files found"), that a committed
-violation fixture is rejected, and that the rejection names both expected rules rather than
-coming from a crash. Green in CI: **9/9 jobs** in run 45112989970.
+1. **The evidence plugin must be staged or nothing is recorded — and failing to stage it is
+   silent.** `main.ts` now calls `stagePlugins` before every runtime invocation, and the
+   end-to-end fixture is the only thing that catches a regression here. Every unit test passed
+   while the real runtime recorded nothing.
+2. **Staged plugins are symlinks into this repository.** Fine for a working copy; a real
+   distribution must copy or resolve them, and that is a PM-1 packaging question (ADR-009).
+3. **No-FFmpeg native library is not byte-reproducible** (Zig embeds build paths). A PM-1
+   release must assert a symbol profile, not a digest.
+4. **No legal review.** ADR-009 removes known LGPL exposure by construction; it is not advice.
+5. **`DEPENDENCY_LICENSES.json` is stale.** `oxlint` (1.94.0) and `@opencode/plugin` (2.3.2,
+   now a root devDependency so staged plugins can resolve it) are not in the inventory.
+   Regenerate before any release.
+6. **`bun audit`** has never been run.
+7. **The doctor's `docker` check only tests presence on `PATH`** — it does not verify the
+   daemon answers.
+8. **`bun:sqlite` is a single-writer assumption.** Parallel agents are Phase 4 (ADR-004).
+9. **`upstream-compat` is weekly + manual**, deliberately: a 2.7 GB install and ~5 min suite
+   per PR is too expensive.
 
-## Known risks carried into Phase 1 (none gate-blocking)
+## Phase 2 — first tasks
 
-1. **No-FFmpeg native library is not byte-reproducible.** Two clean builds differ in hash
-   (Zig embeds 194 absolute build paths); size and symbol profile identical. A PM-1 release
-   must ship the recipe plus a symbol-profile assertion, not a digest.
-2. **OpenTUI's own native test suite** was not run against the no-FFmpeg build — TUI smoke test
-   only.
-3. **No legal review.** ADR-009 removes known LGPL exposure from the artifact by construction;
-   it is not legal advice.
-4. **`bun audit`** has never been run.
-5. **`DEPENDENCY_LICENSES.json`** is a snapshot; `upstream_sync.py` does not regenerate it, so
-   the newly added `oxlint` dependency is not yet in the inventory. Regenerate before release.
-6. **`oxlint` scope is `packages/`** (5 files) — the same scope typecheck and tests use. It does
-   not lint `scripts/*.py` or the docs. Widening it is a Phase 1 decision, not a gate item.
-7. **`upstream-compat` is weekly + manual**, not per-PR — deliberate (a 2.7 GB install and a
-   ~5 min suite per PR is too expensive), and stated in the workflow.
-8. **PM-1 is unimplemented.** The wrapper CLI (ADR-003) does not exist; only PM-0 is real today.
-
-## Phase 1 — first tasks
-
-1. **The wrapper CLI (ADR-003).** Own `--version`/`--help`, forward everything else, set
-   `OPENCODE_CONFIG_DIR`, stage the plugin directory contents explicitly (config alone does not
-   control loading), exec and propagate exit codes.
-2. **Task/run taxonomy on evidence entries** — Phase 1 requires task and run identifiers;
-   entries currently carry only call/session IDs.
-3. **Concurrency control for the evidence log** (ADR-004) before Phase 4's parallel worktrees.
-4. **Publish a per-session head hash** so tail truncation becomes detectable (ADR-007).
+1. **Concurrency control for the evidence log** (ADR-004) before Phase 4's parallel worktrees.
+2. **Publish a per-session head hash** so tail truncation becomes detectable (ADR-007).
+3. **`bashwink plan observe` from a real check runner** — the CLI records observations, but
+   nothing yet *executes* a plan's declared `command` and records the exit code itself. Today
+   the caller supplies the outcome, which is a trust boundary worth closing.
+4. **Persist the plan in one place.** `current-plan.json` and the SQLite store are written
+   together by the CLI but are two sources of truth; a crash between them could desynchronise
+   them. A phase-2 refactor should make the store authoritative.
 
 ## Housekeeping
 
-- Remote: `https://github.com/ALDRIN121/bashwink`, branch `main`, HEAD `0b09620` or later.
-- The pinned OpenCode clone lives at `~/Developer/bashwink-upstream/opencode`, outside this
-  repository — deliberate, so 2.7 GB of dependencies never enter Git.
+- Remote: `https://github.com/ALDRIN121/bashwink`, branch `main`.
+- The pinned OpenCode clone lives outside this repository, so ~2.7 GB of dependencies never
+  enter Git.
 - The 3 upstream bash-3.2 failures stay unpatched by design (BW-002). CI must have bash >= 4.
+- The real OpenCode runtime used for the end-to-end evidence was installed to a scratch
+  directory (`@opencode/cli@2.3.2`, ~225 MB platform package) and is **not** a repository
+  dependency. `BASHWINK_OPENCODE_BIN` points at it.

@@ -81,6 +81,16 @@ export interface ToolCallRef {
   /** Present once the agent picks an agent; absent on very early calls. */
   readonly agent?: string
   readonly messageID?: string
+  /**
+   * Plan task this call belongs to (BW-016).
+   *
+   * Optional on purpose: a call can legitimately happen outside any task (a session started
+   * interactively, an agent exploring before planning). An unassigned call is recorded as
+   * such with a reason, never guessed into a task.
+   */
+  readonly taskID?: string
+  /** Why `taskID` is absent, when it is. Kept adjacent so the gap is explicable. */
+  readonly unassignedReason?: string
 }
 
 export interface EvidencePayload {
@@ -331,6 +341,8 @@ export class EvidenceRecorder {
         sessionID: call.sessionID,
         ...(call.agent === undefined ? {} : { agent: call.agent }),
         ...(call.messageID === undefined ? {} : { messageID: call.messageID }),
+        ...(call.taskID === undefined ? {} : { taskID: call.taskID }),
+        ...(call.unassignedReason === undefined ? {} : { unassignedReason: call.unassignedReason }),
       }) as ToolCallRef,
       payload: this.sanitisePayload(payload),
       prevHash: this.prevHash,
@@ -479,6 +491,8 @@ export interface ToolEventInput {
   readonly agent?: string
   readonly messageID?: string
   readonly input?: unknown
+  /** Plan task this call belongs to, when one is known (BW-016). */
+  readonly taskID?: string
 }
 
 export interface ToolEventOutput extends ToolEventInput {
@@ -496,6 +510,11 @@ function callOf(event: ToolEventInput): ToolCallRef {
     sessionID: String(event.sessionID),
     ...(event.agent === undefined ? {} : { agent: String(event.agent) }),
     ...(event.messageID === undefined ? {} : { messageID: String(event.messageID) }),
+    ...(event.taskID === undefined
+      ? // An event with no task is recorded as explicitly unassigned with a reason, rather
+        // than silently looking like a task-less call that was assigned to nothing.
+        { unassignedReason: "no task was selected when this tool call was recorded" }
+      : { taskID: String(event.taskID) }),
   }
 }
 

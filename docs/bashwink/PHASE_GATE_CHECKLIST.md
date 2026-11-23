@@ -1,9 +1,45 @@
 # Bashwink — Phase Release Gates
 
 **Phase 0: 4 of 4 conditions met. Gate PASSED.**
-Phases 1–7: unchecked, not started.
+**Phase 1: 10/10 tasks Done, 4/4 release criteria locally verified. Gate PASSED locally,
+pending hosted CI.**
+Phases 2–7: unchecked, not started.
 
-Last evaluated 2026-11-23 after real GitHub Actions runs on both supported platforms.
+Last evaluated 2026-11-23 after real GitHub Actions runs on both supported platforms
+(Phase 0) and full local verification (Phase 1).
+
+## Phase 1 — CLI & durable execution substrate (Internal CLI prototype gate)
+
+- [x] **`bashwink` executable with clean branding.** ADR-003's wrapper finally exists:
+      `--version` prints `bashwink 0.1.0`, `--help` documents every subcommand and exit code,
+      and unknown arguments are forwarded to the pinned runtime unchanged.
+- [x] **`doctor` produces actionable messages with a nonzero exit and prints no credentials.**
+      8 checks; exits 1 when the runtime is missing and 0 when present. Credentials report
+      presence/length/fingerprint only, asserted with a planted sentinel.
+- [x] **Workspace trust is explicit and defaults to deny.** Untrusted workspaces deny
+      `write`/`shell`/`network` by construction; `--by` attribution is mandatory; an explicit
+      approval cannot override a hard deny.
+- [x] **Task/plan schema with migrations, surviving restart.** SQLite via `bun:sqlite`, one
+      transaction per migration step, `SchemaTooNewError` on a newer file, rollback exercised
+      by a test.
+- [x] **Append-only sanitised tool event log and evidence exports.** Verified against the real
+      OpenCode binary: `before`/`after` joined on call id, `exit=0` captured, task-linked, a
+      planted secret absent, chain verifies, second run appends rather than rewrites.
+- [x] **Interrupted-session recovery fixture.** Real SIGKILL; resume reopens to `in_progress`
+      and never to `verified`; `writes=1`; abandoned attempts are not counted as applied.
+- [x] **One-file bug-fix flow from a clean install.** `fixtures/phase1-demo/run.sh` runs
+      `doctor → plan → patch → terminate → resume → inspect events` as one scripted walkthrough
+      in a throwaway `BASHWINK_HOME`, and asserts its own claims: **DEMONSTRATION PASSED
+      (8 stages)**.
+- [x] **Tool events carry task/run identifiers, exit statuses and redacted outputs.**
+- [x] **Killing the process neither claims an unfinished test passed nor double-applies a
+      patch.**
+- [x] **Planning mode cannot silently edit, and diff/undo is reproducible.** `assertEditable`
+      plus three real git fixtures; undo is byte-identical and idempotent.
+
+**Residual, non-blocking:** Phase 1 has no hosted CI run yet — the `cli` job was added to
+`verify.yml` for both platforms but has not executed. Every claim above is a local macOS arm64
+result, reproduce the commands to check them.
 
 ## Phase 0 — Foundation / fork feasibility (Foundation gate)
 

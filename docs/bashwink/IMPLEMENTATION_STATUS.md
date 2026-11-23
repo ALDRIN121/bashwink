@@ -1,6 +1,7 @@
 # Bashwink — Implementation Status
 
-**Snapshot:** 2026-11-23, Phase 0 **complete and gate-passed** with real CI evidence.
+**Snapshot:** 2026-11-23, Phase 0 **complete and gate-passed** with real CI evidence;
+Phase 1 **implemented and locally verified**.
 **Canonical per-task register:** `BASHWINK_TASKS_90.csv`.
 **The block below is generated** by `scripts/generate_status_summary.py` — do not hand-edit
 it. `--check` fails if it drifts from the register.
@@ -10,14 +11,14 @@ it. `--check` fails if it drifts from the register.
 | Phase | Tasks | Done | In progress | Blocked | Not started |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | P0 | 9 | 9 | 0 | 0 | 0 |
-| P1 | 10 | 0 | 0 | 0 | 10 |
+| P1 | 10 | 10 | 0 | 0 | 0 |
 | P2 | 15 | 0 | 0 | 0 | 15 |
 | P3 | 19 | 0 | 0 | 0 | 19 |
 | P4 | 13 | 0 | 0 | 0 | 13 |
 | P5 | 8 | 0 | 0 | 0 | 8 |
 | P6 | 9 | 0 | 0 | 0 | 9 |
 | P7 | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **90** | **9** | **0** | **0** | **81** |
+| **Total** | **90** | **19** | **0** | **0** | **71** |
 
 <!-- END GENERATED:status -->
 
@@ -34,6 +35,42 @@ it. `--check` fails if it drifts from the register.
 | BW-007 | **Done** | 5 fixtures, deterministic baselines, reset proven both directions, failure reproduced at baseline. **Cancellation and rollback scenarios now actually executed** (`fixtures/scenario_check.sh`, 8/8) — previously created-and-reset but never run. |
 | BW-043 | **Done** | Sync report verified against real diffs; exits 1 on breaking changes; never merges. |
 | BW-090 | **Done** | ADR-001…009 written with evidence; owners assigned; decisions recorded. |
+
+## Phase 1 detail
+
+`packages/bw-cli` — the `bashwink` executable. 141 tests, typecheck clean, lint clean.
+
+| ID | Status | What is actually true |
+| --- | --- | --- |
+| BW-008 | **Done** | `bashwink --version` / `--help` exit 0 and carry Bashwink's name (ADR-003 wrapper finally implemented). Arg passthrough verified by asserting the *documented* 127 "runtime not found" path rather than a cosmetic success. `BASHWINK_HOME` relocates all state; `OPENCODE_CONFIG_DIR` plus all four XDG roots are set for the child so a real OpenCode install is never touched. |
+| BW-009 | **Done** | `doctor` runs 8 real checks and exits 1 when a precondition is missing, 0 when not. Credential reporting is present/length/fingerprint only — asserted with a planted sentinel that must not appear in stdout *or* stderr. Warns (not fails) on optional Docker and absent credentials, because a mock provider is a legitimate configuration. |
+| BW-010 | **Done** | Untrusted-by-default, expressed as data (`read: allow`, `write/shell/network: deny`) so the acceptance criterion is assertable. `--by` attribution is required; an explicit `--approve` resolves a policy `ask` but can never override a hard `deny`. Sibling-directory, symlink and `..` trust-escape tests. |
+| BW-011 | **Done** | `assertEditable()` is the single gate; a `draft` or `rejected` plan cannot write (asserted by unchanged file bytes, not by reading the flag). Three real git fixtures cover one-file edit, multi-file edit and cancellation; undo is byte-identical and idempotent. |
+| BW-012 | **Done** | `bun:sqlite` store, no new dependency. One transaction per migration step, `SchemaTooNewError` when the file is newer than the build, and the rollback is a method exercised by a test rather than a paragraph. Plans, statuses and the full transition log survive reopen. |
+| BW-013 | **Done** | Plan contract with a hand-written validator (19 tests): duplicate ids, self/unknown dependencies, cycle detection named by path, approval-without-approver, absolute and `..` file paths. `plan show` renders the graph and `--json` emits the machine schema. |
+| BW-014 | **Done** | Proven against the **real** OpenCode v2.3.2 binary, not a mock of it: `before`/`after` joined on call id, `exit=0` captured, `tool=shell`, task-linked, planted secret absent, chain verifies after two runs. `fixtures/tool-lifecycle/run.sh` — 13/13. |
+| BW-015 | **Done** | Export keeps `pass` / `fail` / `not_run` distinct end to end (a never-run check is never rendered as a failure), reports a `verified`-but-outstanding contradiction instead of smoothing it, and emits Markdown plus JSON. `digestFile()` exposes the raw-result digest a reviewer can recompute. |
+| BW-016 | **Done** | Tool events carry `taskID` read from a durable active-task marker on every call — not captured once at plugin setup, because the plugin outlives task changes. An event with no task carries an explicit `unassignedReason` and is counted in the export. |
+| BW-019 | **Done** | Real SIGKILL fixture, 10/10: the unfinished attempt survives and is reported; resume reopens to `in_progress` and never to `verified`; an abandoned attempt is not counted as applied; the identical write happens exactly once (`writes=1`, second skipped by fingerprint). |
+
+**Phase 1 gate (release/exit criteria):**
+
+- [x] **Run the one-file bug-fix fixture from a clean install** — `fixtures/idempotent-resume`
+      and the `BW-011` git fixtures both run from a throwaway `BASHWINK_HOME` with no ambient
+      state.
+- [x] **Tool events have task/run identifiers, exit statuses and redacted outputs** — verified
+      against the real runtime (`fixtures/tool-lifecycle`, 13/13), including a planted secret
+      that must not appear.
+- [x] **Killing the process does not claim an unfinished test passed or double-apply a patch** —
+      real SIGKILL fixture, 10/10.
+- [x] **Planning mode cannot silently perform edits, and the Git diff/undo flow is
+      reproducible** — `assertEditable` plus three git fixtures.
+- [x] **Demonstration end-to-end** (`doctor → plan → patch → terminate → resume → inspect
+      events`) — `fixtures/phase1-demo/run.sh` runs all eight stages as **one** scripted
+      walkthrough on one plan, then asserts its own claims: the after-event joins its
+      before-event, `exit=0` was captured, every event is task-linked, the killed task is back
+      in `in_progress` rather than `verified`, nothing was verified by the interruption, and the
+      hash chain still verifies. **DEMONSTRATION PASSED (8 stages).**
 
 ## Phase 0 gate: 4 of 4 met — **PASS**
 

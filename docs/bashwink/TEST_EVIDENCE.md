@@ -1,11 +1,138 @@
 # Bashwink — Test Evidence Register
 
-**Revision under test:** Bashwink working tree at 2026-11-23 (post-remediation);
-foundation = OpenCode `v2.3.2` (`c0ad18b402eb2827fc1ee71c171b1177b3fc02d1`).
+**Revision under test:** Bashwink working tree at 2026-11-23 (Phase 1); foundation =
+OpenCode `v2.3.2` (`c0ad18b402eb2827fc1ee71c171b1177b3fc02d1`).
 **Environment:** macOS 27.0.1, arm64 (Darwin 27.0.0), **Bun 1.4.4** (the exact pinned
 version — the suite was re-run under it, closing the earlier 1.4.5 drift), Git 2.54.0.
-One machine. No Linux or Windows run. **No hosted CI run of any kind.**
+Phase 0 CI evidence is hosted; **Phase 1's evidence below is local**, and says so per row.
 **Evidence is authoritative only if reproducible at this revision.**
+
+## Phase 1 evidence (2026-11-23) — implemented and locally verified
+
+### Test totals
+
+| Suite | Tests | Result | Command |
+| --- | ---: | --- | --- |
+| `@bashwink/evidence` (Phase 0 recorder) | 47 | **47 pass / 0 fail** | `bun run test:evidence` |
+| `@bashwink/cli` (Phase 1) | 141 | **141 pass / 0 fail** | `bun run test:cli` |
+| **Total** | **188** | **188 pass / 0 fail** | `bun run test` |
+
+Typecheck: `tsc --noEmit` clean on **both** packages (`bun run typecheck`). Semantic lint:
+`oxlint --deny-warnings` clean over 32 files. Formatting: `bun fmt --check` clean.
+
+### What each Phase 1 acceptance criterion was verified *by*
+
+| Task | Acceptance criterion | Verified by | Result |
+| --- | --- | --- | --- |
+| BW-008 | `--help`/`--version` work from a clean install | subprocess tests asserting exit 0 and the Bashwink name | pass |
+| BW-008 | upstream name only where attribution requires | `--version` prints `bashwink 0.1.0` | pass |
+| BW-009 | missing preconditions → actionable message + nonzero exit | `doctor` exit **1** without a runtime, **0** with one | pass |
+| BW-009 | no credentials printed | planted sentinel must not appear in stdout **or** stderr; reports length+fingerprint only | pass |
+| BW-010 | onboarding tested against clean home and untrusted fixtures | trust tests + `BASHWINK_HOME`-isolated subprocess runs | pass |
+| BW-010 | defaults cannot silently grant shell/write | `UNTRUSTED_POLICY` asserted as data; `--approve` cannot override a hard `deny` | pass |
+| BW-011 | build agent can edit, plan agent cannot | `assertEditable` refuses `draft`/`rejected`; file bytes unchanged | pass |
+| BW-011 | edits, diffs, undo, cancellation, resume across three fixtures | three real git fixtures; undo byte-identical and idempotent | pass |
+| BW-012 | invalid transitions rejected | `InvalidTransitionError` with from/to and the allowed set | pass |
+| BW-012 | task graph survives restart | reopen test: plan + statuses + transition history restored | pass |
+| BW-012 | migration rollback documented | `Store.rollback()` executed by a test, then re-migrated | pass |
+| BW-013 | example plan and machine schema validate | 19 validator tests incl. cycles, unknown deps, approval attribution | pass |
+| BW-013 | plan renders in terminal and can be inspected before editing | `plan show` renders the graph; `--json` emits the schema | pass |
+| BW-014 | tool sequence complete for fixture runs | **real runtime**: `before`/`after` joined on call id | pass |
+| BW-014 | secret fixture values absent | planted `sk-proj-…` sentinel absent from the log | pass |
+| BW-014 | events append-only and survive crash | second run extended 2 → 4 lines; chain verified | pass |
+| BW-015 | export verified against raw process result | `digestFile()` sha256 of the raw output, recomputable | pass |
+| BW-015 | failure and `not_run` statuses | `pass`/`fail`/`not_run` kept distinct end to end, incl. rendering | pass |
+| BW-016 | tool events task-linked or `unassigned` with reason | `taskID` from the durable marker; `unassignedReason` otherwise | pass |
+| BW-016 | interrupted state survives restart | SIGKILL fixture then a fresh process reads it back | pass |
+| BW-019 | kill/restart neither double-edits nor falsely verifies | real SIGKILL, `writes=1`, reopened to `in_progress` | pass |
+
+### The two fixtures, with their real output
+
+**`fixtures/idempotent-resume/run.sh` — 10 pass / 0 fail (real SIGKILL)**
+
+```
+PASS  child was SIGKILLed while holding an attempt open
+PASS  the unfinished attempt survived the kill and is reported
+PASS  the interrupted task is reported as in_progress, not verified
+PASS  resume reopened the task into in_progress
+PASS  resume did NOT claim the abandoned task passed
+PASS  resume states the work is unverified and lists what to re-run
+PASS  an abandoned attempt is not counted as applied, so resume re-checks the file
+PASS  the identical write was applied exactly once
+PASS  the second attempt was skipped by fingerprint, not by luck
+PASS  verification refused: the state machine forbids it from here
+passed: 10  failed: 0
+```
+
+**`fixtures/tool-lifecycle/run.sh` — 13 pass / 0 fail against the real OpenCode binary**
+
+```
+{"total":2,"befores":1,"afters":1,"matched":1,"exits":[0],"tools":["shell"],
+ "linked":2,"reasoned":0,"bare":0,"taskIDs":["inspect"]}
+PASS  at least one 'before' event was recorded
+PASS  at least one 'after' event was recorded — the outcome is captured
+PASS  every after-event shares a call id with its before-event
+PASS  the shell exit status was captured (0)
+PASS  no event is silently unattributed
+PASS  events were attributed to the active task
+PASS  the planted secret never reached the log
+PASS  the second run extended the log instead of rewriting it
+PASS  the hash chain still verifies after two runs
+PASS  running a tool did not verify the task
+passed: 13  failed: 0  skipped: 0
+```
+
+`tool: "shell"` and `exit: 0` are the real values read out of the log, not asserted into
+existence: the mock asked the agent to run `printf 'bw-mock-ok\n'` and that command's exit
+status is what was captured (see the `Nested exit code` pitfall in the Phase 0 section — the
+status is lifted out of `output.exitCode`, not read from a top-level field).
+
+**`fixtures/phase1-demo/run.sh` — the Phase 1 exit demonstration, 8 stages, one plan**
+
+```
+1. doctor — preconditions              5. patch — one real agent turn
+2. trust the workspace                 6. terminate mid-check (SIGKILL)
+3. plan — inspectable objective        7. resume — reopen, claim nothing
+4. approve — edits blocked until then  8. inspect events — what actually ran
+
+PASS  an after-event is joined to its before-event
+PASS  the shell exit status was captured
+PASS  every event is task-linked or explicitly unassigned
+PASS  the killed task is back in_progress, not verified
+PASS  nothing was verified by the interruption
+PASS  the evidence hash chain verifies after the whole walkthrough
+DEMONSTRATION PASSED (8 stages)
+```
+
+### Three real defects found only by running the thing
+
+1. **The evidence plugin was never staged.** `stagePlugins()` existed and was unit-tested, but
+   `main.ts` never called it — so the real runtime ran the tool, printed the output, exited 0,
+   and recorded **nothing**. Every unit test passed throughout. The end-to-end fixture is what
+   caught it, and it is the reason BW-014's acceptance is worded "the tool sequence is complete
+   for fixture runs" rather than "the hooks fire".
+2. **An `exports` target cannot be an absolute path.** The first staging attempt wrote
+   `{"exports": {".": "/abs/path/index.ts"}}`, which the loader skipped **silently** — no
+   plugin, no error, no log line. Then a relative re-export shim failed too, because `/tmp` is a
+   symlink to `/private/tmp` on macOS so the computed `../../..` did not resolve. Both are
+   recorded in `stagePlugins`'s docstring; the fix is a symlink to the real package, which
+   cannot drift from it and resolves its dependencies from the real location.
+3. **`git --no-color diff` is not valid.** The flag belongs to the subcommand. Two git fixtures
+   were asserting against empty output until this was fixed — the tests were wrong, not the
+   code, and the failure was an empty string rather than an error.
+
+### What Phase 1 evidence is and is not
+
+- **Verified locally on macOS arm64 only.** No Phase 1 CI run has been collected yet. The
+  `cli` job was added to `verify.yml` for both `ubuntu-latest` and `macos-15`, but seeing it
+  green requires a push.
+- **No real model provider was used.** The agent turns went through the local mock
+  (`127.0.0.1`, ADR-006). That proves the tool-lifecycle seam; it does not prove behaviour
+  against a hosted model.
+- **`bun:sqlite` is a single-writer assumption.** Concurrent agents are Phase 4 (ADR-004).
+- **The doctor's `docker` check only tests presence on `PATH`.** It does not verify the daemon
+  is reachable.
+
 
 ## Final remediation evidence (2026-11-23)
 

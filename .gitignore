@@ -16,9 +16,12 @@ fixtures/*/
 !fixtures/opencode.json
 !fixtures/*.sh
 !fixtures/BASELINES.txt
-# Hand-written, committed on purpose: this is the lint gate's negative control, not a
-# generated fixture repository. It must be in history or the gate's proof is unreproducible.
+# Hand-written, committed on purpose: these are gate controls, not generated fixture
+# repositories. They must be in history or the proofs are unreproducible.
 !fixtures/lint-violation/
+!fixtures/idempotent-resume/
+!fixtures/tool-lifecycle/
+!fixtures/phase1-demo/
 
 # macOS
 .DS_Store

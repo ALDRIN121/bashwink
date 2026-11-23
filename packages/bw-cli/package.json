@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@bashwink/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bashwink CLI — a thin branded launcher over a pinned OpenCode runtime, plus plan, trust and evidence subcommands.",
+  "license": "MIT",
+  "bin": {
+    "bashwink": "./src/bin.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./bin": "./src/bin.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@opencode/cli": "2.3.2"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/cli": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@bashwink/evidence": "workspace:*"
+  }
+}

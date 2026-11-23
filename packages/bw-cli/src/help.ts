@@ -47,10 +47,11 @@ export function versionLine(): string {
 const HELP = `bashwink — an evidence-first coding agent
 
 USAGE
-  bashwink [opencode arguments]        run the agent (arguments are forwarded unchanged)
+  bashwink [opencode arguments]        run the agent using a private local OpenCode server
   bashwink <command> [options]
 
 COMMANDS
+  backend                   print the selected execution backend capabilities
   doctor                    check preconditions and report what is missing
   init                      create Bashwink's config and data directories
   trust <dir>               trust a workspace so shell/write actions are permitted there
@@ -83,6 +84,8 @@ VERSION AND PATHS
   Config:  ${pathsHelp("config")}
   Data:    ${pathsHelp("data")}
   Override everything at once with BASHWINK_HOME=/some/dir
+  BASHWINK_BACKEND=local    select direct host execution (default)
+  BASHWINK_TIMEOUT_MS      optional positive runtime deadline in milliseconds
 
 PROVIDERS AND MODELS
   Inference, streaming and tool calls are the pinned runtime's job; Bashwink configures it.
@@ -109,7 +112,7 @@ ENVIRONMENT
   BASHWINK_PLUGIN_DIR       stage this evidence plugin directory instead of resolving one
   BASHWINK_OPENCODE_BIN     use this OpenCode binary instead of resolving one
   BASHWINK_EVIDENCE_DIR     where the tool-event log is written
-  BASHWINK_EVIDENCE=off     run without the evidence plugin (explicit, unverified mode)
+  The policy and evidence plugin must be ready before OpenCode can receive prompts.
   BASHWINK_DEBUG=1          print what the wrapper staged before running
 
   Bashwink sets OPENCODE_CONFIG_DIR and XDG_* for the child runtime, so a real OpenCode
@@ -119,7 +122,7 @@ EXIT CODES
   0   success
   1   a check failed (doctor) or a command was refused
   2   usage error
-  3   the evidence plugin did not initialise, so the run is unverified
+  3   policy readiness failed or evidence is missing
   127 the pinned OpenCode runtime could not be found
 `
 

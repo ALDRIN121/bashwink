@@ -4,7 +4,7 @@
 Phase 1 **complete and gate-passed** — 10/10 tasks, 11/11 CI jobs green on `ubuntu-latest`
 and `macos-15` at `ad9d44e` ([run 45129207277](https://github.com/ALDRIN121/bashwink/actions/runs/45129207277)),
 and **revalidated** after the silent-plugin-load investigation (ADR-010).
-Phase 2 **in progress** — BW-055, BW-059 and BW-091 done (3 of 16). The independent audit ran **369 tests** under Bun 1.4.4; the
+Phase 2 **in progress** — BW-055, BW-059 and BW-091 done (3 of 16). The independent baseline audit ran **369 tests** under Bun 1.4.4. The
 runtime-health job runs on the real OpenCode binary on both platforms. Phase 2's gate has
 **not** been evaluated.
 **BW-091 was added to the register during alpha stabilization**, so the provider/model work now has a task
@@ -22,15 +22,23 @@ it. `--check` fails if it drifts from the register.
 | --- | ---: | ---: | ---: | ---: | ---: |
 | P0 | 9 | 9 | 0 | 0 | 0 |
 | P1 | 10 | 10 | 0 | 0 | 0 |
-| P2 | 16 | 3 | 0 | 0 | 13 |
-| P3 | 19 | 0 | 0 | 0 | 19 |
+| P2 | 16 | 3 | 1 | 0 | 12 |
+| P3 | 19 | 0 | 1 | 0 | 18 |
 | P4 | 13 | 0 | 0 | 0 | 13 |
 | P5 | 8 | 0 | 0 | 0 | 8 |
 | P6 | 9 | 0 | 0 | 0 | 9 |
 | P7 | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **91** | **22** | **0** | **0** | **69** |
+| **Total** | **91** | **22** | **2** | **0** | **67** |
 
 <!-- END GENERATED:status -->
+
+## Permission and backend foundation
+
+**BW-018 and BW-030 await updated hosted qualification.** The private server now validates
+policy readiness before prompt admission. The local backend owns client and server and reports
+cancellation, deadlines, exits and readiness failures. Phase 2 has **3/16 Done** and Phase 3
+remains open. There is still no OS sandbox.
+[BW-018 implementation](BW-018_IMPLEMENTATION_REPORT.md) · [BW-030 design](BW-030_EXECUTION_BACKEND_DESIGN.md).
 
 ## LLM integration (BW-091)
 
@@ -73,8 +81,8 @@ Verified with a live model (`fixtures/scope-fence/run.sh`, 10/10):
 **Scope of the guarantee.** The loaded evidence plugin checks recognized file tool calls and
 rejects recognized shell calls with disallowed working directories or evident out-of-scope
 paths. Allowed shell calls are recorded as `unconstrained` and run with the user’s access.
-Unknown tool shapes, missing policy and evidence-off mode limit the guardrail. BW-018 remains
-open, even though the narrower BW-059 work is marked Done.
+The loaded hook refuses malformed and unclassified requests. The owned-server readiness gate
+is covered by the real-runtime fixture. BW-059 remains recorded Done for its narrower policy seam.
 
 Also corrected this increment: **workspace trust is now enforced.** It was recorded and shown by
 `doctor` as "denied by default" while `evaluateCall` was never called, so the claim was false. With the policy loaded, an
@@ -164,7 +172,7 @@ catch the regression **skipped in CI** for want of the runtime.
 - The plugin writes a `boot` entry after registering both hooks, keyed by `BASHWINK_RUN_ID`.
 - The wrapper writes an expectation record before the run and reconciles it after; a missing
   boot entry prints the run id, entry, evidence path and runtime log path, and exits **3**.
-- `BASHWINK_EVIDENCE=off` is the explicit unverified mode, recorded as `disabled`.
+- Earlier releases recorded explicit evidence-off runs as `disabled`. Current launches require readiness.
 - `bashwink evidence status` reports per-run evidence health; `doctor` fails its last-run
   check when a run expected evidence and recorded none.
 - CI job `runtime-health` installs the pinned runtime on both platforms and runs the

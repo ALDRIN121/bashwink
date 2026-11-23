@@ -760,11 +760,11 @@ export function runEvidenceCommand(args: readonly string[]): CommandResult {
     const lines = [
       `runs under ${runsDir(resolved)}`,
       "",
-      "started                 run                   exit  evidence   plugin",
+      "started                 run                   exit  evidence   plugin / execution",
     ]
     for (const run of runs)
       lines.push(
-        `${run.startedAt.padEnd(23)} ${run.runId.padEnd(21)} ${String(run.exitCode ?? "?").padEnd(5)} ${run.evidence.padEnd(10)} ${run.plugin?.id ?? "(none)"}`,
+        `${run.startedAt.padEnd(23)} ${run.runId.padEnd(21)} ${String(run.exitCode ?? "?").padEnd(5)} ${run.evidence.padEnd(10)} ${run.plugin?.id ?? "(none)"}${run.execution === undefined ? "" : ` / ${run.execution.backend.mode} ${run.execution.outcome}`}`,
       )
     const broken = runs.filter((run) => run.evidence === "missing")
     if (broken.length > 0) {

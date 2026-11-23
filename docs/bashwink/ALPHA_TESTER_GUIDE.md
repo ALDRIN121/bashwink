@@ -146,7 +146,9 @@ DENIED write | 'tests/a.ts' resolves to /repo/tests/a.ts, which is outside this 
 Reads and the shell's working directory stay at the repo root — narrowing those blinded the agent
 and made `pytest` impossible when this was first tried.
 
-Permitted shell calls run with the invoking user's access and are recorded as `unconstrained`.
+On the foundation working tree, risky native tool actions request approval by default. Shell
+access is disabled when a contract narrows paths or commands. An allowed shell still runs with
+the invoking user's access and is recorded as `unconstrained`.
 For a task that does not need the recognized shell tool, set `constraints.forbiddenCommands` to
 `["shell"]` in a reviewed contract specification and approve that contract. The `--forbid`
 flag concerns paths. Other tool surfaces and host execution remain outside the fence.
@@ -190,10 +192,9 @@ Useful things to know about what you are testing:
 
 - The runtime is pinned to 2.3.2. A bug that reproduces upstream is upstream's, and worth
   reporting there too.
-- If a launch fails with a message about a managed service port, a previous session is still
-  holding it. Verify the PID belongs to your own stale runtime service before stopping it.
-- A session that dies mid-run may leave a stale service behind; the next launch reports it rather
-  than hanging.
+- The foundation launcher starts a private standalone service. `bashwink backend` reports the
+  local mode. Set `BASHWINK_TIMEOUT_MS` for an optional runtime deadline. Detached children
+  may outlive the wrapper. [Backend behavior](BW-030_EXECUTION_BACKEND_DESIGN.md).
 
 ---
 

@@ -24,7 +24,7 @@ cd "$(dirname "$0")/../.." || exit 2
 BUN="${BUN:-bun}"
 CLI="packages/bw-cli/src/bin.ts"
 MOCK="fixtures/mock_provider.py"
-PORT="${PORT:-8117}"
+PORT="${PORT:-0}"
 pass=0
 fail=0
 skip=0
@@ -48,34 +48,28 @@ mkdir -p "$BASHWINK_HOME/data" "$BASHWINK_HOME/config"
 
 echo "=== 1. start the local mock provider (no API key, offline) ==="
 mkdir -p "$WORK/project"
-python3 "$MOCK" --port "$PORT" --scenario ok --log "$WORK/mock.jsonl" > "$WORK/mock.out" 2>&1 &
+python3 "$MOCK" --port "$PORT" --scenario canary --log "$WORK/mock.jsonl" > "$WORK/mock.out" 2>&1 &
 mock_pid=$!
-# Wait for the port rather than sleeping blindly; a fixed sleep is a flaky test.
+# Wait for this fixture's own readiness message. A different listener on the same
+# loopback port would give false-positive readiness and an unrelated request log.
+mock_port=""
 for _ in $(seq 1 50); do
-  if python3 - "$PORT" <<'PY' 2>/dev/null
-import socket, sys
-s = socket.socket()
-s.settimeout(0.2)
-try:
-    s.connect(("127.0.0.1", int(sys.argv[1])))
-except OSError:
-    sys.exit(1)
-sys.exit(0)
-PY
-  then break; fi
-  sleep 0.2
+  mock_port=$(sed -n 's/^\[mock\] listening on http:\/\/127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p' "$WORK/mock.out")
+  [ -n "$mock_port" ] && break
+  kill -0 "$mock_pid" 2>/dev/null || break
+  sleep 0.1
 done
-if grep -qiE 'error|traceback' "$WORK/mock.out" 2>/dev/null; then
+if [ -z "$mock_port" ]; then
   bad "mock provider did not start"
   sed 's/^/      /' "$WORK/mock.out"
-else
-  ok "mock provider listening on 127.0.0.1:$PORT"
+  exit 1
 fi
+ok "mock provider listening on 127.0.0.1:$mock_port"
 
 echo
 echo "=== 2. configure the project to use it, and trust the workspace ==="
 mkdir -p "$WORK/project/.opencode"
-cp fixtures/opencode.json "$WORK/project/opencode.json"
+sed "s/127.0.0.1:8117/127.0.0.1:$mock_port/" fixtures/opencode.json > "$WORK/project/opencode.json"
 "$BUN" run "$CLI" trust "$WORK/project" --by "fixture" >/dev/null 2>&1
 "$BUN" run "$CLI" plan new "run the check in the fixture workspace" >/dev/null 2>&1
 "$BUN" run "$CLI" plan task inspect ready >/dev/null 2>&1
@@ -90,10 +84,15 @@ echo "=== 3. run the REAL agent through the wrapper ==="
 export BASHWINK_EVIDENCE_DIR="$BASHWINK_HOME/data/evidence"
 export BASHWINK_SECRET_SENTINEL="sk-proj-THISMUSTNEVERAPPEAR0123456789"
 run_out="$(cd "$WORK/project" && "$BUN" run "$OLDPWD/packages/bw-cli/src/bin.ts" \
-  run --standalone --model bashwink-mock/mock-tool-model "List the files" 2>&1)"
+  run --standalone --auto --model bashwink-mock/mock-tool-model "List the files" 2>&1)"
 run_rc=$?
 printf '%s\n' "$run_out" | sed 's/^/      /' | head -20
 echo "      wrapper exit code: $run_rc"
+if [ "$run_rc" -eq 0 ] && [ "$(cat "$WORK/project/.bw-shell-canary" 2>/dev/null)" = 'shell ran' ]; then
+  ok "approved compound shell command created the canary"
+else
+  bad "positive control failed to create the shell canary"
+fi
 
 LOG="$BASHWINK_HOME/data/evidence/evidence.jsonl"
 export LOG
@@ -158,7 +157,7 @@ echo "=== 8. the log is append-only across runs ==="
 first_bytes=$(wc -c < "$LOG" )
 first_lines=$(wc -l < "$LOG")
 (cd "$WORK/project" && "$BUN" run "$OLDPWD/packages/bw-cli/src/bin.ts" \
-  run --standalone --model bashwink-mock/mock-tool-model "List the files again" >/dev/null 2>&1)
+  run --standalone --auto --model bashwink-mock/mock-tool-model "List the files again" >/dev/null 2>&1)
 second_lines=$(wc -l < "$LOG")
 echo "      lines: $first_lines -> $second_lines"
 if [ "$second_lines" -gt "$first_lines" ]; then
@@ -182,6 +181,78 @@ case "$status_out" in
 esac
 
 echo
+echo "=== 10. risky shell calls need approval and a native deny survives auto-approval ==="
+assert_shell_refused() {
+  local start="$1" label="$2"
+  if python3 - "$LOG" "$start" <<'PY_CHECK'
+import json, sys
+with open(sys.argv[1]) as log:
+    rows = [json.loads(line) for line in log][int(sys.argv[2]):]
+shell = [row for row in rows if row.get("call", {}).get("tool") == "shell"]
+assert any(row["phase"] == "before" for row in shell), "mock never requested shell"
+after = [row for row in shell if row["phase"] == "after"]
+assert any(row["payload"].get("status") == "error" for row in after), "shell refusal was not observed"
+assert not any(row["payload"].get("status") == "completed" for row in after), "shell ran"
+PY_CHECK
+  then ok "$label"; else bad "$label"; fi
+}
+rm -f "$WORK/project/.bw-shell-canary"
+before_approval=$(wc -l < "$LOG")
+(cd "$WORK/project" && "$BUN" run "$OLDPWD/packages/bw-cli/src/bin.ts" \
+  run --model bashwink-mock/mock-tool-model "Permission check" > "$WORK/approval.out" 2>&1)
+assert_shell_refused "$before_approval" "unattended run requires shell approval by default"
+if [ -e "$WORK/project/.bw-shell-canary" ]; then
+  bad "unapproved shell created the canary"
+else
+  ok "unapproved shell left no canary"
+fi
+
+python3 - "$WORK/project/opencode.json" <<'PY_RULE'
+import json, pathlib, sys
+file = pathlib.Path(sys.argv[1])
+config = json.loads(file.read_text())
+config["permissions"] = [{"action": "shell", "resource": "*", "effect": "deny"}]
+file.write_text(json.dumps(config))
+PY_RULE
+before_deny=$(wc -l < "$LOG")
+before_request=$(wc -l < "$WORK/mock.jsonl")
+(cd "$WORK/project" && "$BUN" run "$OLDPWD/packages/bw-cli/src/bin.ts" \
+  run --auto --model bashwink-mock/mock-tool-model "Permission check" > "$WORK/deny.out" 2>&1)
+if python3 - "$LOG" "$before_deny" "$WORK/mock.jsonl" "$before_request" <<'PY_DENY'
+import json, sys
+
+def events(filename, start):
+    with open(filename) as log:
+        return [json.loads(line) for line in log][int(start):]
+
+rows = events(*sys.argv[1:3])
+assert any(row["phase"] == "boot" for row in rows), "runtime did not boot"
+assert not any(row.get("call", {}).get("tool") == "shell" for row in rows), "shell was dispatched"
+requests = events(*sys.argv[3:5])
+offered = [r.get("tool_names", []) for r in requests if r["event"] == "request"]
+assert any("read" in names for names in offered), "the model was never offered the regular file tools"
+assert not any({"shell", "bash"}.intersection(names) for names in offered), "native shell was offered"
+execute = [r for r in rows if r.get("call", {}).get("tool") == "execute"]
+if any("execute" in names for names in offered):
+    assert any(r["phase"] == "denied" for r in execute), "alternate tool was not refused"
+assert not any(r["phase"] == "after" and r["payload"].get("status") == "completed" for r in execute), "alternate tool ran"
+PY_DENY
+then
+  ok "explicit native shell denial removes shell even with auto-approval"
+else
+  bad "explicit native shell denial did not survive auto-approval"
+fi
+if [ -e "$WORK/project/.bw-shell-canary" ]; then
+  bad "explicitly denied shell created the canary under auto-approval"
+else
+  ok "explicit denial left no canary under auto-approval"
+fi
+if "$BUN" run packages/bw-evidence/src/cli.ts verify "$LOG" > "$WORK/verify.out" 2>&1; then
+  ok "the chain verifies after permission refusals"
+else
+  bad "chain verification failed after permission refusals"
+fi
+
 echo "passed: $pass  failed: $fail  skipped: $skip"
 [ "$fail" -eq 0 ] || exit 1
 exit 0

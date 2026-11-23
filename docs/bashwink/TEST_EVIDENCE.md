@@ -1,5 +1,64 @@
 # Bashwink — Test Evidence Register
 
+## Private runtime readiness and local backend verification (2026-11-23)
+
+Local verification used macOS arm64, Bun 1.4.4 and OpenCode v2.3.2
+(`c0ad18b402eb2827fc1ee71c171b1177b3fc02d1`). The real-runtime runs used disposable
+workspaces, local state and an instrumented loopback mock provider. Updated hosted results
+are pending. [Historical hosted baseline](CI_BASELINE_RECONCILIATION.md).
+
+| Command or check | Exit | Observed result |
+| --- | ---: | --- |
+| `bun run test` | 0 | 391 passed, 0 failed across 22 files. Includes backend selection, unsupported Docker refusal, policy-before-execution, exit status, cancellation, deadline, reaping, restricted scope and evidence. |
+| `bun run typecheck`, `bun run lint`, `bun run lint:gate`, `bun run format` | 0 each | Both packages typechecked, Oxlint clean, gate positive and negative controls 6/6, 56 formatted files. |
+| `./fixtures/runtime-health/run.sh` | 0 | 11 checks. The positive control ran a real shell. Missing entry, import failure, wrong export and setup crash each exited 3 with zero provider requests or tool calls despite a valid previous boot entry. A foreign saved session received no prompt. A registered managed server remained running and unused. A held plugin admitted no provider request until registration. A crash after readiness exited 3 with no new tool dispatch. Cancellation during readiness exited 130, launched no client and removed the lease. The evidence chain verified. |
+| `./fixtures/tool-lifecycle/run.sh` | 0 | 19/19, no skips. An approved compound shell command created the disposable canary. Unattended shell and explicit denial with `--auto` both left the canary absent. The tool trace and evidence chain verified. |
+| `./fixtures/contract/run.sh`, `./fixtures/idempotent-resume/run.sh` | 0 each | 14/14 and 10/10. Approval, revision, recovery and exactly one write. |
+| `./fixtures/phase1-demo/run.sh` | 0 | All eight stages, including interruption, tool exit status and evidence verification. |
+| `./scripts/build_alpha.sh <temporary output>` and installed CLI PTY smoke | 0 each | Git, plain and nested workspaces showed an attested boot and rendered the TUI. SIGTERM returned 130, recorded cancellation, reaped the owned server and removed the readiness lease in each case. |
+| `python3 scripts/verify_bashwink_docs.py --check-manifest`, `python3 scripts/generate_status_summary.py --check`, `python3 scripts/check_license_scope.py --inventory docs/bashwink/DEPENDENCY_LICENSES.json --fail-on-open`, credential-pattern scan and `git diff --check` | 0 each | Manifest, register summary, license scope and diff verified. Credential scan detected the planted control and found no matching pattern in changed files. |
+
+Local execution evidence covers the directly owned client and runtime during supervised
+shutdown. There is no evidence for detached descendants, OS isolation or a paid-provider
+run on this revision. The pinned client surface and host trust assumptions are recorded in
+[ADR-012](ADR-012-PRIVATE-RUNTIME-READINESS.md) and the [backend design](BW-030_EXECUTION_BACKEND_DESIGN.md).
+
+## BW-018 and BW-030 foundation verification (2026-11-23)
+
+**Historical intermediate baseline:** local audit commit `3e50764` plus the first foundation working tree.
+**Environment:** macOS arm64 27.0.1, Bun 1.4.4, OpenCode v2.3.2
+(`c0ad18b402eb2827fc1ee71c171b1177b3fc02d1`). Integration runs used disposable
+state and loopback-only test services. There is no hosted CI result for the foundation
+working tree. The hosted cross-platform baseline remains the historical [reconciled run](CI_BASELINE_RECONCILIATION.md).
+
+| Command or check | Exit | Observed result |
+| --- | ---: | --- |
+| `bun test packages/bw-cli/test/execution-policy.test.ts packages/bw-evidence/test/scope.test.ts` before hardening | 1 | Six expected failures, including server routing, untrusted opt-out, invalid policy, malformed calls and patch move checks. The compound path control already passed |
+| `bun run test` | 0 | 387 passed, 0 failed across 21 files. Includes mock cancellation, real child timeout/reaping, missing executable, unavailable Docker refusal, contract shell refusal and atomic plugin registration across opt-outs |
+| `bun run typecheck`, `bun run lint`, `bun run lint:gate`, `bun run format` | 0 each | Both packages typechecked, semantic lint clean, gate positive and negative controls 6/6, 52 formatted files |
+| `./fixtures/runtime-health/run.sh` | 0 | 17/17, including a real silent import failure reported as missing evidence, invalid plugin resolution refused before spawn, and trusted explicit opt-out |
+| `./fixtures/tool-lifecycle/run.sh` | 0 | 16/16, no skips. Real default shell refusal without approval, native deny survives `--auto`, mock can still see normal file tools, and any offered alternate execution tool is denied. Evidence chain verified |
+| `./fixtures/contract/run.sh`, `./fixtures/idempotent-resume/run.sh` | 0 each | 14/14 and 10/10. Approved revisions, recovery and exactly one write |
+| `./fixtures/phase1-demo/run.sh` | 0 | Eight stages. Real tool lifecycle, mock provider, plan and resume evidence verified |
+| `./scripts/build_alpha.sh <temporary output>` and installed CLI PTY smoke | 0 each | Three workspace shapes booted a private `serve --stdio` service with no managed-service dispatch. SIGTERM produced wrapper 130 and recorded backend cancellation in each case |
+| Private pinned runtime direct session shell negative control | harness 0 | Disposable workspace and safe canary. The API returned HTTP 500 on denied process creation, evidence contained the lower-hook denial, and the canary was absent. This ran the server route used by the TUI without relying on its keybinding |
+| Docs verifier with manifest, generated status check, license scope, credential-pattern scan and `git diff --check` | 0 each | Manifests and task status agree. No matching credential pattern in changed files |
+
+During verification, the first direct-shell keyboard harness entered the normal model prompt
+rather than TUI shell mode. It recorded a denial of the unrelated `execute` tool and did not
+prove the lower hook, so the direct local session API was used for that check. The real-runtime
+permission test initially attached to an existing listener on the old default mock port. The
+fixture now allocates its own port and requires its own readiness and request log. The final
+check also distinguishes native removal of shell from refusal of any alternate execution tool.
+
+The local backend reaps its direct child. Whole descendant cleanup, fresh hosted Linux and
+macOS runs, and paid-provider execution were unverified for this increment. The policy
+plugin's silent-load case still lacks pre-dispatch readiness, and BW-031 remains unimplemented.
+The canonical status keeps BW-018 and BW-030 in progress. Raw local logs were collected under
+the disposable audit directory, including `suite.final.log`, `runtime-health.final-offline.log`,
+`tool-lifecycle.final-permissions.log` and `phase1-demo.final-offline.log`.
+[BW-018 report](BW-018_IMPLEMENTATION_REPORT.md) · [BW-030 design](BW-030_EXECUTION_BACKEND_DESIGN.md).
+
 ## Independent handoff audit (2026-11-23)
 
 **Revision:** `4731eaf11a447fe3a0f3d27c10cbe9a500d42f8a`. The worktree started clean.

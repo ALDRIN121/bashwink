@@ -1,7 +1,7 @@
 # Bashwink — Canonical Project Documentation
 
 **Documentation bundle:** audited 22 November 2026; status refreshed 23 November 2026  
-**Implementation state:** Phase 0 and Phase 1 are implemented and gate-passed with hosted CI evidence. Phase 2 is in progress — 22 of 91 tasks Done; BW-055 (TaskContract), BW-059 (ScopeFence) and BW-091 (provider/model integration) are complete. The Phase 2 gate remains open. See the [state review](CURRENT_STATE_REVIEW.md) and [readiness decision](INTERNAL_ALPHA_READINESS.md).
+**Implementation state:** Phase 0 and Phase 1 are implemented and gate-passed with hosted CI evidence. Phase 2 is in progress — 22 of 91 tasks Done; BW-055 (TaskContract), BW-059 (ScopeFence) and BW-091 (provider/model integration) are complete. BW-018 and BW-030 are in progress. The Phase 2 gate remains open. See the [state review](CURRENT_STATE_REVIEW.md) and [readiness decision](INTERNAL_ALPHA_READINESS.md).
 
 This folder is the single reference for the proposed Bashwink open-source coding agent. The `BASHWINK_TASKS_90.csv` file is the **canonical per-task status register**, not the individual historic backlogs.
 
@@ -27,6 +27,7 @@ This folder is the single reference for the proposed Bashwink open-source coding
 | Combined reading | `BASHWINK_V2_INTEGRATED_PLAN.md` | Consolidated context; do not treat as a separate task register |
 | Agent operation | `AGENT_WORKFLOW.md`, `BASHWINK_MASTER_AGENT_PROMPT.md`, root `AGENTS.md` | Safe agent execution rules |
 | Progress | `IMPLEMENTATION_STATUS.md`, `TEST_EVIDENCE.md`, `NEXT_STEPS.md` | Current state, reproducible test evidence, next eligible tasks |
+| Execution foundation | `BW-018_IMPLEMENTATION_REPORT.md`, `BW-030_EXECUTION_BACKEND_DESIGN.md` | Local execution controls, lifecycle, and gaps |
 | Handoff audit | `CURRENT_STATE_REVIEW.md`, `INTERNAL_ALPHA_READINESS.md`, `CI_BASELINE_RECONCILIATION.md`, `BW-031_IMPLEMENTATION_PLAN.md` | Verified baseline, release decision and reviewed isolation plan |
 | Deliverable copies | `reports/` | Readable Word copies and research report |
 | Audit tooling | `AUDIT_REPORT.md`, `PACKAGE_MANIFEST.json`, `scripts/verify_bashwink_docs.py` at repo root | Integrity and completeness checks |

@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, test } from "bun:test"
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -454,7 +454,7 @@ describe("BW-091 — pre-flight blocks a doomed run before it starts", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "bw-stub-runtime-"))
     const binary = path.join(dir, "opencode")
     // If this ever executes, the pre-flight failed to refuse and the test must say so.
-    writeFileSync(binary, "#!/bin/sh\necho 'STUB RUNTIME EXECUTED' >&2\nexit 42\n", "utf8")
+    writeFileSync(binary, '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$0.started"\nexit 42\n', "utf8")
     chmodSync(binary, 0o755)
     return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
   }
@@ -474,7 +474,7 @@ describe("BW-091 — pre-flight blocks a doomed run before it starts", () => {
       // The runtime's own message must not be what the user sees instead.
       expect(run.stderr).not.toContain("Invalid 'Authorization' header")
       // And the refusal happened before spawning.
-      expect(run.stderr).not.toContain("STUB RUNTIME EXECUTED")
+      expect(existsSync(path.join(stub.dir, "opencode.started"))).toBe(false)
     } finally {
       box.done()
       stub.cleanup()
@@ -492,7 +492,7 @@ describe("BW-091 — pre-flight blocks a doomed run before it starts", () => {
       })
       expect(run.code).toBe(1)
       expect(run.stderr).toContain("BW_TEST_PROVIDER_KEY")
-      expect(run.stderr).not.toContain("STUB RUNTIME EXECUTED")
+      expect(existsSync(path.join(stub.dir, "opencode.started"))).toBe(false)
     } finally {
       box.done()
       stub.cleanup()
@@ -511,8 +511,11 @@ describe("BW-091 — pre-flight blocks a doomed run before it starts", () => {
         BASHWINK_OPENCODE_BIN: path.join(stub.dir, "opencode"),
       })
       expect(run.stderr).not.toContain("cannot authenticate")
-      expect(run.stderr).toContain("STUB RUNTIME EXECUTED")
-      expect(run.code).toBe(42)
+      expect(
+        readFileSync(path.join(stub.dir, "opencode.started"), "utf8").trim().split("\n"),
+      ).toEqual(["serve", "--stdio", "--port", "0"])
+      expect(run.stderr).toContain("required policy plugin")
+      expect(run.code).toBe(3)
     } finally {
       box.done()
       stub.cleanup()

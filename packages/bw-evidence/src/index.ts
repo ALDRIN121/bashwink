@@ -14,7 +14,14 @@ import { Plugin } from "@opencode/plugin"
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { EvidenceRecorder, onToolAfter, onToolBefore, verify, type ModelRef } from "./recorder.js"
-import { evaluate, parsePolicy, type ScopePolicy } from "./scope.js"
+import {
+  evaluate,
+  parseLaunchPolicy,
+  parsePolicy,
+  physicalPath,
+  type ScopePolicy,
+} from "./scope.js"
+import { acknowledge, readLease } from "./readiness.js"
 
 export interface EvidencePluginOptions {
   /** Where to write `evidence.jsonl`. Default: `<cwd>/.bashwink/evidence`. */
@@ -74,22 +81,21 @@ function activeTaskFileOf(options: EvidencePluginOptions, evidenceDir: string): 
  * closed, never open.
  */
 function scopePolicyOf(evidenceDir: string): ScopePolicy | undefined {
-  const file = path.join(evidenceDir, "..", "scope.json")
+  const required = process.env["BASHWINK_SCOPE_FILE"]
+  const file = required ?? path.join(evidenceDir, "..", "scope.json")
+  const denyAll: ScopePolicy = {
+    mode: "enforce",
+    allowedPaths: [],
+    readPaths: [],
+    allowShell: false,
+  }
   try {
-    if (!existsSync(file)) return undefined
-    const parsed = parsePolicy(JSON.parse(readFileSync(file, "utf8")))
-    if (parsed === undefined)
-      return {
-        mode: "enforce",
-        allowedPaths: [],
-        readPaths: [],
-        allowShell: false,
-        origin: "trust",
-      }
-    return parsed
+    if (required === undefined && !existsSync(file)) return undefined
+    const document: unknown = JSON.parse(readFileSync(file, "utf8"))
+    const parser = required === undefined ? parsePolicy : parseLaunchPolicy
+    return parser(document) ?? denyAll
   } catch {
-    // Fail closed: an unreadable fence refuses everything rather than permitting everything.
-    return { mode: "enforce", allowedPaths: [], readPaths: [], allowShell: false, origin: "trust" }
+    return denyAll
   }
 }
 
@@ -103,6 +109,8 @@ export function create(options: EvidencePluginOptions = {}) {
   return Plugin.define({
     id: "bashwink-evidence",
     async setup(ctx) {
+      const lease = readLease()
+      if (lease === undefined && process.env["BASHWINK_EVIDENCE_EXPECTED"] === "0") return
       const recorder = new EvidenceRecorder({
         directory: directory(options, ctx.location?.directory),
         ...(options.maxText === undefined ? {} : { maxText: options.maxText }),
@@ -140,9 +148,45 @@ export function create(options: EvidencePluginOptions = {}) {
       //
       // Throwing here is the enforcement: `execute.before` is the one tool hook whose failure
       // rejects the call before the tool body runs (packages/core/src/plugin/hooks.ts).
-      const policy = scopePolicyOf(recorder.file.replace(/\/[^/]+$/, ""))
+      const policy = scopePolicyOf(path.dirname(recorder.file))
+      if (
+        lease !== undefined &&
+        (policy?.mode !== "enforce" || policy.workspace !== lease.workspace)
+      )
+        throw new Error("missing or malformed Bashwink execution policy")
       if (policy !== undefined && policy.mode === "enforce") {
         log(`scope fence active: ${policy.allowedPaths.join(",") || "(no paths)"}`)
+        if (policy.workspace !== undefined) {
+          await ctx.permission.hook("evaluate", (event) => {
+            if (event.effect === "deny") return
+            if (event.action === "shell" || event.action === "edit") event.effect = "ask"
+          })
+        }
+        const scopeFile = process.env["BASHWINK_SCOPE_FILE"]
+        if (scopeFile !== undefined) {
+          // The direct TUI shell action does not go through the model tool hook. This
+          // upstream hook can amend the invocation but has no refusal error channel.
+          await ctx.shell.hook("create.before", (invocation) => {
+            const verdict = evaluate(policy, {
+              tool: "shell",
+              input: { command: invocation.command, workdir: invocation.cwd },
+              cwd: ctx.location?.directory ?? process.cwd(),
+            })
+            if (verdict.allow) return
+            invocation.command = ""
+            invocation.env = {}
+            invocation.shell = path.join(scopeFile, "shell-disabled")
+            try {
+              recorder.record(
+                "denied",
+                { id: crypto.randomUUID(), tool: "shell", sessionID: "" },
+                { status: "error", note: `DENIED shell launch: ${verdict.reason}` },
+              )
+            } catch {
+              // A recording failure must not restore the original shell launch.
+            }
+          })
+        }
         await ctx.tool.hook("execute.before", (event) => {
           let verdict
           try {
@@ -285,6 +329,12 @@ export function create(options: EvidencePluginOptions = {}) {
         ...(ctx.location?.directory === undefined ? {} : { location: ctx.location.directory }),
       })
       log(`boot #${boot.seq}; hooks registered`)
+      if (
+        lease !== undefined &&
+        ctx.location?.directory !== undefined &&
+        physicalPath(ctx.location.directory) === lease.workspace
+      )
+        return acknowledge(lease)
     },
   })
 }
@@ -294,3 +344,4 @@ export default create()
 
 export { EvidenceRecorder, verify }
 export * from "./recorder.js"
+export { physicalPath, type ScopePolicy } from "./scope.js"

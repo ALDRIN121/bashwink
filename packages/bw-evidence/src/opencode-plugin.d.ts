@@ -81,6 +81,23 @@ declare module "@opencode/plugin" {
     readonly options?: Readonly<Record<string, unknown>>
     readonly location?: { readonly directory?: string }
     readonly tool: ToolDomain
+    readonly shell: {
+      hook(
+        name: "create.before",
+        callback: (event: {
+          command: string
+          cwd: string
+          shell: string
+          env: Record<string, string | undefined>
+        }) => void,
+      ): Promise<unknown>
+    }
+    readonly permission: {
+      hook(
+        name: "evaluate",
+        callback: (event: { readonly action: string; effect: "allow" | "deny" | "ask" }) => void,
+      ): Promise<unknown>
+    }
     /**
      * Absent on older runtimes. The recorder treats absence as "no model attribution"
      * rather than failing the run, so the plugin stays loadable across a runtime bump.

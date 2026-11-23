@@ -6,7 +6,9 @@ have done.
 
 **Status:** Phase 0 and Phase 1 are complete and gate-passed with hosted CI evidence. Phase 2
 is in progress with 3/16 tasks Done (BW-055, BW-059 and BW-091). The Phase 2 gate remains open.
-Supervised internal alpha is conditional. External alpha is blocked on OS containment. See `docs/bashwink/IMPLEMENTATION_STATUS.md` and
+Supervised internal alpha is conditional. External alpha is blocked on OS containment.
+The local execution foundation is tracked in [BW-018](docs/bashwink/BW-018_IMPLEMENTATION_REPORT.md)
+and [BW-030](docs/bashwink/BW-030_EXECUTION_BACKEND_DESIGN.md). See `docs/bashwink/IMPLEMENTATION_STATUS.md` and
 `docs/bashwink/NEXT_STEPS.md`.
 
 ## Layout
@@ -111,8 +113,8 @@ On start-up the plugin writes a `boot` entry after both hooks are registered, ke
 wrapper's run id. `bashwink` then checks that entry after the child exits; if it is missing, the
 run exits **3** and prints the run id, plugin entry, evidence path and runtime log path instead
 of reporting the child's 0 as success. `bashwink evidence status` lists recent runs and whether
-each recorded evidence. `BASHWINK_EVIDENCE=off` disables the plugin and the tool scope hook.
-Keep the plugin enabled for supervised use.
+each recorded evidence. The wrapper gates client launch on policy readiness from its owned
+OpenCode server. The former `BASHWINK_EVIDENCE=off` switch is refused.
 
 Evidence redaction matches known credential keys and value patterns before hashing.
 Unrecognized formats can still appear in recorded output.

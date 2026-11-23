@@ -18,6 +18,8 @@
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
+  renameSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -310,10 +312,14 @@ function isFile(file: string): boolean {
  * from it, and its own dependencies (`@opencode/plugin`) resolve from the real location. It
  * also keeps ADR-002's rule intact — deleting the directory is a real uninstall.
  */
-export function stagePlugins(root: string, specs: readonly PluginSpec[]): StagedPlugin[] {
+export function stagePlugins(
+  root: string,
+  specs: readonly PluginSpec[],
+  options: { readonly preserveExisting?: boolean } = {},
+): StagedPlugin[] {
   const pluginRoot = path.join(root, "plugin")
   // Removing first is what actually disables a plugin (ADR-002 constraint 2).
-  rmSync(pluginRoot, { recursive: true, force: true })
+  if (!options.preserveExisting) rmSync(pluginRoot, { recursive: true, force: true })
   mkdirSync(pluginRoot, { recursive: true })
 
   const staged: StagedPlugin[] = []
@@ -322,7 +328,18 @@ export function stagePlugins(root: string, specs: readonly PluginSpec[]): Staged
     // Resolve exactly as the runtime will. A directory that resolves to nothing is dropped
     // by OpenCode's discovery with no log line, so it must fail here instead.
     const entry = resolvePluginEntry(spec.directory)
-    symlinkSync(spec.directory, target, "dir")
+    // OpenCode watches the staging directory. Publish a replacement only after the
+    // symlink is ready and only touch the requested slot.
+    if (options.preserveExisting) {
+      const temporary = mkdtempSync(path.join(root, ".plugin-stage-"))
+      try {
+        const link = path.join(temporary, spec.id)
+        symlinkSync(spec.directory, link, "dir")
+        renameSync(link, target)
+      } finally {
+        rmSync(temporary, { recursive: true, force: true })
+      }
+    } else symlinkSync(spec.directory, target, "dir")
     staged.push({ id: spec.id, path: target, entry })
   }
   return staged

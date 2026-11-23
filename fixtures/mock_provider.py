@@ -24,29 +24,38 @@ Scenarios
     happy path indistinguishable from the failure path and left the `exit=7` in every
     transcript unexplained (see the Phase 0 review, Part 3).
 
+``canary``
+    Print the normal success marker and create a file in the disposable workspace.
+    Permission controls can then check whether the shell had a side effect.
+
 Why a scenario flag instead of a single hardcoded command: the two paths must be
 distinguishable to be meaningful. A mock that always fails while always claiming
 success tests nothing about whether failures are recorded correctly.
 
 Usage:
-    python3 mock_provider.py --port 8117 [--scenario ok|fail] [--log /tmp/mock.jsonl]
+    python3 mock_provider.py --port 8117 [--scenario ok|fail|canary] [--log /tmp/mock.jsonl]
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-# Commands the model "chooses". Both are read-only, have no network dependency and
-# produce stable output, which is what makes a run reproducible across machines.
+# Commands the model "chooses". They have no network dependency and produce stable
+# output, which is what makes a run reproducible across machines.
 SCENARIOS = {
     "ok": {
         "command": "printf 'bw-mock-ok\\n'",
         "final": "Tool call completed; the command printed bw-mock-ok.",
+    },
+    "canary": {
+        "command": "printf 'bw-mock-ok\\n' && printf 'shell ran\\n' > .bw-shell-canary",
+        "final": "The shell permission probe is complete.",
     },
     "fail": {
         "command": "printf 'bw-mock-fail\\n'; exit 7",
@@ -68,6 +77,7 @@ FINAL_TEXT = SCENARIOS[DEFAULT_SCENARIO]["final"]
 PREFERRED_TOOLS = ("shell", "execute", "bash")
 
 LOG_PATH: str | None = None
+RESPONSE_GATE: str | None = None
 ACTIVE_SCENARIO: str = DEFAULT_SCENARIO
 
 
@@ -186,6 +196,11 @@ class Handler(BaseHTTPRequestHandler):
             }
         )
 
+        if RESPONSE_GATE:
+            deadline = time.monotonic() + 6
+            while not os.path.exists(RESPONSE_GATE) and time.monotonic() < deadline:
+                time.sleep(0.025)
+
         if not self.path.rstrip("/").endswith("/chat/completions"):
             self._json(404, {"error": {"message": f"no route {self.path}"}})
             return
@@ -196,7 +211,7 @@ class Handler(BaseHTTPRequestHandler):
             chosen = choose_tool(tools)
             if chosen is None:
                 log({"event": "respond_final_no_tools"})
-                sse(self, [base_chunk(model, {"role": "assistant", "content": ""}), base_chunk(model, {"content": scenario()["final"]}), base_chunk(model, {}, "stop")])
+                sse(self, [base_chunk(model, {"role": "assistant", "content": ""}), base_chunk(model, {"content": "No eligible shell tool was offered."}), base_chunk(model, {}, "stop")])
                 return
             call_id = f"call_{uuid.uuid4().hex[:20]}"
             chunks = [
@@ -234,10 +249,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    global LOG_PATH
+    global LOG_PATH, RESPONSE_GATE
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8117)
     parser.add_argument("--log", default=None)
+    parser.add_argument("--response-gate", default=None)
     parser.add_argument(
         "--scenario",
         choices=sorted(SCENARIOS),
@@ -247,9 +263,10 @@ def main() -> int:
     args = parser.parse_args()
     global ACTIVE_SCENARIO
     LOG_PATH = args.log
+    RESPONSE_GATE = args.response_gate
     ACTIVE_SCENARIO = args.scenario
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"[mock] listening on http://127.0.0.1:{args.port}", flush=True)
+    print(f"[mock] listening on http://127.0.0.1:{server.server_port}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

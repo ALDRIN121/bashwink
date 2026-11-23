@@ -54,7 +54,7 @@ echo "$contract_out" | sed 's/^/      /'
 echo "=== the policy the wrapper writes ==="
 # The wrapper emits it while preparing the run, so one short run is enough to materialise it.
 "$BW" run --standalone --auto "Reply with the single word READY." >/dev/null 2>&1 || true
-SCOPE_FILE="$BASHWINK_HOME/data/scope.json"
+SCOPE_FILE=$(find "$BASHWINK_HOME/data/scopes" -name '*.json' -type f | sort | tail -1)
 if [ -f "$SCOPE_FILE" ]; then
   mode=$(python3 -c "import json;print(json.load(open('$SCOPE_FILE'))['mode'])")
   paths=$(python3 -c "import json;print(','.join(json.load(open('$SCOPE_FILE'))['allowedPaths']))")

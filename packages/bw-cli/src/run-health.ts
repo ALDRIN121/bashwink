@@ -24,6 +24,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import path from "node:path"
 import { verify } from "@bashwink/evidence"
 import type { Paths } from "./paths.js"
+import type { BackendResult } from "./execution-backend.js"
 
 /** What the wrapper knows about evidence for a run. */
 export type EvidenceOutcome =
@@ -42,6 +43,7 @@ export interface RunRecord {
   readonly startedAt: string
   readonly endedAt?: string
   readonly exitCode?: number
+  readonly execution?: BackendResult
   readonly evidence: EvidenceOutcome
   readonly expected: boolean
   readonly plugin?: {
@@ -209,6 +211,7 @@ export function finishRun(input: {
   readonly resolved: Paths
   readonly runId: string
   readonly exitCode: number
+  readonly execution?: BackendResult
   readonly expected: boolean
   readonly boot?: BootCheck
   readonly detail?: string
@@ -227,6 +230,7 @@ export function finishRun(input: {
     startedAt: existing?.startedAt ?? (input.now ?? (() => new Date()))().toISOString(),
     endedAt: (input.now ?? (() => new Date()))().toISOString(),
     exitCode: input.exitCode,
+    ...(input.execution === undefined ? {} : { execution: input.execution }),
     evidence,
     expected: input.expected,
     ...(existing?.plugin === undefined ? {} : { plugin: existing.plugin }),

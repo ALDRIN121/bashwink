@@ -72,6 +72,20 @@ stated limitation**. None is silently dropped.
   separate implementation authorization remain required.
   [Plan and alternatives](BW-031_IMPLEMENTATION_PLAN.md).
 
+## Local execution foundation (2026-11-23)
+
+Require an owned OpenCode server for normal Bashwink launches, keep one scope document per
+run, and require the installed policy plugin. Ask again for risky tool approvals, keep native
+denials, and disable a general shell when a contract requires a narrower scope. The local
+backend uses direct host execution. OS isolation remains a separate release requirement.
+[BW-018 report](BW-018_IMPLEMENTATION_REPORT.md) · [BW-030 design](BW-030_EXECUTION_BACKEND_DESIGN.md).
+
+## Private runtime admission
+
+The local backend gates client launch on the required plugin in its own server. The release
+gate still requires the broader evidence and test-integrity criteria.
+[ADR-012](ADR-012-PRIVATE-RUNTIME-READINESS.md).
+
 ## Decision template
 
 ### ADR-XXX — Decision title

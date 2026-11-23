@@ -24,6 +24,7 @@ import {
   evaluate,
   makePolicy,
   parsePolicy,
+  parseLaunchPolicy,
   patchTargets,
   physicalPath,
   shellPathTokens,
@@ -429,4 +430,93 @@ describe("refusals name their cause", () => {
     // falls back to fail-closed.
     expect(parsePolicy({ mode: "enforce", allowedPaths: [], origin: "nonsense" })).toBeUndefined()
   })
+})
+
+describe("BW-018 execution policy negative controls", () => {
+  test("refuses unknown execution tools and incomplete file arguments", () => {
+    const { root, cleanup } = workspace()
+    try {
+      const policy = makePolicy({ mode: "enforce", cwd: root, allowedPaths: [root] })
+      for (const [tool, input] of [
+        ["custom_tool", {}],
+        ["automation", {}],
+        ["edit", {}],
+        ["patch", { patchText: "" }],
+        ["shell", { workdir: root }],
+      ] as const)
+        expect(evaluate(policy, { tool, input, cwd: root }).allow).toBe(false)
+      expect(evaluate(policy, { tool: "glob", input: {}, cwd: root }).allow).toBe(true)
+    } finally {
+      cleanup()
+    }
+  })
+
+  test("checks both paths of a move and refuses unresolved aliases", () => {
+    const { root, cleanup } = workspace()
+    try {
+      const policy = makePolicy({ mode: "enforce", cwd: root, allowedPaths: ["src"] })
+      const patchText =
+        "*** Begin Patch\n*** Update File: src/a.ts\n*** Move to: tests/a.ts\n@@\n-old\n+new\n*** End Patch"
+      expect(evaluate(policy, { tool: "patch", input: { patchText }, cwd: root }).allow).toBe(false)
+      symlinkSync(path.join(root, "missing-target"), path.join(root, "src", "unresolved"))
+      expect(
+        evaluate(policy, {
+          tool: "write",
+          input: { path: "src/unresolved" },
+          cwd: root,
+        }).allow,
+      ).toBe(false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  test("checks path arguments in each segment of a compound command", () => {
+    const { root, cleanup } = workspace()
+    try {
+      const policy = makePolicy({ mode: "enforce", cwd: root, allowedPaths: [root] })
+      expect(
+        evaluate(policy, {
+          tool: "shell",
+          input: { command: "printf ready && cat ../outside/fixture.txt" },
+          cwd: root,
+        }).allow,
+      ).toBe(false)
+    } finally {
+      cleanup()
+    }
+  })
+})
+
+test("an OpenCode home-relative tool path cannot be mistaken for a workspace-relative path", () => {
+  const { root, cleanup } = workspace()
+  try {
+    const policy = makePolicy({ mode: "enforce", cwd: root, allowedPaths: [root] })
+    expect(
+      evaluate(policy, { tool: "read", input: { path: "~/fixture.txt" }, cwd: root }).allow,
+    ).toBe(false)
+  } finally {
+    cleanup()
+  }
+})
+
+test("launcher policy requires explicit shell permission and absolute roots", () => {
+  const { root, cleanup } = workspace()
+  try {
+    const policy = {
+      mode: "enforce",
+      workspace: root,
+      allowedPaths: [root],
+      readPaths: [root],
+      forbiddenPaths: [],
+      allowShell: false,
+    }
+    expect(parseLaunchPolicy(policy)?.allowShell).toBe(false)
+    expect(parseLaunchPolicy({ ...policy, allowShell: undefined })).toBeUndefined()
+    expect(parseLaunchPolicy({ ...policy, readPaths: undefined })).toBeUndefined()
+    expect(parseLaunchPolicy({ ...policy, forbiddenPaths: undefined })).toBeUndefined()
+    expect(parseLaunchPolicy({ ...policy, allowedPaths: ["relative"] })).toBeUndefined()
+  } finally {
+    cleanup()
+  }
 })

@@ -8,6 +8,10 @@ Last evaluated: 2026-11-23.
 
 ---
 
+This checklist records the audited cross-platform baseline. The newer execution foundation
+has local verification and open Phase 2 acceptance. See [TEST_EVIDENCE.md](TEST_EVIDENCE.md)
+for its exact results and [BW-018](BW-018_IMPLEMENTATION_REPORT.md) for the startup gap.
+
 ## A. Build health
 
 - [x] `bun run typecheck` clean (both packages).

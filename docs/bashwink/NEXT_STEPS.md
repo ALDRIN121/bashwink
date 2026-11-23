@@ -1,20 +1,20 @@
 # Bashwink next steps
 
-The baseline audit is complete at `4731eaf`. Phase 0 and Phase 1 retain their evidence-backed gates. Phase 2 is open with **3/16 Done** (BW-055, BW-059, BW-091). The canonical register has **22/91 Done**. Supervised internal alpha is **CONDITIONAL** on the documented baseline and trusted workspaces. External alpha is **FAIL** while an OS boundary and the outstanding Phase 2 gate evidence are absent. [State review](CURRENT_STATE_REVIEW.md) · [Internal alpha readiness](INTERNAL_ALPHA_READINESS.md).
+The pre-dispatch readiness and local backend foundation have local evidence. Check the
+exact source revision on the active Ubuntu and macOS CI legs before closing BW-018 and
+BW-030. The supervised internal alpha remains conditional, and external alpha remains
+blocked. [Current test evidence](TEST_EVIDENCE.md).
 
-## Next five engineering tasks
+1. Confirm cross-platform readiness, permission and lifecycle evidence for BW-018 and BW-030.
+2. After independent release authorization for the next increment, begin the BW-031 offline
+   Docker proof. Require attestation from the guest-owned runtime, then demonstrate bounded
+   lifecycle cleanup, protected inputs and output validation before adding provider access.
+3. Qualify the sandbox with BW-032 on Linux and a VM-capable Mac before considering wider use.
+   [Reviewed BW-031 plan](BW-031_IMPLEMENTATION_PLAN.md).
 
-1. **BW-018 — Protect permissions and command execution paths.** Eligible in Phase 2. Include ScopeFence's missing-policy/disabled-plugin behavior, unknown execution surfaces and trust defaults in the review. BW-059 is recorded Done for its delivered hook even though BW-018 remains an unmet dependency.
-2. **BW-030 — Execution backend interface.** After BW-018 and the applicable Phase 3 gate entry or an explicit sequencing decision. Prove policy-before-execution, cancellation and disposal with a mock backend. BW-014 is Done.
-3. **BW-031 — Docker sandbox adapter.** After BW-030 and authorized Phase 4 sequencing. Implement in the order proposed by the reviewed plan. The design is ready for maintainer review. Sandbox execution is still Not started.
-4. **BW-032 — Sandbox threat and adversarial tests.** After BW-031. Require real engine runs on Linux and macOS, including the default no-egress profile, startup refusal and descendant cleanup. BW-074 separately depends on BW-073 for delegated network/credential checks.
-5. **BW-057 — Immutable baseline and protected test inventory.** Independently eligible in Phase 2 and can proceed before the later-phase slots. Pair its result with BW-018 to unblock BW-058. Verify a preexisting failure and preserve dirty user work.
-
-BW-018 is the immediate eligible task on the sandbox path. BW-057 is the immediate eligible test-integrity task. The register also makes BW-017, BW-056 and BW-075 eligible for a future Phase 2 increment. BW-058 needs BW-018 and BW-057, BW-060 needs BW-057, and BW-020 needs BW-017 and BW-018. No implementation status changed in this audit.
-
-Keep `macos-15` active and retain the green `b38dd51` baseline for this supervised window. Reconfirm changed runtime code on both platforms and use only executed hosted jobs as evidence. Continue host evidence hardening and real-command observations when working on BW-060/ClaimGuard. Carry the license inventory refresh, advisory scan, and distribution-specific checks into packaging. [CI reconciliation](CI_BASELINE_RECONCILIATION.md) · [Sandbox implementation plan](BW-031_IMPLEMENTATION_PLAN.md).
-
-This handoff ends at audit, reconciliation and plan review. BW-031 implementation requires separate authorization.
+The Phase 2 release gate still requires protected-test integrity, independently verified
+receipts, scenario coverage and packaged alpha acceptance. Phase 3 and Phase 4 release
+gates remain open.
 
 ## Phase 1 history
 

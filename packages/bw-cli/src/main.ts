@@ -3,11 +3,9 @@
  *
  * The wrapper owns exactly four things: its name, its version, its config directory, and its
  * own subcommands (`doctor`, `trust`, `plan`, `evidence`, `resume`, `init`). Everything else
- * is forwarded to the runtime **unchanged**, so a new upstream flag works without a wrapper
- * release. That is the rule ADR-003 adopted and this file implements.
+ * is forwarded to the runtime under the execution policy, with a private OpenCode server.
  *
- * Interactive TUI behaviour depends on not buffering stdio, so the child is spawned with
- * `stdio: "inherit"` and its exit code is propagated verbatim.
+ * The execution backend owns child startup, inherited terminal I/O, and cancellation.
  */
 
 import { VERSION, renderHelp } from "./help.js"
@@ -21,7 +19,6 @@ import {
   paths,
   resolvePluginDirectory,
   stagePlugins,
-  writeConfig,
 } from "./paths.js"
 import {
   beginRun,
@@ -46,10 +43,13 @@ import { fileURLToPath } from "node:url"
 import { existsSync } from "node:fs"
 import { preflightCredential, readRuntimeConfig } from "./providers.js"
 import { findRuntimeFailure, renderRuntimeFailure } from "./service-health.js"
-import { writeFileSync } from "node:fs"
-import { Store } from "./store.js"
-import { readPlan } from "./commands.js"
-import { isTrusted, readTrust } from "./trust.js"
+import {
+  admitInteractiveConfig,
+  launchEnvironment,
+  prepareLaunchPolicy,
+  standaloneArguments,
+} from "./execution-policy.js"
+import { executionTimeout, runWithBackend, selectBackend } from "./execution-backend.js"
 
 /** Value of `--flag value` or `--flag=value`, or undefined. First occurrence wins. */
 function flagOf(argv: readonly string[], flag: string): string | undefined {
@@ -114,8 +114,7 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
     return { exitCode: 0, handled: true }
   }
 
-  // Bare `bashwink` is the interactive entry point: it forwards an empty argv to the runtime,
-  // which launches its TUI in the current directory. Printing help here instead would make the
+  // Bare `bashwink` launches the runtime TUI in the current directory. Printing help here instead would make the
   // most obvious invocation the one thing that cannot start a session.
   //
   // Help is still what a *non-interactive* bare invocation gets: a pipeline or a CI step
@@ -135,7 +134,7 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
       )
       return { exitCode: 0, handled: true }
     }
-    // Fall through: the runtime receives no arguments and starts its interactive session.
+    // Fall through to the runtime’s default interactive command.
     out(`bashwink ${VERSION} — starting the interactive session in ${process.cwd()}`)
     out("(the workspace and model are shown in the TUI; Ctrl-C twice exits)")
   }
@@ -206,6 +205,22 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
       break
   }
 
+  let runtimeArgs
+  let backend
+  let timeoutMs
+  try {
+    backend = selectBackend(process.env["BASHWINK_BACKEND"])
+    if (first === "backend") {
+      out(JSON.stringify(backend.capabilities, null, 2))
+      return { exitCode: 0, handled: true }
+    }
+    timeoutMs = executionTimeout(process.env["BASHWINK_TIMEOUT_MS"])
+    runtimeArgs = standaloneArguments(argv)
+  } catch (error) {
+    err(error instanceof Error ? error.message : String(error))
+    return { exitCode: 2, handled: true }
+  }
+
   // Anything else belongs to the runtime.
   let runtime
   try {
@@ -245,11 +260,10 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
     }
   }
 
-  // Evidence collection is on by default. `BASHWINK_EVIDENCE=off` is the deliberate optional
-  // mode ADR-002 allows: a caller may run the runtime without the recorder, and the run is
-  // then recorded as `disabled` rather than being silently indistinguishable from a health
-  // problem. Everything else is expected to record, and a missing boot record fails the run.
-  const evidenceEnabled = (process.env["BASHWINK_EVIDENCE"] ?? "on") !== "off"
+  if (process.env["BASHWINK_EVIDENCE"] === "off") {
+    err("policy readiness is required; BASHWINK_EVIDENCE=off cannot launch OpenCode")
+    return { exitCode: 3, handled: true }
+  }
   const runId = newRunId()
   // Two layouts are supported: the source checkout (`packages/bw-evidence` beside this
   // package) and an installed CLI (`node_modules/@bashwink/evidence`). Both are tried, and
@@ -279,193 +293,135 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
   })()
   if (pluginDirectory === undefined) return { exitCode: 3, handled: true }
 
-  // --- BW-059 ScopeFence: turn the contract into an enforced policy ---------------------
-  //
-  // The policy is written once, before the runtime starts, and the plugin reads it at setup.
-  // Writing it per tool call would let a mid-run write change its own fence. `off` (no approved
-  // contract, or no plan) is written too, so the plugin's absence of a policy is explicit rather
-  // than a file that happens to be missing.
-  //
-  // This is a guardrail, not a sandbox: it binds the *tool* layer, and a shell command remains
-  // able to write anywhere by invoking an interpreter. That is recorded, not hidden.
+  let environment
+  let workspace
+  let trusted
   try {
-    const plan = readPlan()
-    let policy: {
-      mode: "off" | "enforce"
-      allowedPaths: string[]
-      readPaths: string[]
-      allowShell: boolean
-      origin?: "trust" | "contract"
-    } = { mode: "off", allowedPaths: [], readPaths: [], allowShell: true }
-    // An untrusted workspace denies writes and shell outright. `doctor` has always claimed
-    // this; until now `evaluateCall` existed but nothing called it, so the claim was false and
-    // a fresh clone was as writable as a trusted one. Enforcing it here — the same hook that
-    // enforces the contract — makes the sentence true and keeps one enforcement point.
-    const trusted = isTrusted(readTrust(path.join(resolved.config, "trust.json")), process.cwd())
-    if (!trusted) {
-      policy = {
-        mode: "enforce",
-        allowedPaths: [],
-        readPaths: [process.cwd()],
-        allowShell: false,
-        origin: "trust",
-      }
-    }
-
-    if (plan.plan !== undefined) {
-      const store = new Store({ file: path.join(resolved.data, "bashwink.sqlite") })
-      try {
-        const contract = store.contractForPlan(plan.plan.id)
-        // A contract cannot widen trust: an untrusted workspace stays read-only even with an
-        // approved contract, because the trust decision is about running here at all.
-        if (trusted && contract !== undefined && contract.approval === "approved") {
-          // Shell permission is derived from the contract rather than invented: a contract that
-          // forbids `shell` plainly means the task does not need it, and honouring that is a
-          // stronger boundary than anything this wrapper could infer.
-          const forbidsShell = (contract.constraints.forbiddenCommands ?? []).some(
-            (command) => command === "shell" || command === "bash",
-          )
-          policy = {
-            mode: "enforce",
-            allowedPaths: [...contract.allowedPaths],
-            // Reads and the shell's working directory stay at the run's workspace: the writable
-            // set is what a contract narrows, and narrowing reads to it would blind the agent.
-            readPaths: [process.cwd()],
-            allowShell: !forbidsShell,
-            origin: "contract",
-          }
-        }
-      } finally {
-        store.close()
-      }
-    }
-    writeFileSync(
-      path.join(resolved.evidence, "..", "scope.json"),
-      `${JSON.stringify(policy, null, 2)}\n`,
-      "utf8",
-    )
-    if (policy.mode === "enforce")
-      out(
-        trusted
-          ? `scope fence: enforcing ${policy.allowedPaths.join(", ") || "(no paths — all edits refused)"}` +
-              (policy.allowShell ? " (shell allowed, not path-bounded)" : " (shell disabled)")
-          : `scope fence: ${process.cwd()} is not trusted, so writes and shell are refused; ` +
-              `run \`bashwink trust ${process.cwd()}\` to allow them`,
-      )
-  } catch (error) {
-    // A fence that cannot be written must not silently disappear: say so and run unscoped,
-    // which is the honest state rather than a boundary that exists only on paper.
+    const launch = prepareLaunchPolicy(resolved, runId)
+    workspace = launch.workspace
+    trusted = launch.trusted
+    environment = launchEnvironment(environmentFor(resolved), launch)
+    if (!launch.trusted)
+      out(`scope fence: ${launch.policy.workspace} is not trusted; writes and shell are refused`)
+  } catch {
     err(
-      `warning: could not write the scope policy (${error instanceof Error ? error.message : String(error)}); ` +
-        "this run is NOT path-scoped.",
+      "could not prepare the execution policy; check the workspace trust, current plan, runtime configuration and state directory",
     )
+    return { exitCode: 3, handled: true }
   }
-  let staged: ReturnType<typeof stagePlugins> = []
+
   try {
-    // Stage the plugin directory contents before every run (ADR-002 constraint 2). Without
-    // this the real runtime loads no Bashwink plugin at all: the config's plugin list does
-    // not restrict or enable discovery, so the *directory* is the only thing that governs
-    // loading. Staging also resolves the entry exactly as the runtime will, so a directory
-    // the runtime would silently drop fails here with a message instead.
-    staged = stagePlugins(
-      resolved.config,
-      evidenceEnabled ? [{ id: EVIDENCE_PLUGIN_ID, directory: pluginDirectory, order: 0 }] : [],
+    admitInteractiveConfig(argv, workspace, trusted)
+  } catch {
+    err(
+      "could not admit untrusted project TUI configuration; inspect the workspace before trusting it",
     )
+    return { exitCode: 3, handled: true }
+  }
+
+  let evidencePlugin
+  try {
+    ;[evidencePlugin] = stagePlugins(
+      resolved.config,
+      [{ id: EVIDENCE_PLUGIN_ID, directory: pluginDirectory, order: 0 }],
+      { preserveExisting: true },
+    )
+    if (evidencePlugin === undefined) throw new PluginEntryError("no policy plugin was staged")
   } catch (error) {
     if (error instanceof PluginEntryError) {
-      err(`evidence plugin cannot be staged: ${error.message}`)
-      err("refusing to start a run whose evidence would be silently absent.")
-      err(
-        "run `bashwink doctor` to re-check the install, or set BASHWINK_EVIDENCE=off to run unverified.",
-      )
+      err(`required policy plugin cannot be staged: ${error.message}`)
+      err("OpenCode was not started. Run `bashwink doctor` to check the install.")
       return { exitCode: 3, handled: true }
     }
     throw error
   }
 
-  // The config lists the staged plugins in explicit order. Discovery ignores the array, but
-  // writing it keeps the file honest for anyone reading it.
-  writeConfig(
-    resolved.config,
-    staged.map((entry) => entry.id),
-  )
-  if (process.env["BASHWINK_DEBUG"] === "1")
-    process.stderr.write(
-      `[bashwink] staged ${staged.length} plugin(s): ${staged.map((entry) => entry.id).join(", ")}\n`,
-    )
-
-  const evidencePlugin = staged[0]
+  const content = JSON.parse(environment["OPENCODE_CONFIG_CONTENT"] ?? "{}") as Record<
+    string,
+    unknown
+  >
+  const configuredPlugins = Array.isArray(content["plugins"]) ? content["plugins"] : []
+  // The absolute registration is reapplied after project configuration on every location.
+  environment["OPENCODE_CONFIG_CONTENT"] = JSON.stringify({
+    ...content,
+    plugins: [...configuredPlugins, evidencePlugin.path],
+  })
   beginRun({
     resolved,
     runId,
-    ...(evidencePlugin === undefined
-      ? {}
-      : {
-          plugin: {
-            id: evidencePlugin.id,
-            entry: evidencePlugin.entry,
-            stagedPath: evidencePlugin.path,
-          },
-        }),
+    plugin: { id: evidencePlugin.id, entry: evidencePlugin.entry, stagedPath: evidencePlugin.path },
   })
-  if (!evidenceEnabled)
+
+  const controller = new AbortController()
+  const interrupt = () => controller.abort()
+  process.on("SIGINT", interrupt)
+  process.on("SIGTERM", interrupt)
+  const execution = await runWithBackend(
+    backend,
+    {
+      command: runtime.command,
+      args: runtimeArgs,
+      cwd: workspace,
+      readiness: {
+        runId,
+        workspace,
+        scopesDirectory: path.join(resolved.data, "scopes"),
+        pluginDirectory: evidencePlugin.path,
+        logFile: runtimeLogHint(resolved),
+      },
+      env: {
+        ...environment,
+        BASHWINK_RUN_ID: runId,
+        BASHWINK_EVIDENCE_EXPECTED: "1",
+      },
+    },
+    { signal: controller.signal, timeoutMs },
+  ).finally(() => {
+    process.off("SIGINT", interrupt)
+    process.off("SIGTERM", interrupt)
+  })
+  const { exitCode } = execution
+  if (execution.outcome !== "exited")
     err(
-      "[bashwink] evidence collection is OFF (BASHWINK_EVIDENCE=off); this run is not verifiable.",
+      `execution ${execution.outcome} (${execution.backend.mode}): ${execution.detail ?? "no detail"}`,
     )
 
-  const child = Bun.spawn({
-    cmd: [runtime.command, ...argv],
-    env: {
-      ...environmentFor(resolved),
-      BASHWINK_RUN_ID: runId,
-      BASHWINK_EVIDENCE_EXPECTED: evidenceEnabled ? "1" : "0",
-    },
-    // inherit, not pipe: the TUI needs a real tty and must not be buffered.
-    stdio: ["inherit", "inherit", "inherit"],
+  const evidenceFile = path.join(resolved.evidence, "evidence.jsonl")
+  const boot = checkBoot(evidenceFile, runId)
+  const record = finishRun({
+    resolved,
+    runId,
+    exitCode,
+    expected: true,
+    execution,
+    boot,
+    ...(execution.detail !== undefined
+      ? { detail: execution.detail }
+      : boot.ok
+        ? {}
+        : { detail: boot.reason }),
   })
-  const exitCode = await child.exited
-
-  if (evidenceEnabled) {
-    const evidenceFile = path.join(resolved.evidence, "evidence.jsonl")
-    const boot = checkBoot(evidenceFile, runId)
-    const record = finishRun({
-      resolved,
-      runId,
-      exitCode,
-      expected: true,
-      boot,
-      ...(boot.ok ? {} : { detail: boot.reason }),
-    })
-    if (!boot.ok) {
-      err("")
-      // Before blaming the evidence plugin, ask the runtime's own log why it never booted one.
-      // A launch that died on a held port produces an empty evidence log and would otherwise be
-      // reported as "the agent may have done real work" — which it plainly did not.
-      const infrastructure = findRuntimeFailure(runtimeLogHint(resolved))
-      if (infrastructure !== undefined) {
-        err(renderRuntimeFailure(infrastructure))
-        return { exitCode: exitCode === 0 ? 1 : exitCode, handled: false }
-      }
-      err(
-        renderMissingEvidence({
-          record,
-          boot,
-          evidenceFile,
-          logFile: runtimeLogHint(resolved),
-        }),
-      )
-      // 0 from the child now means "the agent ran", not "the work is evidenced". Exit 3 makes
-      // that distinction visible to a script or a CI step instead of a green 0 over an empty log.
-      return { exitCode: exitCode === 0 ? 3 : exitCode, handled: false }
+  if (!boot.ok && execution.outcome === "exited") {
+    err("")
+    // Before blaming the evidence plugin, ask the runtime's own log why it never booted one.
+    // A launch that died on a held port produces an empty evidence log and would otherwise be
+    // reported as "the agent may have done real work" — which it plainly did not.
+    const infrastructure = findRuntimeFailure(runtimeLogHint(resolved))
+    if (infrastructure !== undefined) {
+      err(renderRuntimeFailure(infrastructure))
+      return { exitCode: exitCode === 0 ? 1 : exitCode, handled: false }
     }
-  } else {
-    finishRun({
-      resolved,
-      runId,
-      exitCode,
-      expected: false,
-      detail: "evidence disabled via BASHWINK_EVIDENCE=off",
-    })
+    err(
+      renderMissingEvidence({
+        record,
+        boot,
+        evidenceFile,
+        logFile: runtimeLogHint(resolved),
+      }),
+    )
+    // 0 from the child now means "the agent ran", not "the work is evidenced". Exit 3 makes
+    // that distinction visible to a script or a CI step instead of a green 0 over an empty log.
+    return { exitCode: exitCode === 0 ? 3 : exitCode, handled: false }
   }
 
   return { exitCode, handled: false }

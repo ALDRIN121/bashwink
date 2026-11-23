@@ -75,11 +75,11 @@ sys.exit(0)
 PY
   sleep 0.2
 done
-cp fixtures/opencode.json "$PROJECT/opencode.json"
+sed "s/127.0.0.1:8117/127.0.0.1:$PORT/" fixtures/opencode.json > "$PROJECT/opencode.json"
 mkdir -p "$BASHWINK_HOME/data/evidence"
 printf 'inspect' > "$BASHWINK_HOME/data/active-task"
 export BASHWINK_EVIDENCE_DIR="$BASHWINK_HOME/data/evidence"
-cli run --standalone --model bashwink-mock/mock-tool-model "Run the check" 2>&1 | sed 's/^/  /' | head -8
+cli run --standalone --auto --model bashwink-mock/mock-tool-model "Run the check" 2>&1 | sed 's/^/  /' | head -8
 
 # ------------------------------------------------- 6. terminate mid-check
 banner "terminate mid-check — SIGKILL while a write attempt is open"

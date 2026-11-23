@@ -130,6 +130,12 @@ and protected-test enforcement still lack evidence.
 
 **Demo:** Ask agent to fix a bug → malicious test deletion attempt → denied → real tests executed → proof report with hashes; force cost cap to verify stop.
 
+**Execution foundation update.** The local readiness fixture refuses client launch for
+missing, import-failed and malformed policy initialization. Delayed initialization holds
+the client until registration. The owned server and admission endpoint bind the client to
+the attested workspace. Hosted Ubuntu and macOS checks are pending for this code revision.
+The Phase 2 release gate remains open. [Execution evidence](TEST_EVIDENCE.md).
+
 ## Phase 3 — Project brain & independent QA (v0.2 gate)
 
 - [ ] A stale memory is rejected/flagged after a branch/source change.

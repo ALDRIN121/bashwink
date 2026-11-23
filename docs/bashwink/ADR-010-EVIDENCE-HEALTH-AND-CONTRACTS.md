@@ -1,6 +1,6 @@
 # ADR-010 — Evidence health is proven, not assumed; the contract is a gate
 
-**Status:** Accepted
+**Status:** Accepted. Startup admission and the former optional mode were superseded by [ADR-012](ADR-012-PRIVATE-RUNTIME-READINESS.md).
 **Date:** 2026-11-23
 **Owner:** Aldrin Joseph
 **Depends on:** ADR-002, ADR-004, ADR-007

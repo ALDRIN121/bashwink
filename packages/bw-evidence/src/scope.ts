@@ -24,13 +24,16 @@
  *     being one.
  */
 
-import { existsSync, realpathSync } from "node:fs"
+import { lstatSync, realpathSync } from "node:fs"
 import path from "node:path"
+import { homedir } from "node:os"
 
 export type ScopeMode = "off" | "enforce"
 
 export interface ScopePolicy {
   readonly mode: ScopeMode
+  readonly workspace?: string
+  readonly forbiddenPaths?: readonly string[]
   /** Roots a **write** may touch. Each is resolved to a real path at load time. */
   readonly allowedPaths: readonly string[]
   /**
@@ -63,11 +66,13 @@ export interface ScopePolicy {
 }
 
 /** Tools that mutate one file. */
-const WRITE_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch"])
+const WRITE_TOOLS = new Set(["write", "edit", "multiedit"])
 /** Tools that only read one file. */
-const READ_TOOLS = new Set(["read"])
+const READ_TOOLS = new Set(["read", "glob", "grep"])
+const SEARCH_TOOLS = new Set(["glob", "grep"])
+const SESSION_TOOLS = new Set(["todowrite", "question"])
 /** Tools whose input is a patch document containing several targets. */
-const PATCH_TOOLS = new Set(["patch"])
+const PATCH_TOOLS = new Set(["patch", "apply_patch"])
 const SHELL_TOOLS = new Set(["shell", "bash"])
 
 export type ScopeVerdict =
@@ -77,7 +82,13 @@ export type ScopeVerdict =
       readonly reason: string
       readonly target?: string
       /** Which rule refused it, so the audit says more than "no". */
-      readonly rule?: "write-scope" | "read-scope" | "shell-scope" | "shell-disabled"
+      readonly rule?:
+        | "write-scope"
+        | "read-scope"
+        | "shell-scope"
+        | "shell-disabled"
+        | "invalid-input"
+        | "unsupported-tool"
     }
 
 export interface ScopeInput {
@@ -100,24 +111,20 @@ export function physicalPath(target: string): string {
   // Bound the walk: a filesystem cannot have more components than this, and a pathological
   // path must not spin.
   for (let depth = 0; depth < 4096; depth += 1) {
-    if (existsSync(probe)) {
-      let real: string
-      try {
-        real = realpathSync(probe)
-      } catch {
-        // An unreadable or dangling component: treat the lexical path as the answer rather than
-        // pretending it resolved. The containment test below then decides on the literal path,
-        // which errs toward refusing.
-        return path.resolve(target)
-      }
-      return tail.length === 0 ? real : path.join(real, ...tail.reverse())
+    try {
+      lstatSync(probe)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+      const parent = path.dirname(probe)
+      if (parent === probe) throw error
+      tail.push(path.basename(probe))
+      probe = parent
+      continue
     }
-    const parent = path.dirname(probe)
-    if (parent === probe) return path.resolve(target)
-    tail.push(path.basename(probe))
-    probe = parent
+    const real = realpathSync(probe)
+    return tail.length === 0 ? real : path.join(real, ...tail.reverse())
   }
-  return path.resolve(target)
+  throw new Error("path resolution exceeded its depth limit")
 }
 
 /** True when `target` is `root` or inside it. Separator-aware, so `/a/bc` is not inside `/a/b`. */
@@ -125,7 +132,8 @@ export function contains(root: string, target: string): boolean {
   const normalizedRoot = path.resolve(root)
   const normalizedTarget = path.resolve(target)
   if (normalizedTarget === normalizedRoot) return true
-  return normalizedTarget.startsWith(normalizedRoot + path.sep)
+  const relative = path.relative(normalizedRoot, normalizedTarget)
+  return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
 }
 
 /**
@@ -161,6 +169,15 @@ export function parsePolicy(document: unknown): ScopePolicy | undefined {
   const record = document as Record<string, unknown>
   const mode = record["mode"]
   if (mode !== "off" && mode !== "enforce") return undefined
+  const forbidden = record["forbiddenPaths"]
+  if (
+    forbidden !== undefined &&
+    (!Array.isArray(forbidden) || forbidden.some((entry) => typeof entry !== "string"))
+  )
+    return undefined
+  const workspace = record["workspace"]
+  if (workspace !== undefined && (typeof workspace !== "string" || !path.isAbsolute(workspace)))
+    return undefined
   const raw = record["allowedPaths"]
   if (!Array.isArray(raw) || raw.some((entry) => typeof entry !== "string")) return undefined
   const allowShell = record["allowShell"]
@@ -176,19 +193,40 @@ export function parsePolicy(document: unknown): ScopePolicy | undefined {
   return {
     mode,
     allowedPaths: raw as string[],
+    ...(workspace === undefined ? {} : { workspace }),
+    ...(forbidden === undefined ? {} : { forbiddenPaths: forbidden as string[] }),
     readPaths: (rawRead as string[] | undefined) ?? (raw as string[]),
     allowShell: allowShell ?? true,
     ...(origin === undefined ? {} : { origin }),
   }
 }
 
+/** Launcher documents carry every authority explicitly. Legacy plugin documents retain defaults. */
+export function parseLaunchPolicy(document: unknown): ScopePolicy | undefined {
+  const policy = parsePolicy(document)
+  if (
+    policy?.mode !== "enforce" ||
+    policy.workspace === undefined ||
+    policy.forbiddenPaths === undefined
+  )
+    return undefined
+  const fields = document as Record<string, unknown>
+  if (typeof fields["allowShell"] !== "boolean" || !Array.isArray(fields["readPaths"]))
+    return undefined
+  return [...policy.allowedPaths, ...policy.readPaths, ...policy.forbiddenPaths].every(
+    path.isAbsolute,
+  )
+    ? policy
+    : undefined
+}
+
 /** Extract the file targets a patch document would touch. */
 export function patchTargets(patchText: string): string[] {
   const targets: string[] = []
   // The patch grammar the runtime uses marks each operation with a `*** <Op> File: <path>` line.
-  const pattern = /^\*\*\* (?:Update|Add|Delete) File: (.+)$/gm
-  for (const match of patchText.matchAll(pattern)) {
-    const target = match[1]?.trim()
+  const pattern = /^\*\*\* (?:(?:Update|Add|Delete) File|Move to): (.+)$/
+  for (const line of patchText.split("\n")) {
+    const target = line.trim().match(pattern)?.[1]?.trim()
     if (target !== undefined && target !== "") targets.push(target)
   }
   return targets
@@ -223,24 +261,46 @@ function targetOfFileTool(input: unknown): string | undefined {
   return undefined
 }
 
-/**
- * Decide whether a tool call may run.
- *
- * Order matters: file tools are checked strictly, patch documents per target, and shell last.
- * An unknown tool is allowed — this policy is a fence around paths, not an allowlist of tools,
- * and silently blocking tools it does not recognise would break the agent in ways that look
- * like model errors.
- */
+/** Match the pinned OpenCode FileAccess expansion before physical resolution. */
+function toolPath(cwd: string, input: string): string {
+  if (input === "~") return physicalPath(homedir())
+  if (input.startsWith("~/")) return physicalPath(path.resolve(homedir(), `./${input.slice(2)}`))
+  return physicalPath(path.resolve(cwd, input))
+}
+
+function invalidInput(reason: string): ScopeVerdict {
+  return { allow: false, rule: "invalid-input", reason }
+}
+
+function canWrite(policy: ScopePolicy, target: string): boolean {
+  return (
+    policy.allowedPaths.some((root) => contains(root, target)) &&
+    (policy.workspace === undefined || contains(policy.workspace, target)) &&
+    !policy.forbiddenPaths?.some((root) => contains(root, target))
+  )
+}
+
+/** Refuse malformed calls and paths that cannot be resolved safely. */
 export function evaluate(policy: ScopePolicy, input: ScopeInput): ScopeVerdict {
   if (policy.mode === "off") return { allow: true }
+  try {
+    const cwd = physicalPath(input.cwd)
+    if (policy.workspace !== undefined && cwd !== policy.workspace)
+      return invalidInput("the runtime workspace does not match the approved launch workspace")
+    return evaluateCall(policy, { ...input, cwd })
+  } catch {
+    return invalidInput("the requested path could not be resolved safely")
+  }
+}
 
+function evaluateCall(policy: ScopePolicy, input: ScopeInput): ScopeVerdict {
   const cwd = input.cwd
 
   if (WRITE_TOOLS.has(input.tool)) {
     const raw = targetOfFileTool(input.input)
-    if (raw === undefined) return { allow: true }
-    const target = physicalPath(path.resolve(cwd, raw))
-    if (policy.allowedPaths.some((root) => contains(root, target))) return { allow: true }
+    if (raw === undefined) return invalidInput("a file path is required")
+    const target = toolPath(cwd, raw)
+    if (canWrite(policy, target)) return { allow: true }
     return {
       allow: false,
       rule: "write-scope",
@@ -258,9 +318,12 @@ export function evaluate(policy: ScopePolicy, input: ScopeInput): ScopeVerdict {
   }
 
   if (READ_TOOLS.has(input.tool)) {
-    const raw = targetOfFileTool(input.input)
-    if (raw === undefined) return { allow: true }
-    const target = physicalPath(path.resolve(cwd, raw))
+    const record = input.input as Record<string, unknown> | undefined
+    const raw =
+      targetOfFileTool(input.input) ??
+      (SEARCH_TOOLS.has(input.tool) && record?.["path"] === undefined ? "." : undefined)
+    if (raw === undefined) return invalidInput("a readable path is required")
+    const target = toolPath(cwd, raw)
     if (policy.readPaths.some((root) => contains(root, target))) return { allow: true }
     return {
       allow: false,
@@ -280,9 +343,11 @@ export function evaluate(policy: ScopePolicy, input: ScopeInput): ScopeVerdict {
   if (PATCH_TOOLS.has(input.tool)) {
     const record = input.input as Record<string, unknown> | undefined
     const text = typeof record?.["patchText"] === "string" ? (record["patchText"] as string) : ""
-    for (const raw of patchTargets(text)) {
-      const target = physicalPath(path.resolve(cwd, raw))
-      if (!policy.allowedPaths.some((root) => contains(root, target)))
+    const targets = patchTargets(text)
+    if (targets.length === 0) return invalidInput("the patch has no recognizable file targets")
+    for (const raw of targets) {
+      const target = toolPath(cwd, raw)
+      if (!canWrite(policy, target))
         return {
           allow: false,
           rule: "write-scope",
@@ -304,15 +369,17 @@ export function evaluate(policy: ScopePolicy, input: ScopeInput): ScopeVerdict {
           policy.origin === "trust"
             ? `this workspace is not trusted, so shell commands are refused. Run ` +
               `\`bashwink trust ${cwd}\` to allow them.`
-            : "shell is disabled for this task because a command can write anywhere; " +
-              "this contract allows file edits only.",
+            : "shell is disabled by this task’s execution policy; permitted file tools remain available.",
       }
     const record = input.input as Record<string, unknown> | undefined
     const command = typeof record?.["command"] === "string" ? (record["command"] as string) : ""
-    const workdir = typeof record?.["workdir"] === "string" ? (record["workdir"] as string) : cwd
+    if (command.trim() === "") return invalidInput("a shell command is required")
+    const workdir = record?.["workdir"] ?? cwd
+    if (typeof workdir !== "string" || workdir === "")
+      return invalidInput("invalid shell working directory")
 
     // A `workdir` outside the fence is a direct escape.
-    const resolvedWorkdir = physicalPath(path.resolve(cwd, workdir))
+    const resolvedWorkdir = toolPath(cwd, workdir)
     if (!policy.readPaths.some((root) => contains(root, resolvedWorkdir)))
       return {
         allow: false,
@@ -326,7 +393,7 @@ export function evaluate(policy: ScopePolicy, input: ScopeInput): ScopeVerdict {
     // be decided from the string, which is why an allowed shell call is marked unconstrained
     // rather than being described as safe.
     for (const token of shellPathTokens(command)) {
-      const target = physicalPath(path.resolve(resolvedWorkdir, token))
+      const target = toolPath(resolvedWorkdir, token)
       if (!policy.readPaths.some((root) => contains(root, target)))
         return {
           allow: false,
@@ -346,5 +413,10 @@ export function evaluate(policy: ScopePolicy, input: ScopeInput): ScopeVerdict {
     }
   }
 
-  return { allow: true }
+  if (policy.readPaths.length > 0 && SESSION_TOOLS.has(input.tool)) return { allow: true }
+  return {
+    allow: false,
+    rule: "unsupported-tool",
+    reason: `tool '${input.tool}' has no execution policy`,
+  }
 }

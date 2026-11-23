@@ -12,22 +12,21 @@ been misled twice — once by the tool and once by its documents.
 
 ## 1. Tool policy and host access
 
-BW-059 checks recognized reads, writes, patches and shell requests when the evidence plugin
-loads an active scope policy. It resolves known path targets physically. Untrusted workspaces
-deny recognized writes and shell calls under this policy.
+The current launcher stages a per-run policy and starts a private standalone OpenCode server.
+The loaded plugin rejects unsupported tool calls and checks recognized paths. The general shell
+is disabled for restricted contracts and untrusted workspaces. Allowed shells in unrestricted
+local runs inherit the user's environment, filesystem and network access.
 
-- Permitted shells and their descendants run with the invoking user's filesystem, environment
-  and network access. Working-directory and argument checks only see the parsed request.
-  The `unconstrained` event describes that residual access.
-- Unknown tools or unrecognized argument shapes can pass the hook. `BASHWINK_EVIDENCE=off`
-  removes the plugin and its ScopeFence hook. A missing policy also leaves the hook without
-  scope to enforce, and a policy-write failure produces a warning.
-- Forbidding the recognized shell tool in an approved contract reduces available execution.
-  It does not establish an OS boundary. BW-018 remains open for broader command-path controls.
+The managed client is admitted only after the owned server acknowledges the policy hooks.
+An activation failure prevents prompt admission, and the pre-existing OpenCode background
+service is outside the launch path. The admission endpoint binds actions to the attested
+workspace and blocks alternate runtime routes. The former `BASHWINK_EVIDENCE=off` option
+cannot launch OpenCode. A shared host database is expected to remain free of saved automations
+during an admitted run. [BW-018 implementation](BW-018_IMPLEMENTATION_REPORT.md).
 
-Supervised use requires a trusted workspace, evidence collection on, and independent review
-of the diff and checks. External alpha is blocked on OS containment. The [BW-031 plan](BW-031_IMPLEMENTATION_PLAN.md)
-recommends a Docker-first adapter and a controlled host provider relay. It remains a proposal.
+The local backend owns the direct child and applies optional deadlines. Detached descendants
+remain outside the guaranteed cleanup scope. External alpha is blocked on OS containment.
+[BW-030 design](BW-030_EXECUTION_BACKEND_DESIGN.md) · [BW-031 plan](BW-031_IMPLEMENTATION_PLAN.md).
 
 ---
 
@@ -137,10 +136,9 @@ under test — but a user's own runs are not protected this way.
 - **One writer per evidence log.** There is no locking; two runs against the same
   `BASHWINK_HOME` can interleave. Sessions are per-directory in the runtime, and Bashwink does
   not add a second layer.
-- **A killed session leaves the runtime's managed service behind**, holding its port; the next
-  launch then fails during start-up. Bashwink now reads the runtime's log and reports this with
-  the PID and how to clear it, rather than blaming the evidence plugin — but it cannot prevent
-  it.
+- **Private runtime lifecycle.** The current launcher uses the standalone server lease.
+  Older managed services can persist, and arbitrary detached descendants are outside the
+  verified local cleanup scope.
 - **`--session` resumes across a model switch** and that is verified; concurrent sessions sharing
   one model map is handled per session, not per process.
 
@@ -182,5 +180,5 @@ for session management will hit this.
   started from a subdirectory therefore fences that subdirectory's interpretation of the same
   paths. Start runs from the repository root.
 - **The policy is written once per run.** A mid-run edit to `data/scope.json` does not change
-  what the running plugin enforces — it read the policy at setup — but it will change the *next*
-  run. Treat that file as part of the run's inputs, not as state.
+  what the running plugin enforces — it read the policy at setup — but it will affect another run’s distinct scope file. Scope snapshots live in the data root under
+  `scopes/`.

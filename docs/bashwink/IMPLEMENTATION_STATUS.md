@@ -4,8 +4,10 @@
 Phase 1 **complete and gate-passed** — 10/10 tasks, 11/11 CI jobs green on `ubuntu-latest`
 and `macos-15` at `ad9d44e` ([run 45129207277](https://github.com/ALDRIN121/bashwink/actions/runs/45129207277)),
 and **revalidated** after the silent-plugin-load investigation (ADR-010).
-Phase 2 **in progress** — BW-055 done; 252 tests; local evidence on both the CLI and the real
-OpenCode v2.3.2 binary. Phase 2's gate has not been evaluated.
+Phase 2 **in progress** — BW-055 done; 252 tests; **13/13 CI jobs green on `ubuntu-latest` and
+`macos-15` at `0fd50b0`** ([run 45148495146](https://github.com/ALDRIN121/bashwink/actions/runs/45148495146)),
+including the new `runtime-health` job on the real OpenCode binary. Phase 2's gate has not been
+evaluated.
 **Canonical per-task register:** `BASHWINK_TASKS_90.csv`.
 **The block below is generated** by `scripts/generate_status_summary.py` — do not hand-edit
 it. `--check` fails if it drifts from the register.

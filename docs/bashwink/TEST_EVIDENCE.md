@@ -4,7 +4,8 @@
 OpenCode `v2.3.2` (`c0ad18b402eb2827fc1ee71c171b1177b3fc02d1`).
 **Environment:** macOS 27.0.1, arm64 (Darwin 27.0.0), **Bun 1.4.4** (the exact pinned
 version — the suite was re-run under it, closing the earlier 1.4.5 drift), Git 2.54.0.
-Phase 0 CI evidence is hosted; **Phase 2's evidence below is local**, and says so per row.
+Phase 0 and Phase 1 CI evidence is hosted; **Phase 2's evidence below is hosted** at
+`0fd50b0` — see "Phase 2 hosted CI" in that section.
 **Evidence is authoritative only if reproducible at this revision.**
 
 ## Phase 2 evidence (2026-11-23) — runtime reliability and BW-055
@@ -28,10 +29,13 @@ session that happened to call no tools.
 All commands run from the repository root with `BASHWINK_OPENCODE_BIN` pointing at the cached
 `@opencode/cli@2.3.2` binary for the runtime-dependent fixtures.
 
+Local run, then the same checks hosted at `0fd50b0`.
+
 | Command | Exit | Actual output |
 | --- | ---: | --- |
 | `bun --version` | 0 | `1.4.4` |
-| `bun test packages` | 0 | `252 pass / 0 fail / 731 expect() calls`, 13 files, 7.94 s |
+| `bun test packages` | 0 | `252 pass / 0 fail / 731 expect() calls`, 13 files |
+| `bun test packages/bw-cli` (as CI runs it) | 0 | `202 pass / 0 fail`, 12 files |
 | `bun run lint` (`oxlint --deny-warnings`) | 0 | no findings |
 | `bun run format` (`bun fmt --check`) | 0 | `All 38 files are formatted.` |
 | `bun run typecheck` | 0 | both packages clean |
@@ -69,6 +73,26 @@ All commands run from the repository root with `BASHWINK_OPENCODE_BIN` pointing 
 - Re-adding a dropped id is refused with exit **1** (not a crash), naming why.
 - A criterion citing an undeclared check is refused before storage.
 - Revision history reads back across a process boundary: 2 revisions, current = 2.
+
+### Phase 2 hosted CI — green on both platforms
+
+[Run 45148495146](https://github.com/ALDRIN121/bashwink/actions/runs/45148495146) at
+`0fd50b0`: **13/13 jobs, `ubuntu-latest` and `macos-15`, zero failure annotations.** The first
+attempt at this increment,
+[run 45148067068](https://github.com/ALDRIN121/bashwink/actions/runs/45148067068), failed in
+the two `runtime health` jobs **before any fixture ran**: a fresh `bun add @opencode/cli@2.3.2`
+under Bun 1.4 leaves the platform binary as a stub because postinstall scripts are blocked by
+default. Fixed in `0fd50b0` by declaring `@opencode/cli` as a trusted dependency in the
+throwaway probe manifest. It is a genuinely CI-only defect — the local install had already run
+its postinstall — and it is recorded here rather than quietly amended.
+
+| Job | ubuntu-latest | macos-15 |
+| --- | --- | --- |
+| lint / docs integrity / scope / license scope / secret scan | success | — (single-platform jobs) |
+| evidence | success | success |
+| cli | success — `Ran 202 tests across 12 files` | success — `Ran 202 tests across 12 files` |
+| runtime health | success — runtime-health 17/17, tool-lifecycle 13/13, `opencode v2.3.2` | success — 17/17 and 13/13 |
+| fixtures | success | success |
 
 ### Unit and integration tests added (64)
 

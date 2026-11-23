@@ -50,6 +50,12 @@ COMMANDS
   plan approve --by <name>  approve the current plan (required before edits)
   plan task <id> <status>   transition a task through the state machine
   evidence export [--json]  export what actually ran, including checks that did not run
+  evidence status [--json]  per-run record: did the evidence plugin initialise?
+  contract new              create the task contract from the current plan
+  contract show [--json]    what was agreed before work started
+  contract approve --by X   approve the contract (required before work starts)
+  contract revise --file F  amend the contract as a new, numbered revision
+  contract status [--json]  acceptance criteria and the evidence behind each
   resume [--status]         reconcile a killed run and resume its tasks
 
 VERSION AND PATHS
@@ -64,6 +70,8 @@ ENVIRONMENT
   BASHWINK_HOME             relocate all config/data/cache/state under one directory
   BASHWINK_OPENCODE_BIN     use this OpenCode binary instead of resolving one
   BASHWINK_EVIDENCE_DIR     where the tool-event log is written
+  BASHWINK_EVIDENCE=off     run without the evidence plugin (explicit, unverified mode)
+  BASHWINK_DEBUG=1          print what the wrapper staged before running
 
   Bashwink sets OPENCODE_CONFIG_DIR and XDG_* for the child runtime, so a real OpenCode
   install on the same machine is never modified.
@@ -72,6 +80,7 @@ EXIT CODES
   0   success
   1   a check failed (doctor) or a command was refused
   2   usage error
+  3   the evidence plugin did not initialise, so the run is unverified
   127 the pinned OpenCode runtime could not be found
 `
 

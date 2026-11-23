@@ -20,7 +20,9 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs"
@@ -28,6 +30,21 @@ import path from "node:path"
 
 /** Plugin id that must be registered before any policy plugin (ADR-002). */
 export const EVIDENCE_PLUGIN_ID = "bashwink-evidence"
+
+/**
+ * Raised when a plugin directory exists but the runtime would not find an entry for it.
+ *
+ * This is deliberately an error rather than a warning: a staged directory the runtime cannot
+ * resolve is dropped by OpenCode's discovery with no log line at all, so staging is the last
+ * point where the failure can still be made loud.
+ */
+export class PluginEntryError extends Error {
+  readonly code = "plugin_entry_not_found"
+  constructor(message: string) {
+    super(message)
+    this.name = "PluginEntryError"
+  }
+}
 
 export interface PluginSpec {
   readonly id: string
@@ -95,6 +112,152 @@ export interface StagedPlugin {
 }
 
 /**
+ * Resolve the entry file the way OpenCode's `Host.resolve` does.
+ *
+ * The runtime's rules, read from the pinned source (`packages/plugin/src/host.ts`):
+ *   1. If the directory's `package.json` has a string `name` **and** an `exports` field, the
+ *      plugin is resolved through its exports map — subpath `server` first, then `"."`.
+ *   2. Otherwise it falls back to conventional root file names: `server.*`, then `index.*`.
+ *   3. The resolved file must live inside the plugin directory (`FSUtil.contains`).
+ *
+ * Getting this wrong is not a cosmetic bug. In the probe that motivated this function, a
+ * directory whose entry lived at `src/index.ts` without an `exports` map was accepted by
+ * `stagePlugins` and then **silently dropped by the runtime**: no warning, no error, an exit
+ * code of 0, and an empty evidence log. Staging now refuses that directory instead.
+ */
+export function resolvePluginEntry(directory: string): string {
+  let stats
+  try {
+    stats = statSync(directory)
+  } catch {
+    throw new PluginEntryError(`plugin directory '${directory}' does not exist`)
+  }
+  if (!stats.isDirectory())
+    throw new PluginEntryError(`plugin path '${directory}' is not a directory`)
+
+  const manifest = readManifest(directory)
+  // The runtime prefers a `server` subpath and falls back to the package root.
+  const target =
+    manifest?.exports === undefined
+      ? undefined
+      : (exportTarget(manifest.exports, "./server") ?? exportTarget(manifest.exports, "."))
+  if (manifest?.name !== undefined && manifest.exports !== undefined && target !== undefined) {
+    const candidate = path.resolve(directory, target)
+    return assertInside(directory, candidate, `exports${target.startsWith(".") ? " target" : ""}`)
+  }
+
+  for (const name of CONVENTIONAL_ENTRIES) {
+    const candidate = path.join(directory, name)
+    if (isFile(candidate)) return candidate
+  }
+
+  throw new PluginEntryError(
+    `plugin '${directory}' has no resolvable server entry. ` +
+      `OpenCode drops such a directory without logging anything. ` +
+      `Add an exports map ('.': './src/index.ts') or a conventional ${CONVENTIONAL_ENTRIES.join("/")} file at the package root.`,
+  )
+}
+
+/** Root-level file names OpenCode falls back to when there is no usable exports map. */
+const CONVENTIONAL_ENTRIES = [
+  "server.ts",
+  "server.tsx",
+  "server.js",
+  "server.mjs",
+  "server.cjs",
+  "index.ts",
+  "index.tsx",
+  "index.js",
+  "index.mjs",
+  "index.cjs",
+] as const
+
+interface Manifest {
+  readonly name?: string
+  readonly exports?: unknown
+}
+
+/** Read only the two fields resolution cares about. A malformed manifest counts as absent. */
+function readManifest(directory: string): Manifest | undefined {
+  const file = path.join(directory, "package.json")
+  if (!isFile(file)) return undefined
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined
+    const record = parsed as Record<string, unknown>
+    return {
+      ...(typeof record["name"] === "string" ? { name: record["name"] } : {}),
+      ...(record["exports"] === undefined ? {} : { exports: record["exports"] }),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The `"."` target of an exports map, as a relative path.
+ *
+ * Handles the shapes that occur in practice: a bare string, a conditions object
+ * (`import`/`default`/`require`), an array of fallbacks, and the `{ ".": ... }` subpath form.
+ */
+function exportTarget(exports: unknown, subpath: "./server" | "."): string | undefined {
+  const fromConditions = (value: unknown): string | undefined => {
+    if (typeof value === "string") return value
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = fromConditions(item)
+        if (found !== undefined) return found
+      }
+      return undefined
+    }
+    if (typeof value === "object" && value !== null) {
+      const record = value as Record<string, unknown>
+      for (const key of ["import", "default", "require", "node", "browser", "types"])
+        if (record[key] !== undefined) {
+          const found = fromConditions(record[key])
+          if (found !== undefined) return found
+        }
+    }
+    return undefined
+  }
+
+  // A bare string or array is shorthand for the root export only.
+  if (typeof exports === "string" || Array.isArray(exports))
+    return subpath === "." ? fromConditions(exports) : undefined
+  if (typeof exports === "object" && exports !== null) {
+    const record = exports as Record<string, unknown>
+    if (record[subpath] !== undefined) return fromConditions(record[subpath])
+    // An exports map made only of subpaths does not export anything else: no guessing.
+    if (Object.keys(record).some((key) => key.startsWith("."))) return undefined
+    // A bare conditions object (`{ import: … }`) is shorthand for the root export.
+    return subpath === "." ? fromConditions(exports) : undefined
+  }
+  return undefined
+}
+
+/** Refuse an entry that escapes its package, which the runtime also refuses. */
+function assertInside(directory: string, candidate: string, label: string): string {
+  if (!isFile(candidate))
+    throw new PluginEntryError(`plugin entry '${candidate}' (${label}) does not exist`)
+  const root = realpathSync(directory)
+  const real = realpathSync(candidate)
+  const relative = path.relative(root, real)
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative))
+    throw new PluginEntryError(
+      `plugin entry '${candidate}' resolves outside its package directory '${directory}'; the runtime refuses that`,
+    )
+  return candidate
+}
+
+function isFile(file: string): boolean {
+  try {
+    return statSync(file).isFile()
+  } catch {
+    return false
+  }
+}
+
+/**
  * Write the plugin directory contents for a run.
  *
  * Each plugin is a **symlink to its real package directory**.
@@ -119,9 +282,9 @@ export function stagePlugins(root: string, specs: readonly PluginSpec[]): Staged
   const staged: StagedPlugin[] = []
   for (const spec of planPlugins(specs)) {
     const target = path.join(pluginRoot, spec.id)
-    const entry = path.join(spec.directory, "src", "index.ts")
-    if (!existsSync(entry))
-      throw new Error(`plugin '${spec.id}' has no entry at ${entry}; cannot stage it`)
+    // Resolve exactly as the runtime will. A directory that resolves to nothing is dropped
+    // by OpenCode's discovery with no log line, so it must fail here instead.
+    const entry = resolvePluginEntry(spec.directory)
     symlinkSync(spec.directory, target, "dir")
     staged.push({ id: spec.id, path: target, entry })
   }

@@ -2,11 +2,12 @@
 
 **Phase 0: 4 of 4 conditions met. Gate PASSED.**
 **Phase 1: 10/10 tasks Done, 4/4 release criteria verified; 11/11 CI jobs green on both
-supported platforms. Gate PASSED.**
-Phases 2–7: unchecked, not started.
+supported platforms. Gate PASSED — revalidated 2026-11-23 after the silent-plugin-load
+investigation (ADR-010).**
+**Phase 2: 1/15 tasks Done (BW-055). Gate NOT evaluated. Phases 3–7: not started.**
 
 Last evaluated 2026-11-23 after real GitHub Actions runs on both supported platforms
-(Phase 0 and Phase 1).
+(Phase 0 and Phase 1), and a local real-runtime pass for the Phase 1 revalidation.
 
 ## Phase 1 — CLI & durable execution substrate (Internal CLI prototype gate)
 

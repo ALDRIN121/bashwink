@@ -181,6 +181,10 @@ export function resume(options: ResumeOptions): ResumeResult {
   const reopened: { id: string; to: TaskStatus }[] = []
   const mustRecheck: string[] = []
 
+  // Pre-flight every task before changing anything: if a contract forbids resuming one of
+  // them, resume must refuse wholly rather than leave a half-reopened plan behind.
+  for (const task of report.tasks) store.assertExecutionAllowed(task.id)
+
   for (const task of report.tasks) {
     if (task.from === "in_progress") {
       store.transition(task.id, "interrupted", "process exited while the task was in progress")

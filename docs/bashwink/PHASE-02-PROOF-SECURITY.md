@@ -2,7 +2,7 @@
 
 **Target:** v0.1 alpha gate  
 **Tasks:** 15  
-**Status:** All proposed / not started
+**Status:** In progress — **1 of 15 implemented (BW-055)**; gate NOT evaluated. Phase 2 began only after the Phase 1 revalidation in ADR-010.
 
 ## Objective
 
@@ -14,7 +14,7 @@ Implement TaskContract/IntentLock, immutable baseline, TestGuard, ScopeFence, Tr
 
 ## Concrete deliverables
 
-- [ ] Proposed `bashwink contract show|edit|approve` UX
+- [~] `bashwink contract new|show|approve|revise|status` shipped with BW-055; interactive `edit`, assumption ledger and the contradictory-goal fixture remain BW-056
 
 - [ ] Baseline snapshots and protected test inventory
 
@@ -51,7 +51,7 @@ Implement TaskContract/IntentLock, immutable baseline, TestGuard, ScopeFence, Tr
 
 - [ ] **BW-018 — Protect permissions and command execution paths** (P0, L)
 
-- [ ] **BW-055 — TaskContract schema, migrations and criterion lifecycle** (P0, M)
+- [x] **BW-055 — TaskContract schema, migrations and criterion lifecycle** (P0, M) — Done, local evidence; CI pending the commit
 
 - [ ] **BW-056 — IntentLock command and confirmation UX** (P0, M)
 
@@ -137,7 +137,7 @@ Default prompts for risky operations; explicit deny persists; test suite catches
 
 **Priority / effort:** P0 / M  
 **Dependencies:** BW-012, BW-013  
-**Area/owner:** TBD (assign at planning)  
+**Area/owner:** Aldrin Joseph  
 **Source:** v2
 
 
@@ -154,9 +154,10 @@ Schema round-trip and invalid transitions tested; criterion statuses cannot disa
 **Attach proof:** PR with automated fixture/log, reproducible command, expected/actual output and failure-path test.
 
 
-- [ ] Implement BW-055
-- [ ] Run success and negative-path checks
-- [ ] Attach verifiable evidence and update issue status
+- [x] Implement BW-055 — schema v2 + `contract` CLI data plane (ADR-010)
+- [x] Run success and negative-path checks — 37 unit/integration tests, `fixtures/contract` 14/14
+- [x] Attach verifiable evidence and update issue status — `TEST_EVIDENCE.md` § Phase 2, CSV status Done
+- [ ] CI verification — pending the commit/push for this increment
 
 
 ### 04. BW-056 — IntentLock command and confirmation UX

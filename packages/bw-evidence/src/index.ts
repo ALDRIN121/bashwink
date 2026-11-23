@@ -126,6 +126,20 @@ export function create(options: EvidencePluginOptions = {}) {
           log(`after hook failed: ${error instanceof Error ? error.message : String(error)}`)
         }
       })
+
+      // Only now is the plugin actually usable. The wrapper looks for this entry by run id
+      // and fails the run loudly when it is absent, so a load failure cannot masquerade as a
+      // session that simply called no tools.
+      const boot = recorder.recordBoot({
+        plugin: "bashwink-evidence",
+        pid: process.pid,
+        cwd: process.cwd(),
+        ...(process.env["BASHWINK_RUN_ID"] === undefined
+          ? {}
+          : { runID: process.env["BASHWINK_RUN_ID"] }),
+        ...(ctx.location?.directory === undefined ? {} : { location: ctx.location.directory }),
+      })
+      log(`boot #${boot.seq}; hooks registered`)
     },
   })
 }

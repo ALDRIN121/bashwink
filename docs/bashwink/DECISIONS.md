@@ -19,8 +19,10 @@ defect the review itself flagged.
 | 2026-11-22 | ADR-006 | Deterministic Git fixtures + local mock provider, no real model calls in the gate | 5 fixtures reset deterministically; live tool call and `exit=7` captured | Accepted | Aldrin Joseph |
 | 2026-11-23 | ADR-007 | Evidence recorder bounds serialised bytes, sanitises at one write boundary, reports degraded state | 15 new regression tests reproducing review findings F-02/F-03/F-08 | Accepted | Aldrin Joseph |
 | 2026-11-23 | ADR-008 | Licensing governed by per-package recorded decisions, not a blanket GPL scan | `DEPENDENCY_LICENSES.json` + `check_license_scope.py`; 48/48 decided, 1 OPEN blocking | Accepted | Aldrin Joseph |
+| 2026-11-23 | ADR-009 | Two distribution models (PM-0 plugin-only, PM-1 no-FFmpeg binary); stock LGPL binary is not a release artifact | No-FFmpeg OpenTUI build verified (796 FFmpeg symbols → 0 genuine), ABI + TUI render, `check_license_scope.py --fail-on-open` exit 0 | Accepted | Aldrin Joseph |
+| 2026-11-23 | ADR-010 | Evidence health is proven per run (boot entry + run record + exit 3); staging mirrors runtime resolution; TaskContract is an execution gate with non-deletable criteria | `fixtures/runtime-health` 17/17 on the real binary; `fixtures/contract` 14/14; 252 unit/integration tests | Accepted | Aldrin Joseph |
 
-Full text: `ADR-001` … `ADR-008` in this directory.
+Full text: `ADR-001` … `ADR-010` in this directory.
 
 ## Review decisions on the independent review's findings
 

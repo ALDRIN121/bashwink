@@ -1,8 +1,11 @@
 # Bashwink — Implementation Status
 
 **Snapshot:** 2026-11-23, Phase 0 **complete and gate-passed** with real CI evidence;
-Phase 1 **complete and gate-passed** — 10/10 tasks, 188 tests, 11/11 CI jobs green on
-`ubuntu-latest` and `macos-15` at `ad9d44e` ([run 45129207277](https://github.com/ALDRIN121/bashwink/actions/runs/45129207277)).
+Phase 1 **complete and gate-passed** — 10/10 tasks, 11/11 CI jobs green on `ubuntu-latest`
+and `macos-15` at `ad9d44e` ([run 45129207277](https://github.com/ALDRIN121/bashwink/actions/runs/45129207277)),
+and **revalidated** after the silent-plugin-load investigation (ADR-010).
+Phase 2 **in progress** — BW-055 done; 252 tests; local evidence on both the CLI and the real
+OpenCode v2.3.2 binary. Phase 2's gate has not been evaluated.
 **Canonical per-task register:** `BASHWINK_TASKS_90.csv`.
 **The block below is generated** by `scripts/generate_status_summary.py` — do not hand-edit
 it. `--check` fails if it drifts from the register.
@@ -13,13 +16,13 @@ it. `--check` fails if it drifts from the register.
 | --- | ---: | ---: | ---: | ---: | ---: |
 | P0 | 9 | 9 | 0 | 0 | 0 |
 | P1 | 10 | 10 | 0 | 0 | 0 |
-| P2 | 15 | 0 | 0 | 0 | 15 |
+| P2 | 15 | 1 | 0 | 0 | 14 |
 | P3 | 19 | 0 | 0 | 0 | 19 |
 | P4 | 13 | 0 | 0 | 0 | 13 |
 | P5 | 8 | 0 | 0 | 0 | 8 |
 | P6 | 9 | 0 | 0 | 0 | 9 |
 | P7 | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **90** | **19** | **0** | **0** | **71** |
+| **Total** | **90** | **20** | **0** | **0** | **70** |
 
 <!-- END GENERATED:status -->
 
@@ -73,6 +76,44 @@ it. `--check` fails if it drifts from the register.
       in `in_progress` rather than `verified`, nothing was verified by the interruption, and the
       hash chain still verifies. **DEMONSTRATION PASSED (8 stages).**
 
+## Phase 1 revalidation — the silent plugin load (2026-11-23)
+
+Phase 1's own risk list said failing to stage the evidence plugin was silent. It was worse
+than that: **staging successfully and failing to load was also silent.** Reproduced against
+the pinned OpenCode v2.3.2 binary:
+
+| Failure | Runtime exit | Evidence | Trace |
+| --- | ---: | --- | --- |
+| entry throws at import | 0 | empty | one `WARN failed to load plugin` in `opencode.log` |
+| no resolvable server entry | 0 | empty | **nothing** |
+| wrong export shape | 0 | empty | one `WARN failed to load plugin` |
+
+The wrapper previously equated the child's 0 with success, and the only fixture that could
+catch the regression **skipped in CI** for want of the runtime.
+
+**Fixed** (ADR-010):
+
+- `resolvePluginEntry()` mirrors `Host.resolve`; staging refuses a directory the runtime would
+  drop, before the process starts.
+- The plugin writes a `boot` entry after registering both hooks, keyed by `BASHWINK_RUN_ID`.
+- The wrapper writes an expectation record before the run and reconciles it after; a missing
+  boot entry prints the run id, entry, evidence path and runtime log path, and exits **3**.
+- `BASHWINK_EVIDENCE=off` is the explicit unverified mode, recorded as `disabled`.
+- `bashwink evidence status` reports per-run evidence health; `doctor` fails its last-run
+  check when a run expected evidence and recorded none.
+- CI job `runtime-health` installs the pinned runtime on both platforms and runs the
+  four-case fixture — the guarantee is now enforced where it previously had no coverage.
+
+**BW-014 was reopened for this** and re-closed with the new evidence. No Phase 1 acceptance
+criterion is now unmet; the gate remains PASSED, with the enforcement gap closed rather than
+re-described.
+
+## Phase 2 detail
+
+| ID | Status | What is actually true |
+| --- | --- | --- |
+| BW-055 | **Done** | TaskContract schema v2 (`contract`, `contract_revision`, `criterion`, `criterion_evidence`) with a tested rollback. Immutable numbered revisions; a revision that omits a criterion marks it `dropped` with a reason and `dropped_in_revision`, never deletes it, and a dropped id cannot be re-added. Criteria are tied to a plan task + declared check; `plan observe` links the observation (including its id and exit code) to every matching criterion and moves its status. `passed` cannot be set without a passing observation. Content revisions reset approval to draft. Once a contract exists, `plan task <id> in_progress` is refused unless it is approved, valid and covers that task. CLI: `contract new|show|approve|revise|status`. 45 new tests plus a 14/14 lifecycle fixture. |
+
 ## Phase 0 gate: 4 of 4 met — **PASS**
 
 | Gate condition | State | Why |
@@ -111,11 +152,19 @@ risks carried forward.
 
 ## What this snapshot still does not cover
 
-- Windows was never exercised: neither workflow has a Windows leg.
+- Windows was never exercised: no workflow has a Windows leg.
 - The no-FFmpeg native library was verified on macOS arm64 only.
 - `upstream-compat` runs weekly + manually, not per-PR (deliberate cost trade-off, documented).
 - The no-FFmpeg library is functionally but not byte-reproducible (Zig embeds 194 build paths).
 - OpenTUI's own native test suite was not run against the no-FFmpeg build.
-- No real-model agent run; all turns used the local mock provider.
-- The wrapper CLI (ADR-003) does not exist.
+- No real-model agent run; all agent turns used the local mock provider.
 - No legal review. The determination removes known LGPL exposure; it is not legal advice.
+- **BW-056** (interactive `contract edit`, assumption ledger, contradiction fixture) is not
+  built. BW-055 ships the data plane and the commands approval/revision require.
+- **BW-059** (ScopeFence) is not built: the contract gates *starting* a task, not each file or
+  shell action. A running agent can still write outside `allowedPaths` until that lands.
+- Evidence health is proven at plugin *startup*. A plugin that loads and then fails to write
+  mid-session degrades the log from that point; the recorder reports degradation, but the boot
+  entry alone cannot detect it.
+- `bashwink evidence status` and the run records are local to a `BASHWINK_HOME`; they are not
+  yet exported in the evidence pack (that is BW-060).

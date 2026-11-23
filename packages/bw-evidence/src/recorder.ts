@@ -71,7 +71,15 @@ export function truncateBytes(text: string, maxBytes: number): string {
   return out + TRUNCATION_MARKER
 }
 
-export type ToolPhase = "before" | "after"
+/**
+ * Kind of entry in the chain.
+ *
+ * `boot` is the plugin's own start-up record (one per process). It exists so a run can prove
+ * the plugin initialised at all, rather than inferring it from tool events that may legitimately
+ * never happen. Before this phase existed, a plugin that failed to load and a session that
+ * simply called no tools produced the same thing: an empty log.
+ */
+export type ToolPhase = "boot" | "before" | "after"
 
 export interface ToolCallRef {
   /** OpenCode tool call id, e.g. `call_...`. */
@@ -367,6 +375,39 @@ export class EvidenceRecorder {
     },
   ): EvidenceEntry {
     return this.record(phase, call, fields as EvidencePayload)
+  }
+
+  /**
+   * Record that this plugin initialised, and where.
+   *
+   * The point is falsifiability: a reviewer can tell "the plugin never loaded" from "the
+   * plugin loaded and no tool was called", which the previous design could not. The caller
+   * writes it only after both hooks are registered, so a setup that dies half-way leaves no
+   * boot record — the wrapper reports a missing evidence plugin instead of a healthy run.
+   */
+  recordBoot(detail: {
+    readonly plugin: string
+    readonly pid: number
+    readonly cwd: string
+    /** Wrapper-assigned run id; keeps a boot record attributable to one process, not one pid. */
+    readonly runID?: string
+    readonly location?: string
+  }): EvidenceEntry {
+    const runID = detail.runID ?? `pid_${detail.pid}`
+    return this.record(
+      "boot",
+      {
+        id: `boot_${runID}`,
+        tool: detail.plugin,
+        sessionID: `boot_${runID}`,
+      },
+      {
+        status: "completed",
+        note:
+          `plugin initialised run=${runID} pid=${detail.pid} cwd=${detail.cwd}` +
+          (detail.location === undefined ? "" : ` location=${detail.location}`),
+      },
+    )
   }
 
   get length(): number {

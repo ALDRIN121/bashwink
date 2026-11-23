@@ -1,11 +1,52 @@
 # Bashwink — Next Steps
 
-**Where we are:** **Phase 0 complete and gate-passed**, and **Phase 1 complete and gate-passed**.
-10 of 10 Phase 1 tasks Done, 188 tests passing on Linux and macOS, and **11/11 CI jobs green on
-both supported platforms** at HEAD `ad9d44e`
-([run 45129207277](https://github.com/ALDRIN121/bashwink/actions/runs/45129207277)).
+**Where we are:** **Phase 0 and Phase 1 are complete and gate-passed.** Phase 1 was
+**revalidated** after the silent-plugin-load investigation (ADR-010). **Phase 2 has started:**
+BW-055 (TaskContract / IntentLock data plane) is Done; 1 of 15 Phase 2 tasks. **Phase 2's gate
+has not been evaluated**, and Phase 3 has not been started.
 
-**Phase 2 has not been started.** The Phase 1 gate is where work stopped, deliberately.
+- 20/90 tasks Done, 70 Not started, nothing Blocked.
+- 252 tests pass; lint, formatting and typecheck are clean under the pinned Bun 1.4.4.
+- Runtime evidence: `fixtures/runtime-health` 17/17 and `fixtures/tool-lifecycle` 13/13
+  against the real OpenCode v2.3.2 binary; `fixtures/contract` 14/14; the Phase 1 demo 8/8;
+  the SIGKILL fixture 10/10.
+
+## What changed in this increment
+
+### 1. Evidence health is now proven, not assumed (Phase 1 revalidation)
+
+Phase 1's risk list said the evidence plugin must be staged or nothing is recorded. The
+reproduced failure was broader: **a plugin can stage successfully, fail to load, and leave a
+green exit 0 over an empty log.** Three variants were reproduced against the pinned binary
+(import throw, unresolvable entry, wrong export shape); the unresolvable-entry case logged
+**nothing at all**. The wrapper equated the child's 0 with success, and the only fixture that
+could catch the regression skipped in CI for want of the runtime.
+
+Fixed by ADR-010:
+
+- staging resolves the entry exactly as `Host.resolve` does and refuses what the runtime would
+  silently drop;
+- the plugin records a `boot` entry after its hooks are registered, keyed by run id;
+- the wrapper writes an expectation record before the run, reconciles it after, and exits 3
+  with a diagnosis when evidence is missing;
+- `BASHWINK_EVIDENCE=off` is an explicit, recorded unverified mode;
+- `bashwink evidence status` and `doctor` surface the failure after the fact;
+- a new `runtime-health` CI job installs the pinned runtime on both platforms and runs the
+  four-case fixture — the guarantee is now enforced in CI, not only on a laptop.
+
+### 2. BW-055 — TaskContract / IntentLock data plane
+
+- Schema v2: `contract`, `contract_revision`, `criterion`, `criterion_evidence`, with the
+  documented rollback extended to both versions.
+- Immutable, numbered revisions; a revision that omits a criterion marks it `dropped` with a
+  reason and keeps its evidence; a dropped id cannot be re-added.
+- Criteria are tied to a plan task + declared check. `plan observe` links the observation id
+  and exit code to every matching criterion and moves its status. `passed` cannot be set
+  without a passing observation.
+- A content revision resets approval to `draft`.
+- Once a contract exists, `plan task <id> in_progress` is refused unless it is approved, valid
+  and covers that task.
+- CLI: `contract new | show | approve | revise | status`.
 
 ## Phase 1 closed with CI evidence
 
@@ -15,90 +56,79 @@ both supported platforms** at HEAD `ad9d44e`
 | `verify` | [45119233542](https://github.com/ALDRIN121/bashwink/actions/runs/45119233542) | `f753920` | **success — 11/11 jobs, both platforms** |
 | `verify` | [45129207277](https://github.com/ALDRIN121/bashwink/actions/runs/45129207277) | `ad9d44e` | **success — 11/11 jobs, both platforms, 0 failure annotations** |
 
-### The CI failure, and why it was worth having
+Both failures were in the checks, not the product, and both are worth remembering:
 
-The first Phase 1 run failed on both platforms — but the 141 CLI tests and the 10/10 SIGKILL
-fixture had **already passed**. The failure was in the smoke step I wrote:
+- the first run's smoke step asserted `test -d "$BASHWINK_HOME"` after `--version`, which
+  deliberately never touches the filesystem, and discarded `doctor`'s exit code with `|| true`
+  — a check that ignored the thing it was testing;
+- two later signals were green-but-red: a fixture job carried a failure annotation while every
+  step exited 0, and every job ran on the deprecated Node 20 action shim.
 
-- `test -d "$BASHWINK_HOME"` after `--version`. `--version` is handled by the wrapper and
-  deliberately never touches the filesystem, so that assertion could only ever fail.
-- `doctor || true` discarded the exit code — which *is* the BW-009 acceptance criterion. A step
-  that ignores the thing it is testing can only report green.
-
-Both fixed in `f753920`. This is the same class of error as the `bun fmt`-as-lint mistake in
-Phase 0: a check that looked like verification and verified nothing.
-
-### Two green-but-red signals, removed in `ad9d44e`
-
-Neither was a test or product defect; both made a passing pipeline report something untrue.
-
-1. **`fixtures` carried a red failure annotation while every step exited 0.** `bun test` sees
-   `GITHUB_ACTIONS=true` and emits assertion failures as `::error::` workflow commands. The
-   `failed-test` fixture must fail — that is the assertion — so the UI showed
-   `Expected: "hello-world" / Received: "-hello-world-"` as a failed check on a green job. Fixed by
-   scoping the variable off that one command; the exit code is still the signal.
-2. **Every job ran on the deprecated Node 20 shim.** `checkout@v4` / `setup-python@v5` declare
-   `node20`; bumped to `checkout@v5` / `setup-python@v6`, confirmed per tag from `action.yml`.
-
-### What the Linux leg actually settled
-
-Three risks were flagged before pushing, and all three held:
-
-1. **`bun:sqlite`** — migrations, durability and attempt-tracking suites all pass on
-   `ubuntu-latest`. The WAL single-writer assumption holds there too.
-2. **Symlinked plugin staging** — no failure on Linux.
-3. **Git subprocess fixtures** — passed on `git 2.56.1` as well as Apple Git 2.54.0. This one
-   had already bitten once, when `git --no-color diff` produced empty output rather than an
-   error.
+The Linux leg settled three flagged risks: `bun:sqlite` behaviour, symlinked plugin staging,
+and git subprocess differences (`git 2.56.1` vs Apple Git 2.54.0).
 
 ## Phase 1 — what was built
 
 | Task | What was built |
 | --- | --- |
 | BW-008 | `bashwink` wrapper: own `--version`/`--help`, arg passthrough, `BASHWINK_HOME`, XDG isolation |
-| BW-009 | `doctor`: 8 checks, nonzero exit on a missing precondition, credential fingerprints only |
+| BW-009 | `doctor`: checks with nonzero exit on a missing precondition, credential fingerprints only |
 | BW-010 | Workspace trust: untrusted denies write/shell/network by construction; `--by` required |
 | BW-011 | `assertEditable` edit gate + three real git fixtures for diff/undo/cancel |
 | BW-012 | SQLite plan/task store: atomic migrations, schema-version refusal, exercised rollback |
 | BW-013 | Plan contract + hand-written validator (cycles, unknown deps, approval attribution) |
-| BW-014 | Tool lifecycle against the **real** runtime: joined `before`/`after`, `exit=0`, task-linked |
+| BW-014 | Tool lifecycle against the **real** runtime: joined `before`/`after`, `exit=0`, task-linked — revalidated under ADR-010 |
 | BW-015 | Export keeping `pass`/`fail`/`not_run` distinct, plus md/json and a raw-result digest |
 | BW-016 | `taskID` on every event from a durable marker; explicit `unassignedReason` otherwise |
 | BW-019 | Real SIGKILL fixture: `writes=1`, resume reopens to `in_progress`, never `verified` |
 
-## Known risks carried into Phase 2 (none gate-blocking)
+## Next eligible Phase 2 tasks (dependency-checked against the register)
 
-1. **The evidence plugin must be staged or nothing is recorded — and failing to stage it is
-   silent.** `main.ts` now calls `stagePlugins` before every runtime invocation, and the
-   end-to-end fixture is the only thing that catches a regression here. Every unit test passed
-   while the real runtime recorded nothing.
-2. **Staged plugins are symlinks into this repository.** Fine for a working copy; a real
+1. **BW-017 — proof-of-work terminal summary** (BW-015, BW-016 done). Must render `not_run`
+   distinctly and make every claim resolve to a recorded event.
+2. **BW-018 — protect permissions and command execution paths** (BW-010, BW-014 done).
+   Compound commands, symlinks, denied paths; the adversarial half of the policy.
+3. **BW-056 — IntentLock command and confirmation UX** (BW-008, BW-055 done). Interactive
+   `contract edit`, assumption ledger, and the contradictory-goal fixture. BW-055 deliberately
+   stopped at the data plane plus the commands approval/revision require.
+4. **BW-057 — immutable baseline and protected test inventory** (BW-007, BW-014 done).
+   Prerequisite for TestGuard (BW-058) and ProofPack (BW-060).
+
+After those: BW-059 needs BW-018; BW-060 needs BW-057; BW-075 is unblocked now (BW-014 +
+BW-055); BW-084 needs BW-057.
+
+## Foundation hardening, in the order it should happen
+
+These are prerequisites for the Phase 2 proof chain, not new tasks:
+
+1. **Make SQLite authoritative over `current-plan.json`.** Two writers still exist; BW-060's
+   manifest needs one source of truth for plan + criteria + observations.
+2. **Drive `plan observe` from a real check runner.** Today the caller supplies the outcome.
+   BW-017 and BW-060 need the CLI to execute the declared command and record the exit code
+   itself, so "a check passed" is never a claim made by the party being checked.
+3. **Publish a per-session evidence head hash** (ADR-007) so tail truncation becomes
+   detectable; it belongs with BW-060's manifest.
+4. **Concurrency-safe evidence recording** before Phase 4's parallel worktrees (ADR-004).
+   `bun:sqlite` is a single-writer assumption today.
+
+## Risks carried forward (none gate-blocking)
+
+1. **Evidence health is a startup check.** A plugin that loads and then fails mid-session
+   degrades the log from that point; the recorder reports it, but the boot entry cannot.
+2. **The contract gates task start, not tool calls.** Until BW-059, a running agent can still
+   write outside `allowedPaths`.
+3. **Staged plugins are symlinks into this repository.** Fine for a working copy; a real
    distribution must copy or resolve them, and that is a PM-1 packaging question (ADR-009).
-3. **No-FFmpeg native library is not byte-reproducible** (Zig embeds build paths). A PM-1
+4. **No-FFmpeg native library is not byte-reproducible** (Zig embeds build paths). A PM-1
    release must assert a symbol profile, not a digest.
-4. **No legal review.** ADR-009 removes known LGPL exposure by construction; it is not advice.
-5. **`DEPENDENCY_LICENSES.json` was regenerated for Phase 1** — `oxlint` (1.94.0) and
-   `@opencode/plugin` (2.3.2, a root devDependency so staged plugins can resolve it) are now in
-   the inventory, both verified MIT from the packages themselves, and the release gate still
-   exits 0. It remains a **snapshot**: `upstream_sync.py` does not regenerate it, so it must be
-   refreshed every time a dependency is added.
-6. **`bun audit`** has never been run.
-7. **The doctor's `docker` check only tests presence on `PATH`** — it does not verify the
+5. **No legal review.** ADR-009 removes known LGPL exposure by construction; it is not advice.
+6. **`DEPENDENCY_LICENSES.json` is a snapshot** — `upstream_sync.py` does not regenerate it, so
+   it must be refreshed whenever a dependency is added.
+7. **`bun audit`** has never been run.
+8. **The doctor's `docker` check only tests presence on `PATH`** — it does not verify the
    daemon answers.
-8. **`bun:sqlite` is a single-writer assumption.** Parallel agents are Phase 4 (ADR-004).
 9. **`upstream-compat` is weekly + manual**, deliberately: a 2.7 GB install and ~5 min suite
    per PR is too expensive.
-
-## Phase 2 — first tasks
-
-1. **Concurrency control for the evidence log** (ADR-004) before Phase 4's parallel worktrees.
-2. **Publish a per-session head hash** so tail truncation becomes detectable (ADR-007).
-3. **`bashwink plan observe` from a real check runner** — the CLI records observations, but
-   nothing yet *executes* a plan's declared `command` and records the exit code itself. Today
-   the caller supplies the outcome, which is a trust boundary worth closing.
-4. **Persist the plan in one place.** `current-plan.json` and the SQLite store are written
-   together by the CLI but are two sources of truth; a crash between them could desynchronise
-   them. A phase-2 refactor should make the store authoritative.
 
 ## Housekeeping
 
@@ -106,6 +136,5 @@ Three risks were flagged before pushing, and all three held:
 - The pinned OpenCode clone lives outside this repository, so ~2.7 GB of dependencies never
   enter Git.
 - The 3 upstream bash-3.2 failures stay unpatched by design (BW-002). CI must have bash >= 4.
-- The real OpenCode runtime used for the end-to-end evidence was installed to a scratch
-  directory (`@opencode/cli@2.3.2`, ~225 MB platform package) and is **not** a repository
-  dependency. `BASHWINK_OPENCODE_BIN` points at it.
+- The real OpenCode runtime is **not** a repository dependency. The `runtime-health` CI job
+  installs it only for the case that needs it; locally, set `BASHWINK_OPENCODE_BIN`.

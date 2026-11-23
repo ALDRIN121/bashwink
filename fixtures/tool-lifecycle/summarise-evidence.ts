@@ -23,6 +23,9 @@ const entries = readFileSync(file, "utf8")
   .split("\n")
   .filter((line) => line.trim() !== "")
   .map((line) => JSON.parse(line) as Entry)
+  // A `boot` entry is the plugin's start-up record, not a tool call. Counting it here would
+  // make the fixture report a permanently "bare" event on every healthy run.
+  .filter((entry) => entry.phase === "before" || entry.phase === "after")
 
 const befores = entries.filter((entry) => entry.phase === "before")
 const afters = entries.filter((entry) => entry.phase === "after")

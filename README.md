@@ -4,18 +4,21 @@ An evidence-first coding agent: it records what it actually did — commands, ex
 outputs, hash-chained and independently verifiable — instead of reporting what it claims to
 have done.
 
-**Status:** Phase 0 (foundation feasibility) executed. **The foundation gate has not passed.**
-See `docs/bashwink/IMPLEMENTATION_STATUS.md` and `docs/bashwink/NEXT_STEPS.md`.
+**Status:** Phase 0 and Phase 1 are complete and gate-passed with hosted CI evidence. Phase 2
+is in progress — BW-055 (TaskContract / IntentLock data plane) is implemented; the Phase 2 gate
+has not been evaluated. See `docs/bashwink/IMPLEMENTATION_STATUS.md` and
+`docs/bashwink/NEXT_STEPS.md`.
 
 ## Layout
 
 ```
 bashwink/
   packages/bw-evidence/     OpenCode plugin + recorder: append-only, hash-chained evidence log
-  fixtures/                 Five deterministic Git fixtures + a local mock model provider
-  scripts/                  Documentation verifier, upstream sync report
+  packages/bw-cli/          `bashwink` wrapper, plan/contract/evidence commands, doctor
+  fixtures/                 Deterministic Git fixtures, real-runtime proofs, local mock provider
+  scripts/                  Documentation verifier, upstream sync report, release gates
   docs/bashwink/            Requirements, ADRs, phase plan, status and evidence registers
-  .github/workflows/        CI (written, not yet executed)
+  .github/workflows/        CI: verify (lint, docs, tests, fixtures, runtime health)
 ```
 
 The pinned OpenCode foundation is **not** vendored here. It lives beside this repository at
@@ -25,9 +28,15 @@ The pinned OpenCode foundation is **not** vendored here. It lives beside this re
 
 ```bash
 bun install
-bun run test:evidence                 # 32 tests
-./fixtures/create_fixtures.sh         # build the five QA fixtures
+bun run test                          # full suite (pinned Bun 1.4.4)
+./fixtures/create_fixtures.sh         # build the deterministic Git fixtures
 ./fixtures/reset.sh --check           # prove they are at baseline
+
+bun run packages/bw-cli/src/bin.ts doctor
+bun run packages/bw-cli/src/bin.ts plan new "fix the greeting" --files=README.md
+bun run packages/bw-cli/src/bin.ts contract new
+bun run packages/bw-cli/src/bin.ts contract approve --by "<you>"
+bun run packages/bw-cli/src/bin.ts contract status
 ```
 
 Verify an evidence log:
@@ -48,6 +57,12 @@ python3 scripts/upstream_sync.py --repo ~/Developer/bashwink-upstream/opencode -
 `@bashwink/evidence` is an OpenCode plugin. It hooks `execute.before`/`execute.after` and
 appends one JSON line per event to `<project>/.bashwink/evidence/evidence.jsonl`. Each line
 carries the SHA-256 of the previous line, so any edit, deletion or reordering is detectable.
+
+On start-up the plugin writes a `boot` entry after both hooks are registered, keyed by the
+wrapper's run id. `bashwink` then checks that entry after the child exits; if it is missing, the
+run exits **3** and prints the run id, plugin entry, evidence path and runtime log path instead
+of reporting the child's 0 as success. `bashwink evidence status` lists recent runs and whether
+each recorded evidence. `BASHWINK_EVIDENCE=off` is the explicit, recorded unverified mode.
 
 Credentials are redacted by key name *and* by value shape before anything is written, and the
 digest covers the redacted form — so a digest can never be used to confirm a guessed secret.

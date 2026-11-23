@@ -16,9 +16,20 @@
 import { Database } from "bun:sqlite"
 import { assertTransition, canTransition, type TaskStatus } from "./status.js"
 import type { Plan } from "./plan.js"
+import {
+  CONTRACT_VERSION,
+  ContractGateError,
+  ContractRevisionError,
+  assertContract,
+  assertCriterionTransition,
+  type ContractApproval,
+  type ContractConstraints,
+  type CriterionStatus,
+  type TaskContract,
+} from "./contract.js"
 
 /** Current schema version. Bump only alongside a new entry in `MIGRATIONS`. */
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 /**
  * Migrations, applied in order inside one transaction.
@@ -109,6 +120,82 @@ const MIGRATIONS: readonly string[] = [
     interrupted   INTEGER NOT NULL DEFAULT 0
   );
   `,
+  // v2 — BW-055: TaskContract, immutable revisions and the criterion lifecycle.
+  //
+  // `criterion` is the point of this migration. It is a *separate* table from the revision
+  // snapshot on purpose: a revision records what the contract said, while the criterion row
+  // carries the status across revisions. Removing a criterion sets `dropped_in_revision`; it
+  // never deletes the row, so a status cannot disappear by revising the contract.
+  `
+  CREATE TABLE contract (
+    id                    TEXT PRIMARY KEY,
+    plan_id               TEXT NOT NULL REFERENCES plan(id) ON DELETE CASCADE,
+    objective             TEXT NOT NULL,
+    revision              INTEGER NOT NULL,
+    base_commit           TEXT,
+    allowed_paths         TEXT NOT NULL DEFAULT '[]',
+    forbidden_paths       TEXT NOT NULL DEFAULT '[]',
+    negative_requirements TEXT NOT NULL DEFAULT '[]',
+    constraints           TEXT NOT NULL DEFAULT '{}',
+    approval              TEXT NOT NULL CHECK (approval IN ('draft','approved','rejected')),
+    approved_by           TEXT,
+    approved_at           TEXT,
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL
+  );
+
+  CREATE INDEX contract_plan ON contract(plan_id);
+
+  CREATE TABLE contract_revision (
+    contract_id           TEXT NOT NULL REFERENCES contract(id) ON DELETE CASCADE,
+    revision              INTEGER NOT NULL,
+    at                    TEXT NOT NULL,
+    objective             TEXT NOT NULL,
+    allowed_paths         TEXT NOT NULL,
+    forbidden_paths       TEXT NOT NULL,
+    negative_requirements TEXT NOT NULL,
+    constraints           TEXT NOT NULL,
+    criteria              TEXT NOT NULL,
+    reason                TEXT,
+    approved_by           TEXT,
+    PRIMARY KEY (contract_id, revision)
+  );
+
+  CREATE TABLE criterion (
+    contract_id           TEXT NOT NULL REFERENCES contract(id) ON DELETE CASCADE,
+    criterion_id          TEXT NOT NULL,
+    statement             TEXT NOT NULL,
+    required              INTEGER NOT NULL,
+    task_id               TEXT NOT NULL,
+    check_id              TEXT NOT NULL,
+    status                TEXT NOT NULL CHECK (status IN ('pending','passed','failed','not_run','dropped')),
+    first_revision        INTEGER NOT NULL,
+    last_revision         INTEGER NOT NULL,
+    dropped_in_revision   INTEGER,
+    status_reason         TEXT,
+    status_at             TEXT NOT NULL,
+    PRIMARY KEY (contract_id, criterion_id)
+  );
+
+  CREATE INDEX criterion_task ON criterion(contract_id, task_id);
+
+  -- Evidence linked to an acceptance criterion, not just to a task. observation_id points
+  -- at the row in observation that proves it; the row is kept even if the observation is
+  -- later superseded, because the criterion's history is the audit trail.
+  CREATE TABLE criterion_evidence (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id    TEXT NOT NULL,
+    criterion_id   TEXT NOT NULL,
+    observation_id INTEGER,
+    status         TEXT NOT NULL CHECK (status IN ('pass','fail','not_run')),
+    exit_code      INTEGER,
+    at             TEXT NOT NULL,
+    detail         TEXT,
+    FOREIGN KEY (contract_id, criterion_id) REFERENCES criterion(contract_id, criterion_id)
+  );
+
+  CREATE INDEX criterion_evidence_ref ON criterion_evidence(contract_id, criterion_id);
+  `,
 ]
 
 /** Inverse of each migration, newest last. Used by the documented rollback test. */
@@ -120,6 +207,12 @@ const DOWN_MIGRATIONS: readonly string[] = [
   DROP TABLE IF EXISTS transition;
   DROP TABLE IF EXISTS task;
   DROP TABLE IF EXISTS plan;
+  `,
+  `
+  DROP TABLE IF EXISTS criterion_evidence;
+  DROP TABLE IF EXISTS criterion;
+  DROP TABLE IF EXISTS contract_revision;
+  DROP TABLE IF EXISTS contract;
   `,
 ]
 
@@ -215,6 +308,35 @@ export class Store {
 
   nowIso(): string {
     return this.now().toISOString()
+  }
+
+  /**
+   * Refuse to start a task when its plan has a contract that is not approved or does not
+   * cover it. A plan with no contract is unaffected (Phase 1 behaviour).
+   *
+   * Read-only, so `resume` can pre-flight every task before it changes anything.
+   */
+  assertExecutionAllowed(taskId: string): void {
+    if (this.schemaVersion() < 2) return
+    const row = this.db.query("SELECT plan_id FROM task WHERE id = ?").get(taskId) as {
+      plan_id: string
+    } | null
+    if (row === null) return
+    const contract = this.contractForPlan(String(row.plan_id))
+    if (contract === undefined) return
+    if (contract.approval !== "approved")
+      throw new ContractGateError(
+        `contract ${contract.id} revision ${contract.revision} is '${contract.approval}'; ` +
+          `approve it before starting '${taskId}'`,
+      )
+    const covering = this.criteria(contract.id).filter(
+      (criterion) => criterion.task === taskId && criterion.status !== "dropped",
+    )
+    if (covering.length === 0)
+      throw new ContractGateError(
+        `no criterion in contract ${contract.id} covers task '${taskId}'; ` +
+          `add one in a revision before starting the work`,
+      )
   }
 
   // ---------------------------------------------------------------- plans
@@ -323,6 +445,9 @@ export class Store {
     const from = this.taskStatus(taskId)
     if (from === undefined) throw new Error(`unknown task '${taskId}'`)
     assertTransition(from, to)
+    // Starting work is the one transition a contract governs. Enforced here rather than only
+    // in `plan task` so `resume` and any future caller cannot route around it.
+    if (to === "in_progress") this.assertExecutionAllowed(taskId)
     const at = this.nowIso()
     this.db.transaction(() => {
       this.db.query("UPDATE task SET status = ?, updated_at = ? WHERE id = ?").run(to, at, taskId)
@@ -373,22 +498,58 @@ export class Store {
    * `not_run` is a first-class status on purpose: BW-015's acceptance requires an export to
    * distinguish "did not pass" from "was never executed". Collapsing them into `fail` is how
    * a report starts lying.
+   *
+   * BW-055: when the task's plan has a contract, the observation is also linked to every
+   * criterion that names this task + check. That link is what makes "evidence for an
+   * acceptance criterion" a recorded fact rather than a claim about a file somewhere.
    */
-  observe(taskId: string, observation: ObservationInput): void {
+  observe(taskId: string, observation: ObservationInput): number {
     if (this.taskStatus(taskId) === undefined) throw new Error(`unknown task '${taskId}'`)
-    this.db
-      .query(
-        `INSERT INTO observation (task_id, check_id, status, exit_code, at, detail)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        taskId,
-        observation.checkId,
-        observation.status,
-        observation.exitCode ?? null,
-        this.nowIso(),
-        observation.detail ?? null,
-      )
+    const at = this.nowIso()
+    return this.db.transaction(() => {
+      const result = this.db
+        .query(
+          `INSERT INTO observation (task_id, check_id, status, exit_code, at, detail)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          taskId,
+          observation.checkId,
+          observation.status,
+          observation.exitCode ?? null,
+          at,
+          observation.detail ?? null,
+        )
+      const observationId = Number(result.lastInsertRowid ?? 0)
+
+      const row = this.db.query("SELECT plan_id FROM task WHERE id = ?").get(taskId) as {
+        plan_id: string
+      } | null
+      if (row !== null) {
+        const contractRow = this.db
+          .query("SELECT id FROM contract WHERE plan_id = ? ORDER BY updated_at DESC, id LIMIT 1")
+          .get(row.plan_id) as { id: string } | null
+        if (contractRow !== null) {
+          const criteria = this.db
+            .query(
+              "SELECT criterion_id FROM criterion WHERE contract_id = ? AND task_id = ? AND check_id = ?",
+            )
+            .all(String(contractRow.id), taskId, observation.checkId) as {
+            criterion_id: string
+          }[]
+          for (const criterion of criteria)
+            this.recordCriterionEvidence({
+              contractId: String(contractRow.id),
+              criterionId: String(criterion.criterion_id),
+              status: observation.status,
+              observationId,
+              ...(observation.exitCode === undefined ? {} : { exitCode: observation.exitCode }),
+              ...(observation.detail === undefined ? {} : { detail: observation.detail }),
+            })
+        }
+      }
+      return observationId
+    })()
   }
 
   observations(taskId: string): {
@@ -437,6 +598,425 @@ export class Store {
         return { ok: false, reason: `check '${check.id}' last reported '${last?.status}'` }
     }
     return { ok: true }
+  }
+
+  // ------------------------------------------------------------- contracts
+
+  /**
+   * Persist a contract revision.
+   *
+   * Revisions must increment by exactly one. That is not ceremony: allowing "revision 2"
+   * to overwrite "revision 1" would make the audit trail a mutable document, and the whole
+   * point of the criterion table below is that history survives amendment.
+   *
+   * Criteria are upserted by stable id. A criterion that the new revision omits is marked
+   * `dropped` in place; a previously dropped id cannot be re-added, because reusing it would
+   * erase the record of the drop.
+   */
+  saveContract(contract: TaskContract): void {
+    assertContract(contract)
+    const existing = this.db
+      .query("SELECT revision FROM contract WHERE id = ?")
+      .get(contract.id) as { revision: number } | null
+    if (existing === null) {
+      if (contract.revision !== 1)
+        throw new ContractRevisionError(`new contract '${contract.id}' must start at revision 1`)
+    } else if (contract.revision !== Number(existing.revision) + 1) {
+      throw new ContractRevisionError(
+        `contract '${contract.id}' is at revision ${existing.revision}; ` +
+          `the next write must be revision ${Number(existing.revision) + 1}, not ${contract.revision}`,
+      )
+    }
+
+    const at = this.nowIso()
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO contract (id, plan_id, objective, revision, base_commit, allowed_paths,
+             forbidden_paths, negative_requirements, constraints, approval, approved_by,
+             approved_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             objective=excluded.objective, revision=excluded.revision,
+             base_commit=excluded.base_commit, allowed_paths=excluded.allowed_paths,
+             forbidden_paths=excluded.forbidden_paths,
+             negative_requirements=excluded.negative_requirements,
+             constraints=excluded.constraints, approval=excluded.approval,
+             approved_by=excluded.approved_by, approved_at=excluded.approved_at,
+             updated_at=excluded.updated_at`,
+        )
+        .run(
+          contract.id,
+          contract.planId,
+          contract.objective,
+          contract.revision,
+          contract.baseCommit ?? null,
+          JSON.stringify(contract.allowedPaths),
+          JSON.stringify(contract.forbiddenPaths),
+          JSON.stringify(contract.negativeRequirements),
+          JSON.stringify(contract.constraints),
+          contract.approval,
+          contract.approvedBy ?? null,
+          contract.approvedAt ?? null,
+          contract.createdAt,
+          at,
+        )
+
+      this.db
+        .query(
+          `INSERT INTO contract_revision (contract_id, revision, at, objective, allowed_paths,
+             forbidden_paths, negative_requirements, constraints, criteria, reason, approved_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          contract.id,
+          contract.revision,
+          at,
+          contract.objective,
+          JSON.stringify(contract.allowedPaths),
+          JSON.stringify(contract.forbiddenPaths),
+          JSON.stringify(contract.negativeRequirements),
+          JSON.stringify(contract.constraints),
+          JSON.stringify(
+            contract.criteria.map(({ id, statement, required, task, check }) => ({
+              id,
+              statement,
+              required,
+              task,
+              check,
+            })),
+          ),
+          contract.reason ?? null,
+          contract.approvedBy ?? null,
+        )
+
+      const rows = this.db
+        .query(
+          "SELECT criterion_id, status, task_id, check_id FROM criterion WHERE contract_id = ?",
+        )
+        .all(contract.id) as {
+        criterion_id: string
+        status: CriterionStatus
+        task_id: string
+        check_id: string
+      }[]
+      const known = new Map(
+        rows.map((row) => [
+          String(row.criterion_id),
+          { status: row.status, task: String(row.task_id), check: String(row.check_id) },
+        ]),
+      )
+      const present = new Set(contract.criteria.map((criterion) => criterion.id))
+
+      for (const criterion of contract.criteria) {
+        const existing = known.get(criterion.id)
+        const status = existing?.status
+        if (status === "dropped")
+          throw new ContractRevisionError(
+            `criterion '${criterion.id}' was dropped in revision ${contract.revision - 1} and cannot be re-added; ` +
+              `give the new requirement its own id so the drop stays visible`,
+          )
+        if (
+          existing !== undefined &&
+          (existing.task !== criterion.task || existing.check !== criterion.check)
+        )
+          // A criterion's identity is the evidence it points at. Re-pointing it would let a
+          // passed status carry over to a different check, which is exactly the kind of
+          // silent substitution the contract exists to prevent.
+          throw new ContractRevisionError(
+            `criterion '${criterion.id}' cannot change its task/check ` +
+              `(${existing.task}/${existing.check} -> ${criterion.task}/${criterion.check}); add a new criterion id`,
+          )
+        if (status === undefined)
+          this.db
+            .query(
+              `INSERT INTO criterion (contract_id, criterion_id, statement, required, task_id,
+                 check_id, status, first_revision, last_revision, status_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+            )
+            .run(
+              contract.id,
+              criterion.id,
+              criterion.statement,
+              criterion.required ? 1 : 0,
+              criterion.task,
+              criterion.check,
+              contract.revision,
+              contract.revision,
+              at,
+            )
+        else
+          this.db
+            .query(
+              `UPDATE criterion SET statement = ?, required = ?, task_id = ?, check_id = ?,
+                 last_revision = ? WHERE contract_id = ? AND criterion_id = ?`,
+            )
+            .run(
+              criterion.statement,
+              criterion.required ? 1 : 0,
+              criterion.task,
+              criterion.check,
+              contract.revision,
+              contract.id,
+              criterion.id,
+            )
+      }
+
+      for (const [id, existing] of known) {
+        if (present.has(id) || existing.status === "dropped") continue
+        this.db
+          .query(
+            `UPDATE criterion SET status = 'dropped', dropped_in_revision = ?, status_at = ?,
+               status_reason = ? WHERE contract_id = ? AND criterion_id = ?`,
+          )
+          .run(
+            contract.revision,
+            at,
+            contract.reason ?? `removed in revision ${contract.revision}`,
+            contract.id,
+            id,
+          )
+      }
+    })()
+  }
+
+  /** Approve a draft contract without creating a revision. Approval is not content. */
+  approveContract(contractId: string, by: string, at = this.nowIso()): TaskContract {
+    const contract = this.contract(contractId)
+    if (contract === undefined) throw new Error(`unknown contract '${contractId}'`)
+    if (by.trim() === "") throw new Error("approval must record who approved the contract")
+    this.db
+      .query(
+        "UPDATE contract SET approval = 'approved', approved_by = ?, approved_at = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(by, at, at, contractId)
+    return { ...contract, approval: "approved", approvedBy: by, approvedAt: at }
+  }
+
+  contract(id: string): TaskContract | undefined {
+    if (this.schemaVersion() === 0) return undefined
+    const row = this.db.query("SELECT * FROM contract WHERE id = ?").get(id) as Record<
+      string,
+      unknown
+    > | null
+    if (!row) return undefined
+    const criteria = this.criteria(id)
+    return {
+      v: CONTRACT_VERSION,
+      id: String(row.id),
+      planId: String(row.plan_id),
+      objective: String(row.objective),
+      revision: Number(row.revision),
+      ...(row.base_commit === null ? {} : { baseCommit: String(row.base_commit) }),
+      allowedPaths: JSON.parse(String(row.allowed_paths)) as string[],
+      forbiddenPaths: JSON.parse(String(row.forbidden_paths)) as string[],
+      negativeRequirements: JSON.parse(String(row.negative_requirements)) as string[],
+      criteria: criteria.map((criterion) => ({
+        id: criterion.id,
+        statement: criterion.statement,
+        required: criterion.required,
+        task: criterion.task,
+        check: criterion.check,
+        status: criterion.status,
+      })),
+      constraints: JSON.parse(String(row.constraints)) as ContractConstraints,
+      approval: row.approval as ContractApproval,
+      ...(row.approved_by === null ? {} : { approvedBy: String(row.approved_by) }),
+      ...(row.approved_at === null ? {} : { approvedAt: String(row.approved_at) }),
+      createdAt: String(row.created_at),
+    }
+  }
+
+  /** The current (highest-revision) contract for a plan, if one exists. */
+  contractForPlan(planId: string): TaskContract | undefined {
+    const row = this.db
+      .query("SELECT id FROM contract WHERE plan_id = ? ORDER BY updated_at DESC, id LIMIT 1")
+      .get(planId) as { id: string } | null
+    return row === null ? undefined : this.contract(String(row.id))
+  }
+
+  revisions(contractId: string): {
+    revision: number
+    at: string
+    objective: string
+    criteria: {
+      id: string
+      statement: string
+      required: boolean
+      task: string
+      check: string
+    }[]
+    reason?: string
+    approvedBy?: string
+  }[] {
+    return (
+      this.db
+        .query(
+          "SELECT revision, at, objective, criteria, reason, approved_by FROM contract_revision WHERE contract_id = ? ORDER BY revision",
+        )
+        .all(contractId) as Record<string, unknown>[]
+    ).map((row) => ({
+      revision: Number(row.revision),
+      at: String(row.at),
+      objective: String(row.objective),
+      criteria: JSON.parse(String(row.criteria)) as {
+        id: string
+        statement: string
+        required: boolean
+        task: string
+        check: string
+      }[],
+      ...(row.reason === null ? {} : { reason: String(row.reason) }),
+      ...(row.approved_by === null ? {} : { approvedBy: String(row.approved_by) }),
+    }))
+  }
+
+  /** Criterion rows, including dropped ones. Nothing here is ever deleted by a revision. */
+  criteria(contractId: string): {
+    id: string
+    statement: string
+    required: boolean
+    task: string
+    check: string
+    status: CriterionStatus
+    firstRevision: number
+    lastRevision: number
+    droppedInRevision?: number
+    statusReason?: string
+    statusAt: string
+  }[] {
+    if (this.schemaVersion() === 0) return []
+    return (
+      (
+        this.db
+          // Insertion order, not alphabetical: the criterion order is part of what the author
+          // wrote, and a round-trip that reorders it is not a round-trip.
+          .query("SELECT * FROM criterion WHERE contract_id = ? ORDER BY rowid")
+          .all(contractId) as Record<string, unknown>[]
+      ).map((row) => ({
+        id: String(row.criterion_id),
+        statement: String(row.statement),
+        required: Number(row.required) === 1,
+        task: String(row.task_id),
+        check: String(row.check_id),
+        status: row.status as CriterionStatus,
+        firstRevision: Number(row.first_revision),
+        lastRevision: Number(row.last_revision),
+        ...(row.dropped_in_revision === null
+          ? {}
+          : { droppedInRevision: Number(row.dropped_in_revision) }),
+        ...(row.status_reason === null ? {} : { statusReason: String(row.status_reason) }),
+        statusAt: String(row.status_at),
+      }))
+    )
+  }
+
+  /**
+   * Change a criterion's status deliberately.
+   *
+   * `passed` requires a passing evidence row, mirroring the task-level rule: a status that
+   * asserts success must point at something that actually succeeded. `dropped` requires a
+   * reason, because "it stopped being convenient" is not a reason a reviewer can audit.
+   */
+  setCriterionStatus(
+    contractId: string,
+    criterionId: string,
+    to: CriterionStatus,
+    options: { readonly reason?: string } = {},
+  ): CriterionStatus {
+    const current = this.criteria(contractId).find((criterion) => criterion.id === criterionId)
+    if (current === undefined)
+      throw new Error(`unknown criterion '${criterionId}' on contract '${contractId}'`)
+    if (current.status !== to) assertCriterionTransition(current.status, to)
+    if (
+      to === "passed" &&
+      this.criterionEvidence(contractId, criterionId).every((row) => row.status !== "pass")
+    )
+      throw new Error(
+        `criterion '${criterionId}' cannot be marked passed without a passing observation`,
+      )
+    if (to === "dropped" && (options.reason ?? "").trim() === "")
+      throw new Error(`criterion '${criterionId}' cannot be dropped without a reason`)
+    this.db
+      .query(
+        "UPDATE criterion SET status = ?, status_at = ?, status_reason = ? WHERE contract_id = ? AND criterion_id = ?",
+      )
+      .run(to, this.nowIso(), options.reason ?? null, contractId, criterionId)
+    return to
+  }
+
+  criterionEvidence(
+    contractId: string,
+    criterionId: string,
+  ): {
+    id: number
+    status: "pass" | "fail" | "not_run"
+    exitCode?: number
+    at: string
+    observationId?: number
+    detail?: string
+  }[] {
+    return (
+      this.db
+        .query(
+          "SELECT id, status, exit_code, at, observation_id, detail FROM criterion_evidence WHERE contract_id = ? AND criterion_id = ? ORDER BY id",
+        )
+        .all(contractId, criterionId) as Record<string, unknown>[]
+    ).map((row) => ({
+      id: Number(row.id),
+      status: row.status as "pass" | "fail" | "not_run",
+      ...(row.exit_code === null ? {} : { exitCode: Number(row.exit_code) }),
+      at: String(row.at),
+      ...(row.observation_id === null ? {} : { observationId: Number(row.observation_id) }),
+      ...(row.detail === null ? {} : { detail: String(row.detail) }),
+    }))
+  }
+
+  /**
+   * Record an observation against a criterion and move its status.
+   *
+   * A dropped criterion is left alone: it is no longer part of the contract, and a later
+   * observation must not resurrect it implicitly.
+   */
+  recordCriterionEvidence(input: {
+    readonly contractId: string
+    readonly criterionId: string
+    readonly status: "pass" | "fail" | "not_run"
+    readonly observationId?: number
+    readonly exitCode?: number
+    readonly detail?: string
+  }): void {
+    const current = this.criteria(input.contractId).find(
+      (criterion) => criterion.id === input.criterionId,
+    )
+    if (current === undefined)
+      throw new Error(`unknown criterion '${input.criterionId}' on contract '${input.contractId}'`)
+    if (current.status === "dropped") return
+    const at = this.nowIso()
+    this.db
+      .query(
+        `INSERT INTO criterion_evidence (contract_id, criterion_id, observation_id, status, exit_code, at, detail)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.contractId,
+        input.criterionId,
+        input.observationId ?? null,
+        input.status,
+        input.exitCode ?? null,
+        at,
+        input.detail ?? null,
+      )
+    const next: CriterionStatus =
+      input.status === "pass" ? "passed" : input.status === "fail" ? "failed" : "not_run"
+    // Evidence moves the status directly, without the manual transition matrix. Evidence is
+    // the fact the status describes: refusing `passed -> not_run` because the matrix says so
+    // would keep a stale success on the record after a check was re-run as unexecuted.
+    this.db
+      .query(
+        "UPDATE criterion SET status = ?, status_at = ? WHERE contract_id = ? AND criterion_id = ?",
+      )
+      .run(next, at, input.contractId, input.criterionId)
   }
 
   // ----------------------------------------------------------- attempts

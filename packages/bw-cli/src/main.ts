@@ -15,6 +15,7 @@ import { diagnose, render as renderDoctor } from "./doctor.js"
 import { RuntimeNotFoundError, resolveRuntime } from "./runtime.js"
 import {
   EVIDENCE_PLUGIN_ID,
+  PluginEntryError,
   ensurePaths,
   environmentFor,
   paths,
@@ -22,6 +23,15 @@ import {
   writeConfig,
 } from "./paths.js"
 import {
+  beginRun,
+  checkBoot,
+  finishRun,
+  newRunId,
+  renderMissingEvidence,
+  runtimeLogHint,
+} from "./run-health.js"
+import {
+  runContractCommand,
   runDoctorCommand,
   runEvidenceCommand,
   runPlanCommand,
@@ -101,6 +111,12 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
       if (result.stderr !== undefined) err(result.stderr)
       return { exitCode: result.exitCode, handled: true }
     }
+    case "contract": {
+      const result = runContractCommand(rest)
+      if (result.stdout !== "") out(result.stdout)
+      if (result.stderr !== undefined) err(result.stderr)
+      return { exitCode: result.exitCode, handled: true }
+    }
     case "resume": {
       const result = runResumeCommand(rest)
       if (result.stdout !== "") out(result.stdout)
@@ -138,17 +154,36 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
   const resolved = paths()
   ensurePaths(resolved)
 
-  // Stage the plugin directory contents before every run (ADR-002 constraint 2). Without this
-  // the real runtime loads no Bashwink plugin at all: the config's plugin list does not
-  // restrict or enable discovery, so the *directory* is the only thing that governs loading.
-  // This was a live bug — the runtime ran the tool and recorded nothing.
-  const staged = stagePlugins(resolved.config, [
-    {
-      id: EVIDENCE_PLUGIN_ID,
-      directory: path.join(REPO_ROOT, "packages", "bw-evidence"),
-      order: 0,
-    },
-  ])
+  // Evidence collection is on by default. `BASHWINK_EVIDENCE=off` is the deliberate optional
+  // mode ADR-002 allows: a caller may run the runtime without the recorder, and the run is
+  // then recorded as `disabled` rather than being silently indistinguishable from a health
+  // problem. Everything else is expected to record, and a missing boot record fails the run.
+  const evidenceEnabled = (process.env["BASHWINK_EVIDENCE"] ?? "on") !== "off"
+  const runId = newRunId()
+  const pluginDirectory = path.join(REPO_ROOT, "packages", "bw-evidence")
+  let staged: ReturnType<typeof stagePlugins> = []
+  try {
+    // Stage the plugin directory contents before every run (ADR-002 constraint 2). Without
+    // this the real runtime loads no Bashwink plugin at all: the config's plugin list does
+    // not restrict or enable discovery, so the *directory* is the only thing that governs
+    // loading. Staging also resolves the entry exactly as the runtime will, so a directory
+    // the runtime would silently drop fails here with a message instead.
+    staged = stagePlugins(
+      resolved.config,
+      evidenceEnabled ? [{ id: EVIDENCE_PLUGIN_ID, directory: pluginDirectory, order: 0 }] : [],
+    )
+  } catch (error) {
+    if (error instanceof PluginEntryError) {
+      err(`evidence plugin cannot be staged: ${error.message}`)
+      err("refusing to start a run whose evidence would be silently absent.")
+      err(
+        "run `bashwink doctor` to re-check the install, or set BASHWINK_EVIDENCE=off to run unverified.",
+      )
+      return { exitCode: 3, handled: true }
+    }
+    throw error
+  }
+
   // The config lists the staged plugins in explicit order. Discovery ignores the array, but
   // writing it keeps the file honest for anyone reading it.
   writeConfig(
@@ -160,13 +195,72 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
       `[bashwink] staged ${staged.length} plugin(s): ${staged.map((entry) => entry.id).join(", ")}\n`,
     )
 
+  const evidencePlugin = staged[0]
+  beginRun({
+    resolved,
+    runId,
+    ...(evidencePlugin === undefined
+      ? {}
+      : {
+          plugin: {
+            id: evidencePlugin.id,
+            entry: evidencePlugin.entry,
+            stagedPath: evidencePlugin.path,
+          },
+        }),
+  })
+  if (!evidenceEnabled)
+    err(
+      "[bashwink] evidence collection is OFF (BASHWINK_EVIDENCE=off); this run is not verifiable.",
+    )
+
   const child = Bun.spawn({
     cmd: [runtime.command, ...argv],
-    env: environmentFor(resolved),
+    env: {
+      ...environmentFor(resolved),
+      BASHWINK_RUN_ID: runId,
+      BASHWINK_EVIDENCE_EXPECTED: evidenceEnabled ? "1" : "0",
+    },
     // inherit, not pipe: the TUI needs a real tty and must not be buffered.
     stdio: ["inherit", "inherit", "inherit"],
   })
   const exitCode = await child.exited
+
+  if (evidenceEnabled) {
+    const evidenceFile = path.join(resolved.evidence, "evidence.jsonl")
+    const boot = checkBoot(evidenceFile, runId)
+    const record = finishRun({
+      resolved,
+      runId,
+      exitCode,
+      expected: true,
+      boot,
+      ...(boot.ok ? {} : { detail: boot.reason }),
+    })
+    if (!boot.ok) {
+      err("")
+      err(
+        renderMissingEvidence({
+          record,
+          boot,
+          evidenceFile,
+          logFile: runtimeLogHint(resolved),
+        }),
+      )
+      // 0 from the child now means "the agent ran", not "the work is evidenced". Exit 3 makes
+      // that distinction visible to a script or a CI step instead of a green 0 over an empty log.
+      return { exitCode: exitCode === 0 ? 3 : exitCode, handled: false }
+    }
+  } else {
+    finishRun({
+      resolved,
+      runId,
+      exitCode,
+      expected: false,
+      detail: "evidence disabled via BASHWINK_EVIDENCE=off",
+    })
+  }
+
   return { exitCode, handled: false }
 }
 

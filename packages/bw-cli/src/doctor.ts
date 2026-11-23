@@ -15,8 +15,16 @@
 
 import { existsSync, readFileSync, accessSync, constants } from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { PINNED_RUNTIME_VERSION, RuntimeNotFoundError, resolveRuntime } from "./runtime.js"
-import { paths, type Paths } from "./paths.js"
+import {
+  EVIDENCE_PLUGIN_ID,
+  PluginEntryError,
+  paths,
+  resolvePluginEntry,
+  type Paths,
+} from "./paths.js"
+import { recentRuns, runtimeLogHint } from "./run-health.js"
 import { canonicalWorkspace, isTrusted, readTrust } from "./trust.js"
 
 export type CheckStatus = "ok" | "warn" | "fail"
@@ -215,6 +223,67 @@ export function diagnose(options: DoctorOptions = {}): DoctorReport {
       : `not initialised at ${resolved.database}`,
     ...(existsSync(resolved.database) ? {} : { fix: "run `bashwink plan new` to create it" }),
   })
+
+  // --- evidence plugin ---------------------------------------------------
+  // Static half of the health story: the directory must resolve to an entry the way the
+  // runtime resolves it. The dynamic half is the boot record checked below.
+  const pluginDirectory = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "bw-evidence",
+  )
+  try {
+    const entry = resolvePluginEntry(pluginDirectory)
+    checks.push({
+      id: "evidence-plugin",
+      title: "Evidence plugin",
+      status: "ok",
+      detail: `${EVIDENCE_PLUGIN_ID} resolves to ${entry}`,
+    })
+  } catch (error) {
+    checks.push({
+      id: "evidence-plugin",
+      title: "Evidence plugin",
+      status: "fail",
+      detail: error instanceof PluginEntryError ? error.message : String(error),
+      fix: "the staged plugin would be dropped silently; restore packages/bw-evidence's exports map",
+    })
+  }
+
+  // --- last run ----------------------------------------------------------
+  const last = recentRuns(resolved, 1)[0]
+  if (last === undefined)
+    checks.push({
+      id: "last-run",
+      title: "Last recorded run",
+      status: "warn",
+      detail: "no run records yet; nothing has been checked for silent evidence loss",
+      fix: "run the agent through `bashwink`; each run writes a record under <data>/runs",
+    })
+  else if (last.evidence === "missing")
+    checks.push({
+      id: "last-run",
+      title: "Last recorded run",
+      status: "fail",
+      detail: `${last.runId} expected evidence and recorded none (${last.detail ?? "no boot record"})`,
+      fix: `the runtime log may explain why: ${runtimeLogHint(resolved)}`,
+    })
+  else if (last.evidence === "disabled")
+    checks.push({
+      id: "last-run",
+      title: "Last recorded run",
+      status: "warn",
+      detail: `${last.runId} ran with evidence disabled (BASHWINK_EVIDENCE=off)`,
+      fix: "unset BASHWINK_EVIDENCE to record the next run",
+    })
+  else
+    checks.push({
+      id: "last-run",
+      title: "Last recorded run",
+      status: "ok",
+      detail: `${last.runId}: evidence ${last.evidence} (${last.evidenceEntries ?? 0} entries, exit ${String(last.exitCode ?? "?")})`,
+    })
 
   // --- workspace trust --------------------------------------------------
   try {

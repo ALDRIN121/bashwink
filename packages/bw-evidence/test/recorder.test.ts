@@ -552,3 +552,39 @@ describe("defaults", () => {
     expect(DEFAULT_MAX_TEXT).toBe(2_000)
   })
 })
+
+describe("boot records: proving the plugin initialised", () => {
+  test("writes a boot entry keyed by the wrapper's run id", () => {
+    const recorder = new EvidenceRecorder({ directory: dir, now: fixed })
+    const entry = recorder.recordBoot({
+      plugin: "bashwink-evidence",
+      pid: 4242,
+      cwd: "/work/project",
+      runID: "run_abc",
+      location: "/work/project",
+    })
+
+    expect(entry.phase).toBe("boot")
+    expect(entry.call.id).toBe("boot_run_abc")
+    expect(entry.payload.note).toContain("run=run_abc")
+    expect(entry.payload.note).toContain("pid=4242")
+  })
+
+  test("a chain with a boot entry and a tool call still verifies", () => {
+    const recorder = new EvidenceRecorder({ directory: dir, now: fixed })
+    recorder.recordBoot({ plugin: "bashwink-evidence", pid: 1, cwd: "/", runID: "run_1" })
+    recorder.recordTool("before", call, { input: { command: "ls" } })
+    recorder.recordTool("after", call, { status: "completed", exit: 0 })
+
+    const file = path.join(dir, "evidence.jsonl")
+    const result = verify(file)
+    expect(result.ok).toBe(true)
+    expect(result.entries).toBe(3)
+  })
+
+  test("falls back to a pid-keyed id when no run id is supplied", () => {
+    const recorder = new EvidenceRecorder({ directory: dir, now: fixed })
+    const entry = recorder.recordBoot({ plugin: "bashwink-evidence", pid: 7, cwd: "/" })
+    expect(entry.call.id).toBe("boot_pid_7")
+  })
+})

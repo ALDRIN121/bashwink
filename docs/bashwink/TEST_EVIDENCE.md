@@ -1,11 +1,93 @@
 # Bashwink — Test Evidence Register
 
-**Revision under test:** Bashwink working tree at 2026-11-23 (Phase 1); foundation =
+**Revision under test:** Bashwink working tree at 2026-11-23 (Phase 2 increment 1); foundation =
 OpenCode `v2.3.2` (`c0ad18b402eb2827fc1ee71c171b1177b3fc02d1`).
 **Environment:** macOS 27.0.1, arm64 (Darwin 27.0.0), **Bun 1.4.4** (the exact pinned
 version — the suite was re-run under it, closing the earlier 1.4.5 drift), Git 2.54.0.
-Phase 0 CI evidence is hosted; **Phase 1's evidence below is local**, and says so per row.
+Phase 0 CI evidence is hosted; **Phase 2's evidence below is local**, and says so per row.
 **Evidence is authoritative only if reproducible at this revision.**
+
+## Phase 2 evidence (2026-11-23) — runtime reliability and BW-055
+
+### The defect, reproduced before it was fixed
+
+Run against the real OpenCode binary with a hand-staged plugin, one case per row. The point is
+the last column: a broken plugin did not change the runtime's exit code.
+
+| Case | Runtime exit | Evidence log | What the runtime said |
+| --- | ---: | --- | --- |
+| entry throws at import | 0 | absent | `WARN … message="failed to load plugin" … cause="Cause([Die(Error: probe: import boom)])"` |
+| directory with no resolvable entry | 0 | absent | **nothing** |
+| module with the wrong export shape | 0 | absent | `WARN … Plugin must export a default definition with an id and an effect or setup function` |
+
+The wrapper previously returned the child's `0` verbatim, so all three looked like a successful
+session that happened to call no tools.
+
+### Commands and actual results
+
+All commands run from the repository root with `BASHWINK_OPENCODE_BIN` pointing at the cached
+`@opencode/cli@2.3.2` binary for the runtime-dependent fixtures.
+
+| Command | Exit | Actual output |
+| --- | ---: | --- |
+| `bun --version` | 0 | `1.4.4` |
+| `bun test packages` | 0 | `252 pass / 0 fail / 731 expect() calls`, 13 files, 7.94 s |
+| `bun run lint` (`oxlint --deny-warnings`) | 0 | no findings |
+| `bun run format` (`bun fmt --check`) | 0 | `All 38 files are formatted.` |
+| `bun run typecheck` | 0 | both packages clean |
+| `./fixtures/runtime-health/run.sh` | 0 | `passed: 17  failed: 0  skipped: 0` |
+| `./fixtures/tool-lifecycle/run.sh` | 0 | `passed: 13  failed: 0  skipped: 0` |
+| `./fixtures/contract/run.sh` | 0 | `passed: 14  failed: 0` |
+| `./fixtures/idempotent-resume/run.sh` | 0 | `passed: 10  failed: 0` |
+| `./fixtures/scenario_check.sh` | 0 | `passed: 8 / failed: 0` |
+| `./fixtures/phase1-demo/run.sh` | 0 | `DEMONSTRATION PASSED (8 stages)` |
+| `./fixtures/reset.sh --check` | 0 | `all 5 fixture(s) at baseline` |
+
+### What the runtime-health fixture proves (17 assertions)
+
+1. **Healthy plugin:** the real runtime boots the plugin, a `boot` entry joins the hash chain,
+   and the run record says `evidence=recorded`, `expected=true`.
+2. **Import throw:** wrapper exits **3**, not the child's 0; stderr names the failure and says
+   the run is NOT verified; the run record persists `evidence=missing`; `evidence status`
+   exits 3 and lists it; `doctor` fails its last-run check and prints the runtime log path.
+3. **Unresolvable entry:** staging refuses **before the runtime starts**; the exit is 3, the
+   diagnostic names the resolution rule, and the evidence log does not grow.
+4. **`BASHWINK_EVIDENCE=off`:** the child's exit code is returned, stderr announces the run is
+   unverified, and the record says `evidence=disabled` — distinguishable from `missing`.
+5. The hash chain still verifies after all four cases.
+
+### What the contract fixture proves (14 assertions)
+
+- A derived contract starts at revision 1, draft, with every plan check required.
+- `plan task inspect in_progress` is refused under a draft with the reason and the fix; it is
+  allowed after `contract approve`.
+- An observation moves the matching criterion to `passed` and records one evidence row whose
+  `observationId` is the stored observation.
+- One passing check does not verify a task that declares three.
+- A revision that omits a criterion reports `1 dropped (kept, not deleted)`; the dropped
+  criterion keeps its status, reason and evidence; approval resets to draft.
+- Re-adding a dropped id is refused with exit **1** (not a crash), naming why.
+- A criterion citing an undeclared check is refused before storage.
+- Revision history reads back across a process boundary: 2 revisions, current = 2.
+
+### Unit and integration tests added (64)
+
+| File | Tests | Covers |
+| --- | ---: | --- |
+| `packages/bw-cli/test/runtime-health.test.ts` | 16 | plugin entry resolution, staging refusal, run records, boot detection, tamper detection |
+| `packages/bw-cli/test/contract.test.ts` | 22 | schema validation, path rules, transitions, execution gate |
+| `packages/bw-cli/test/contract-store.test.ts` | 19 | migration v2, round-trip, revision sequencing, drop semantics, evidence linkage |
+| `packages/bw-cli/test/contract-cli.test.ts` | 4 | the lifecycle through real subprocesses |
+| `packages/bw-evidence/test/recorder.test.ts` | +3 | `boot` entries in the chain |
+
+### What this does NOT prove
+
+- No Windows run; the new CI job covers Linux and macOS only.
+- The boot record proves `setup()` completed, not that a tool ran. A zero-tool session is
+  legitimate and still recorded.
+- Running the OpenCode binary directly bypasses the wrapper's health check by design.
+- The contract gates task *start*, not each file/shell action (BW-059).
+- No real-model run: every agent turn used the local mock provider.
 
 ## Phase 1 evidence (2026-11-23) — implemented and locally verified
 
@@ -583,9 +665,13 @@ both bash-4 syntax. Upstream files were **not** patched (BW-002 says document fi
 
 ## Claims explicitly NOT made
 
-- No Linux or Windows run of any command.
-- The GitHub Actions workflow has **never been executed** — it is unverified YAML.
+- No Windows run of any command. Linux and macOS are covered by CI.
+- No real-model agent run; every agent turn used the local mock provider (ADR-006).
 - `ctx.event.subscribe` and `permission.hook("evaluate")` are source-verified only, never
   exercised.
-- The wrapper CLI (ADR-003) is not implemented.
-- No real-model agent run has been performed; all agent turns used the mock provider.
+- Upstream files were not patched (BW-002).
+- Evidence health is proven at plugin start-up, not continuously through a session.
+- The TaskContract gates task start; it does not yet police individual file or shell actions
+  (BW-059), and there is no interactive edit/assumption-ledger UX (BW-056).
+- No claim is made that a green CI run on this repository proves the same on an untested
+  platform or a different runtime version.

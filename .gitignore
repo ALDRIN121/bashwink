@@ -22,6 +22,8 @@ fixtures/*/
 !fixtures/idempotent-resume/
 !fixtures/tool-lifecycle/
 !fixtures/phase1-demo/
+!fixtures/runtime-health/
+!fixtures/contract/
 
 # macOS
 .DS_Store

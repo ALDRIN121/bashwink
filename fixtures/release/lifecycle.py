@@ -188,7 +188,7 @@ def scenario_repeat(inst):
 def scenario_no_space(inst):
     """State directory on a full volume: the launch must refuse clearly, leave nothing running."""
     image = inst.work / "full.dmg"
-    subprocess.run(["/usr/bin/hdiutil", "create", "-size", "8m", "-fs", "APFS", "-volname", "bwfull", "-ov", str(image)], check=True, capture_output=True)
+    subprocess.run(["/usr/bin/hdiutil", "create", "-size", "24m", "-fs", "HFS+", "-volname", "bwfull", "-ov", str(image)], check=True, capture_output=True)
     attach = subprocess.run(["/usr/bin/hdiutil", "attach", "-nobrowse", "-noverify", str(image)], check=True, capture_output=True, text=True).stdout
     mount = re.search(r"(/Volumes/\S+)\s*$", attach.strip().splitlines()[-1])
     if mount is None:
@@ -199,19 +199,32 @@ def scenario_no_space(inst):
         # A fully configured, approved installation whose STATE lives on the small volume.
         shutil.copytree(inst.home / ".config/bashwink", volume / "bw")
         filler = volume / "filler"
-        with filler.open("wb") as handle:
-            try:
-                while True:
-                    handle.write(b"\0" * (1 << 20))
-                    handle.flush()
-            except OSError:
-                pass
+        with filler.open("wb", buffering=0) as handle:  # unbuffered: errors surface at the write, not at close
+            for chunk in (1 << 20, 1 << 12, 1 << 9, 1):
+                try:
+                    while True:
+                        handle.write(b"\0" * chunk)
+                except OSError:
+                    continue  # retry with a smaller chunk until not a single byte fits
         free = shutil.disk_usage(volume).free
+        check("full state volume: the volume really is full", free < 4096, f"{free} bytes free")
         before, stages = set(vm_processes()), stage_dirs()
         env = {**inst.env, "BASHWINK_HOME": str(volume / "bw")}
-        result = subprocess.run([inst.bw], cwd=inst.project, env=env, capture_output=True, text=True, timeout=120)
-        out = result.stdout + result.stderr
-        check("full state volume: the launch refuses (nonzero) instead of hanging", result.returncode != 0, f"exit {result.returncode}, volume free {free} bytes")
+        with terminal([inst.bw], inst.project, env) as (pid, master, contains, finish, capture):
+            wait_for(lambda: contains("No model request was made") or contains("Ask anything"), 90)
+            time.sleep(1)
+            contains("")
+            reached_tui = b"Ask anything" in bytes(capture)
+            out = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", bytes(capture).decode(errors="replace"))
+            if reached_tui:
+                os.write(master, b"\x04")
+            try:
+                finish(3)
+                code = 3
+            except AssertionError as error:
+                found = re.match(r"\((-?\d+|None),", str(error))
+                code = found[1] if found else "?"
+        check("full state volume: the launch refuses (exit 3) and never reaches the TUI", code == 3 and not reached_tui, f"exit {code}, volume free {free} bytes")
         check("full state volume: the message names the real cause (no space)", "no space left" in out.lower() or "enospc" in out.lower(), " ".join(out.split())[:240])
         check("full state volume: the launch stopped before any model request", "No model request was made" in out or "provider usage" not in out)
         check("full state volume: no VM process or stage directory was created", not settle(before, 3) and stage_dirs() - stages == set())
@@ -237,10 +250,14 @@ def scenario_owner_fails(inst):
     digests = {n: hashlib.sha256((lib / "offline-vm" / n).read_bytes()).hexdigest() for n in ("vm-owner", "Image", "initramfs")}
     (lib / "offline-vm.json").write_text(json.dumps({"version": 2, "relay": True, "sha256": digests}))
     state = inst.work / "owner-fails-state"
-    env = {**inst.env, "BASHWINK_HOME": str(state), "BASHWINK_VM_PROVIDER": "commandcode"}
+    env = {**inst.env, "BASHWINK_HOME": str(state), "BASHWINK_VM_PROVIDER": "commandcode",
+           "PATH": inst.env["PATH"] + ":" + str(Path(shutil.which("bun")).parent)}
     for args in (["auth", "add", "commandcode", "--base-url", BASE, "--key-file", str(inst.work / "bogus.key"), "--model", "claude-sonnet-5:anthropic"],
                  ["model", "use", "commandcode/claude-sonnet-5"], ["trust", str(inst.project), "--by", "lifecycle"]):
-        subprocess.run([root / "bin/bashwink", *args], cwd=inst.project, env=env, check=True, capture_output=True)
+        done = subprocess.run([root / "bin/bashwink", *args], cwd=inst.project, env=env, capture_output=True, text=True)
+        if done.returncode != 0:
+            check(f"owner-fails setup: bashwink {' '.join(args[:2])}", False, (done.stdout + done.stderr).strip()[:300])
+            return
     before, stages = set(vm_processes()), stage_dirs()
     with terminal([root / "bin/bashwink"], inst.project, env) as (pid, master, contains, finish, capture):
         wait_for(lambda: contains("VM owner exited"), 60)

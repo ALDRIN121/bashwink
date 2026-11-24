@@ -1,5 +1,29 @@
 # Bashwink — Test Evidence Register
 
+## macOS shell VM feasibility and interrupted export (2026-11-24)
+
+Source revision `22fc13aea0e3a27c6bbd1283d8e224d8fac58056`. macOS arm64 27.0.1
+(26A434). Local CLI tests used Bun 1.4.4 and native OpenCode v2.3.2. The VM lab used
+Alpine 3.23.8 arm64, two vCPUs, 512 MiB RAM, and a private 8 MiB raw stage disk.
+No Docker runtime, host project share, provider credential or network device was used.
+
+| Command or control | Exit | Result |
+| --- | ---: | --- |
+| `python3 fixtures/native-offline/vm-boundary.py <pinned-input-directory>` | 0 | **PASS at lab tier**. The guest shell read and wrote the private disk. Its worker entered a new session, verified inherited FD 3 was closed, and advanced a marker observed on the host. Attempts to write the protected host path and reach a synthetic listener failed. The host positive connection succeeded and the protected host hash stayed unchanged. |
+| Whole-VM forced stop, abrupt owner death, and guest reopen in the same lab | owner 0, -9, 0 | **PASS at lab tier**. A concurrent launch returned 8 on the host lock while the writer was live. After each stop, the host acquired the lock and independently observed a stable disk marker for two seconds. The final markers were 3, 6 and 9. Reopen after SIGKILL saw marker 6 on the same disk inode. Boot to the guest's detached-worker control took 1.21, 1.00 and 1.02 seconds. No interactive OpenCode latency was measured. |
+| Initial image diagnosis | owner 7 | An EFI-wrapped Alpine kernel passed VZ configuration validation and failed to start with `VZErrorDomain` code 1. Extracting the checksum-pinned raw ARM64 Image from the same artifact allowed boot. |
+| `python3 fixtures/native-offline/export-reconciliation.py <installed> <runtime>` | 0 | **PASS**. PTY approval followed by exporter SIGKILL before exchange discarded the unused proposal with no commit receipt. SIGKILL immediately after exchange, after receipt publication, and after displaced-file cleanup each reconciled to the same approved inode and digest. The host observer verified the original file before cleanup and refused a divergent host edit and the wrong directory. Retry did not change the inode, receipt, protected canary or evidence chain. |
+| Installed `recovery.py`, `lifetime.py`, `process-policy.py`, and `admission-shutdown.ts` | 0 each | **PASS**. File-only PTY turns, saved session recovery, live-writer protection and single-file approval still worked. Environment and alternate flag inputs could not enable shell. A legacy stage without a file-only destination was refused with both reopen flags. Seatbelt still denied fork and spawn with EPERM. |
+| Pinned Bun tests, typecheck, Oxlint, format, lint gate | 0 each | **PASS**. 403 tests across 23 files and 1,161 assertions. 62 formatted files and six lint-gate controls. |
+| Local OpenCode runtime health, tool lifecycle, contract, and idempotent resume | 0 each | **PASS**. 11, 19, 14 and 10 controls with the pinned runtime. |
+| Evidence verification, documentation manifest, task summary and license inventory | 0 each | **PASS**. Nine reopened chain entries verified. The register and license inventory remained consistent. |
+| Qualification validator tests and candidate release gate | 0 and 1 | Four validator tests passed. The candidate gate refused incomplete macOS and Ubuntu qualification. |
+| Hosted CI, installed VM-backed Bashwink, real provider, abrupt death of a CLI separate from the VM owner, export during system power loss | — | **NOT_RUN**. Hosted Actions remain paused for quota. |
+| Ubuntu and external alpha | — | **BLOCKED**. No supported Linux host was available. The shell prototype does not enable a Bashwink backend or satisfy release qualification. |
+
+[Shell containment decision](BW-031_IMPLEMENTATION_REPORT.md#macos-shell-containment-decision) ·
+[Qualification results](BW-032_QUALIFICATION_RESULTS.md).
+
 ## Native file-only workload lifetime (2026-11-24)
 
 Source revision `35a59ec3a6bd75dcdb237816152d415b7b049994`. Clean local installation

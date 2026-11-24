@@ -45,6 +45,9 @@ remains open. The ordinary local backend still runs commands with the user's hos
 **BW-031 and BW-032 remain In progress (PARTIAL).** The experimental macOS file-only
 offline profile has tested Seatbelt confinement and stage protection through launcher
 SIGKILL. Shell-capable startup is disabled after the detached-writer failure.
+File-only single-file export now has interruption reconciliation. A disposable
+Virtualization.framework guest demonstrated detached-writer teardown. Packaged
+OpenCode shell admission and end-to-end VM lifecycle qualification remain open.
 Ubuntu qualification, live provider connectivity, and external alpha remain blocked.
 [Qualification results](BW-032_QUALIFICATION_RESULTS.md).
 

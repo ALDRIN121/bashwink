@@ -5,6 +5,13 @@ Native coding admission awaits integration and qualification. The existing Phase
 dependencies and external-alpha hold still apply.
 [Architecture and trade-offs](BW-031-SANDBOX-PROPOSAL.md) · [BW-032 platform qualification](BW-032_PLATFORM_QUALIFICATION.md).
 
+The current macOS shell decision keeps Seatbelt file-only. A separate
+Virtualization.framework prototype demonstrated whole-guest lifetime in a lab.
+The next shell milestone places the pinned OpenCode runtime in that guest and
+qualifies the installed PTY, launcher-to-owner lifecycle and stage retirement.
+The VM remains an explicit candidate backend with no user-managed runtime requirement.
+[Shell containment decision](BW-031_IMPLEMENTATION_REPORT.md#macos-shell-containment-decision).
+
 ## Installation and launch contract
 
 | Selection | Startup and failure behavior |

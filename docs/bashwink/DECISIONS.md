@@ -108,6 +108,15 @@ stays quarantined. Shell-capable native startup is disabled pending demonstrated
 whole-workload supervision.
 [Milestone report](BW-031_IMPLEMENTATION_REPORT.md) · [Qualification](BW-032_QUALIFICATION_RESULTS.md).
 
+## macOS shell boundary (2026-11-24)
+
+Evaluate a signed Apple Virtualization.framework helper for an explicit shell-capable
+profile. Keep the normal workflow Docker-free and free of user-managed VMs and daemons.
+Whole-guest stop is the candidate lifetime boundary. The existing file-only Seatbelt
+profile remains available, and native shell admission stays disabled pending installed
+OpenCode, stage retirement and platform qualification. Optional Docker remains separate.
+[Feasibility and alternatives](BW-031_IMPLEMENTATION_REPORT.md).
+
 ## Decision template
 
 ### ADR-XXX — Decision title

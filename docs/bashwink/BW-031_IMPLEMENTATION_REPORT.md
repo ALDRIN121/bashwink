@@ -94,6 +94,16 @@ retains it if a concurrent mutation makes recovery ambiguous. This fixture suppo
 one file and preserves ordinary permission bits. General project import, extended
 file metadata, and atomic transactions across files remain unqualified.
 
+If the exporter is interrupted, run `bashwink sandbox recover-export <root>` from
+the original host directory. An intent binds the approved digest, prepared inode,
+original destination and stage lock before exchange. The host records a durable
+receipt only after it verifies the exact installed file and displaced base. Recovery
+checks that same state under the stage lock, preserves ambiguous files and never
+repeats the exchange. A missing intent, replaced destination or divergent content
+keeps the stage quarantined. The receipt is host-side and leaves the session evidence
+chain intact. Tests cover process interruption on the recorded macOS build. Power-loss
+resilience and multi-file transactions remain unqualified.
+
 ## Workload lifetime and interruption
 
 The historical shell fixture produced a disowned writer with parent PID 1 and a process
@@ -115,8 +125,52 @@ requires competing exclusive lock acquisition and a saved proof binding the
 stage, lock, and profile. It checks the evidence prefix and retires recognized
 readiness files and the activation interlock. It never sends signals to persisted
 process IDs. A live writer, incomplete activation proof, corrupt evidence or
-interrupted export keeps the stage closed. Export takes the same lock and still
+unreconciled export keeps the stage closed. Export takes the same lock and still
 requires a separate reviewed apply. [Test evidence](TEST_EVIDENCE.md).
+
+## macOS shell containment decision
+
+Keep the current file-only profile available and develop shell execution as an
+explicit, Docker-free Apple Virtualization.framework backend. The VM should be
+owned by one trusted host process and contain the complete pinned Linux OpenCode
+runtime, including tool code and subprocesses. Use a private staged disk, omit
+shared directories and network devices, and make terminal and provider access
+separate host interfaces. A future provider relay may use a narrow authenticated
+virtio socket with checks on provider, operation, data size and request budget.
+Provider credentials and approval remain on the host. The VM and relay must refuse
+startup on an unsupported host or failed attestation.
+[Apple Virtualization](https://developer.apple.com/documentation/virtualization/vzvirtualmachine) · [Apple virtio sockets](https://developer.apple.com/documentation/virtualization/vzvirtiosocketdevice).
+
+| Option | Boundary and failure behavior | Installation, portability and maintenance |
+| --- | --- | --- |
+| Seatbelt with stronger host supervision | Filesystem and network restrictions can survive shell dispatch. A detached host process escaped the available process-group cleanup. FD ownership and process observers cannot establish shell quiescence if code can close descriptors or reparent. | The system helper is already present on the test Mac and adds little startup cost. It is deprecated. Maintaining stronger tracking without a demonstrated OS-owned workload boundary would add security-critical complexity. |
+| Apple Virtualization.framework | VM stop targets the guest CPU and devices irrespective of guest process groups. A private disk and no host shares exclude the host filesystem. A NIC-free VM needs a separately authenticated host relay. VM-owner death must be qualified separately from host CLI death when they use distinct processes. | Apple system framework requires an entitled signed helper and a guest kernel/userland. No third-party runtime daemon or user-managed VM is required by the proposed backend. Apple documents Linux guests for both CPU families. The fixture qualifies only Apple silicon on the tested build. Boot is a separate cost and interactive latency is unmeasured. Bashwink would own guest updates, signing, and image notices. |
+| Apple Containerization | The package uses a Linux VM per workload and offers OCI image handling. The CLI also has a host service and default network. Deployment would have to prove owner-death handling, network refusal and credential separation with the selected integration. | Apache-2.0 library. Current macOS build targets Apple silicon and macOS 26 or later with Xcode 26. The CLI requires a separate installation. Upstream advertises fast starts. Bashwink has no measurements. Embedding the library adds an upstream Swift dependency and guest kernel maintenance. |
+| Docker-backed execution | Docker Desktop runs Linux containers in a VM. Files and credentials remain exposed if bind mounted. Use an isolated backend with networking disabled and no Docker socket in the guest. A daemon can outlive the Bashwink launcher, so abrupt-death cleanup needs its own proof. | Separate engine installation and startup with Docker Desktop subscription terms on macOS. Useful as an optional backend. Startup and PTY latency depend on engine and image state, and were unmeasured. |
+| File-only Seatbelt | The existing no-fork profile has verified filesystem controls, single-file reviewed export, and safe retirement under the inherited lock. Shell is disabled at admission. | No daemon or guest image. Installed real offline TUI verified on one macOS arm64 build. The narrow profile remains the lowest-maintenance verified mode. |
+
+[Apple Containerization and license](https://github.com/apple/containerization) ·
+[Apple container CLI and requirements](https://github.com/apple/container) ·
+[Docker Desktop host boundary](https://docs.docker.com/desktop/setup/install/mac-permission-requirements/) ·
+[Docker Desktop licensing](https://docs.docker.com/subscription-billing/desktop-license/) ·
+[Docker none network driver](https://docs.docker.com/engine/network/drivers/none/).
+
+The disposable `fixtures/native-offline/vm-boundary.py` uses Apple Virtualization
+directly with a pinned Alpine test kernel and userland. It has no Bashwink CLI
+integration or provider relay. The guest inputs are fetched from the official Alpine
+archive and checked against the fixture digests. They are supplied outside the
+checkout and outside Bashwink packaging. Review guest component licenses and source
+obligations before distributing a product image.
+[Pinned Alpine archive](https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/aarch64/) · [Executed evidence](TEST_EVIDENCE.md).
+
+To repeat the VM lab, place the following Alpine 3.23.8 aarch64 files in a disposable
+input directory. Save `netboot-3.23.8/vmlinuz-virt` as `vmlinuz`,
+`netboot-3.23.8/initramfs-virt` as `initramfs-official`, and
+`alpine-minirootfs-3.23.8-aarch64.tar.gz` as `root.tar.gz`. Run
+`python3 fixtures/native-offline/vm-boundary.py <input-directory>` on Apple silicon
+with Apple command-line build tools. The lab signs a temporary helper with the
+virtualization entitlement. It compiles and runs outside the checkout, with a synthetic
+disk and without installing a service.
 
 ## Open work in order
 
@@ -127,9 +181,10 @@ requires a separate reviewed apply. [Test evidence](TEST_EVIDENCE.md).
 2. Run native mounts, network namespace, seccomp and lifecycle controls with the distro
    Bubblewrap on an AppArmor-enabled host. Keep the macOS deny profile small and qualify
    it on each advertised release.
-3. Close the observed descendant survival gap and qualify interruption recovery for
-   shell-capable stages. Extend reviewed export only after defining a portable project
-   transaction and qualifying host metadata and write conflicts.
+3. Build a guest OpenCode PTY fixture under Virtualization.framework. Qualify the
+   launcher-to-owner lifetime, sealed stage transfer and retirement proof before
+   adding shell-capable CLI admission. Extend reviewed export only after qualifying
+   a portable project transaction, host metadata and write conflicts.
 4. Implement the narrow host provider relay with credential separation. Qualify its
    negative controls, then exercise an authorized live provider and model switching.
 5. Verify detached cleanup, resource limits and clean Docker-free installs through BW-032.

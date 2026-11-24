@@ -7,11 +7,11 @@ alpha remains conditional, and external alpha remains blocked. [Current test evi
 1. Reproduce the Ubuntu readiness failure with the pinned Linux binaries on a disposable
    Linux machine. Use the local substep diagnostics to identify the failing stage and qualify
    the fix before closing BW-018 and BW-030. Keep additional hosted runs paused.
-2. Design and verify a workload lifetime boundary for the shell-capable Seatbelt profile.
-   The detached fixture survived both owned processes. Shell-capable startup remains
-   disabled until surviving writers can be ruled out. For the admitted file-only
-   profile, verify the inherited-lock design on each supported macOS release and
-   define host reconciliation for an incomplete activation or interrupted export.
+2. Run pinned Linux OpenCode in an entitled Virtualization.framework fixture with a
+   real PTY and a private guest disk. Keep shell-capable startup disabled until the
+   launcher-to-owner lifetime and stage retirement are independently verified. For
+   file-only Seatbelt, qualify the inherited-lock and export recovery design on each
+   supported macOS release. Keep ambiguous stage state quarantined.
 3. Add the narrow host provider channel, then run BW-032 using clean Docker-free installs
    on each advertised platform. Hold external alpha until the real runtime, provider and
    OS-level negative controls pass. Optional Docker has a separate qualification path.

@@ -403,6 +403,51 @@
       "verdict": "PASS",
       "exitCode": 0,
       "reason": ""
+    },
+    {
+      "id": "vm-guest-detached-lifetime",
+      "tier": "vm-prototype",
+      "platform": "macos-arm64",
+      "backend": "apple-virtualization-fixture",
+      "commit": "22fc13aea0e3a27c6bbd1283d8e224d8fac58056",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/vm-boundary.py <pinned-input-directory>",
+      "expected": "Observe detached guest writes cease on forced VM stop and abrupt VM owner death, then reopen the same private stage.",
+      "observed": "New-session worker closed FD 3 and wrote observed markers. Forced stop and owner SIGKILL froze the stage. Concurrent open refused. Fresh VM reopened the same disk and read the previous marker.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 0,
+      "reason": ""
+    },
+    {
+      "id": "vm-guest-files-and-network",
+      "tier": "vm-prototype",
+      "platform": "macos-arm64",
+      "backend": "apple-virtualization-fixture",
+      "commit": "22fc13aea0e3a27c6bbd1283d8e224d8fac58056",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/vm-boundary.py <pinned-input-directory>",
+      "expected": "Run a guest shell with private stage storage and refuse host file and network access.",
+      "observed": "Guest shell wrote to its raw stage, received a denial on the protected path, saw only loopback, and did not reach the host listener. Host canary and positive control verified.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 0,
+      "reason": ""
+    },
+    {
+      "id": "file-only-export-exchange-reconciliation",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "22fc13aea0e3a27c6bbd1283d8e224d8fac58056",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/export-reconciliation.py <installed> <runtime>",
+      "expected": "Reconcile one approved atomic exchange after process death without a duplicate apply or false commit.",
+      "observed": "Pre-exchange death produced no receipt. Three post-exchange fault points preserved the approved target inode, host canary and model evidence. Ambiguous host edits and wrong directory were refused.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 0,
+      "reason": ""
     }
   ],
   "qualification": [
@@ -469,7 +514,7 @@
       "observed": "The historical disowned shell writer survived both owned OpenCode processes and wrote into staging after shutdown.",
       "evidence": "BW-032_QUALIFICATION_RESULTS.md",
       "verdict": "FAIL",
-      "reason": "Shell-capable startup is now disabled. The current no-fork controls qualify only the file-only fixture."
+      "reason": "Shell-capable startup is disabled. Whole-VM teardown passed a synthetic guest lab. Installed OpenCode and launcher-to-owner lifecycle remain unqualified."
     },
     {
       "id": "network-and-provider-transport",
@@ -521,7 +566,7 @@
       "observed": "No release-tier evidence",
       "evidence": "BW-032_QUALIFICATION_RESULTS.md",
       "verdict": "BLOCKED",
-      "reason": "File-only fixture reopen, verified retirement after launcher death and approved one-file export passed. Shell-capable recovery, interrupted export reconciliation and general project export remain open."
+      "reason": "File-only reopen, verified retirement and interrupted one-file export recovery passed. Shell-capable session recovery and general project export remain open."
     },
     {
       "id": "unsupported-host-and-no-fallback",

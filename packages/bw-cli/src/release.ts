@@ -22,10 +22,18 @@ declare const __BASHWINK_RELEASE__: boolean | undefined
 declare const __BASHWINK_ASSET_MANIFEST_SHA256__: string | undefined
 declare const __BASHWINK_QUALIFIED_HOSTS__: string | undefined
 declare const __BASHWINK_GUEST__: boolean | undefined
+declare const __BASHWINK_STANDARD__: boolean | undefined
 
 /** True only in a bundle built by the release script. */
 export const RELEASE_BUILD: boolean =
   typeof __BASHWINK_RELEASE__ !== "undefined" && __BASHWINK_RELEASE__ === true
+
+/**
+ * True only in the npm "standard" bundle: native, permission-controlled execution is the default, the VM
+ * backend is not installed, and no environment variable can select a different backend or provider path.
+ */
+export const STANDARD_BUILD: boolean =
+  typeof __BASHWINK_STANDARD__ !== "undefined" && __BASHWINK_STANDARD__ === true
 
 /**
  * True only in the bundle that runs inside the VM guest. The guest's own boundary is the VM,
@@ -41,7 +49,8 @@ export function expectedAssetManifestDigest(): string | undefined {
     : undefined
 }
 
-export type ExecutionMode = "isolated-vm" | "unrestricted-host" | "development-host"
+export type ExecutionMode =
+  "isolated-vm" | "standard-native" | "unrestricted-host" | "development-host"
 
 export const UNRESTRICTED_FLAG = "--unsafe-local"
 
@@ -69,6 +78,12 @@ export function describeMode(mode: ExecutionMode, detail?: string): ModeDescript
         "ISOLATED VM — the agent works on a copy of this project inside a network-less virtual " +
           "machine" +
           (detail === undefined ? "." : ` (${detail}).`),
+      )
+    case "standard-native":
+      return make(
+        "STANDARD",
+        "STANDARD — native, permission-controlled. Commands you approve run on this computer as you; this is " +
+          "NOT an operating-system sandbox. Risky actions ask first and denials are enforced.",
       )
     case "unrestricted-host":
       return make(
@@ -236,6 +251,7 @@ export type StartupFailureCode =
   | "workspace-not-approved"
   | "no-terminal"
   | "unsupported-invocation"
+  | "sandbox-unavailable"
   | "acknowledgment-required"
 
 /** Thrown for any failure that must stop a launch before a model request or a tool call. */

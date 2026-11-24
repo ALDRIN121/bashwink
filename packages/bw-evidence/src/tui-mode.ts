@@ -23,6 +23,13 @@ const LABELS: Readonly<Record<string, ModeLabel>> = {
       "Working on a copy inside a network-less VM. Your project changes only when you review and apply.",
     variant: "info",
   },
+  "standard-native": {
+    indicator: "STANDARD - native, not a sandbox",
+    title: "Bashwink · STANDARD MODE",
+    message:
+      "Native and permission-controlled, not a sandbox. Approved commands run as you; risky actions ask first.",
+    variant: "info",
+  },
   "unrestricted-host": {
     indicator: "UNSAFE LOCAL MODE",
     title: "Bashwink · UNRESTRICTED HOST ACCESS",

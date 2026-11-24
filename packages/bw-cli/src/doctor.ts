@@ -29,6 +29,7 @@ import { recentRuns, runtimeLogHint } from "./run-health.js"
 import { canonicalWorkspace, isTrusted, readTrust } from "./trust.js"
 import { credentialSummary, runAuthCommand, runModelCommand } from "./providers-cli.js"
 import { selectBackend } from "./execution-backend.js"
+import { STANDARD_BUILD } from "./release.js"
 
 export type CheckStatus = "ok" | "warn" | "fail"
 
@@ -405,7 +406,7 @@ export function diagnose(options: DoctorOptions = {}): DoctorReport {
     })
   } else
     try {
-      const backend = selectBackend(env["BASHWINK_BACKEND"])
+      const backend = selectBackend(STANDARD_BUILD ? "standard-native" : env["BASHWINK_BACKEND"])
       checks.push({
         id: "execution-backend",
         title: "Execution boundary",

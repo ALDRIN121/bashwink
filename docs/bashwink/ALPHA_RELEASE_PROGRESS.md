@@ -71,13 +71,28 @@ layout is the *optional sandbox* artifact now.
 
 ADR-015 (standard default, sandbox optional), ADR-016 (future engines, direction only), ADR-013/014 (sandbox mechanisms).
 
+## Done since the baseline (local commit; usage limit reached mid-milestone)
+
+- **Standard flavor** (`__BASHWINK_STANDARD__`): native default, mode `standard-native` (label `STANDARD`, persistent TUI
+  line "STANDARD - native, not a sandbox"), `--sandbox` fails closed and is recorded (`sandbox-unavailable`), the
+  environment cannot select the VM/backend/provider path, the runtime must be passed by the launcher (never found on
+  PATH), sandbox subcommands refused, first-run trust offer (declining is allowed; the session stays read-only).
+  9 new tests; full suite **524 pass**; lint and typecheck clean.
+- **npm launcher** `release/npm/bin/bashwink.js` (CommonJS, Node >=18): platform plan (Windows ARM64 refused explicitly),
+  finds the pinned `bun` and `@opencode/cli` platform binaries as npm-installed dependencies, passes
+  `BASHWINK_OPENCODE_BIN`. `release/npm/package.json` is the package manifest (exact pins, `prepublishOnly` blocks
+  publishing).
+- **`scripts/build_npm_package.py`**: assembles the package, `npm pack`, audits the tarball. First run produced a
+  186 KB / 15-file tarball and **failed its own audit**: `package/lib/evidence/src/recorder.ts` contains the string
+  `/Users/me/` (almost certainly an example in a comment). Triage it (change the example, do not weaken the audit).
+
 ## Next exact engineering actions (in order)
 
-1. Add a **standard** build flavor: native default, `--sandbox` fail-closed (not installed in the npm package), mode label
-   `STANDARD`, no `BASHWINK_BACKEND` override, runtime path from the launcher.
-2. Build `scripts/build_npm_package.*`: assemble `dist/npm/` (package.json without `workspace:*`, `bin/bashwink.js` Node
-   launcher, bundled CLI, evidence plugin, notices), run `npm pack`, inspect contents, `npm install -g` into a temporary
-   prefix, run `bashwink --version`, `doctor`, a PTY TUI smoke and a fixture project. macOS arm64 first.
+1. Fix the `/Users/me/` audit finding, rebuild, then `npm install -g --prefix <tmp> build/npm/bashwink-0.1.0-alpha.1.tgz`,
+   run `bashwink --version`, `doctor`, a PTY TUI smoke and a fixture project (macOS arm64 first). **Unverified:** that the
+   evidence plugin loads without a nested `node_modules/@opencode/plugin` (npm does not pack nested node_modules) and that
+   the Windows platform packages contain `bin/bun.exe` / `bin/opencode.exe` (launcher tries both names).
+2. Add the standard-mode PTY/fixture checks to the runner and a `windows-latest` CI job.
 3. Windows portability audit of shared code (symlink staging → junction/copy, Unix tool calls, `process.getuid`, paths,
    signals); add unit tests that run everywhere; add a `windows-latest` CI job; write the Windows x64 qualification script
    and manual checklist. Real Windows qualification stays BLOCKED until hardware exists.

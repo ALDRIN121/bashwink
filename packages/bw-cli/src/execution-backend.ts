@@ -186,12 +186,19 @@ export const makeBackend = (
 
 export const localBackend = makeBackend(localCapabilities)
 
+/**
+ * The standard product's backend: native execution on the host, governed by the run's policy (workspace
+ * trust, scope, approvals, denials). It is not an operating-system boundary, and its capabilities say so.
+ */
+export const standardBackend = makeBackend({ ...localCapabilities, mode: "standard-native" })
+
 /** Host execution that a release build offers only after a typed acknowledgment. */
 export const unrestrictedBackend = makeBackend(unrestrictedCapabilities)
 
 export function selectBackend(mode = "local"): ExecutionBackend {
   if (mode === "local") return localBackend
   if (mode === "unrestricted-host") return unrestrictedBackend
+  if (mode === "standard-native") return standardBackend
   if (mode === "native")
     throw new Error(
       "native coding sessions are not qualified; use bashwink sandbox probe for offline checks",

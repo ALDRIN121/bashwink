@@ -88,3 +88,47 @@ export function requireWorkspaceApproval(input: {
   )
   return "granted"
 }
+
+/**
+ * Standard mode's first-run trust question. Unlike the VM approval it does not refuse when the answer is
+ * no: an untrusted workspace is still usable read-only (the policy denies writes, shell, network, web and
+ * automation there). It never asks without a terminal, and never answers for the user.
+ */
+export function offerWorkspaceTrust(input: {
+  readonly configDirectory: string
+  readonly workspace: string
+  readonly io: AcknowledgmentIO
+  readonly user: string
+  readonly now?: () => Date
+}): "already" | "granted" | "declined" | "not-asked" {
+  const file = path.join(input.configDirectory, "trust.json")
+  const workspace = canonicalWorkspace(input.workspace)
+  const trust = readTrust(file)
+  if (isTrusted(trust, workspace)) return "already"
+  if (!input.io.interactive) return "not-asked"
+  input.io.write(
+    [
+      `First time in ${workspace}`,
+      ``,
+      `Bashwink runs here in STANDARD mode: native and permission-controlled. It is NOT a sandbox.`,
+      `  - Trusted: the agent may edit files in this folder. Shell and network commands still ask each time.`,
+      `  - Not trusted: it can read files but cannot write, run commands or use the network.`,
+      `  - Anything you approve runs as you and can reach whatever you can reach.`,
+      `  - File contents and prompts are sent to your configured model provider.`,
+      ``,
+      ``,
+    ].join("\n"),
+  )
+  const answer = input.io.readLine("Trust this folder? [y/N] ")
+  if (answer === null || !/^(y|yes)$/i.test(answer.trim())) return "declined"
+  writeTrust(
+    file,
+    grantTrust(
+      trust,
+      workspace,
+      `interactive:${input.user}`,
+      (input.now ?? (() => new Date()))().toISOString(),
+    ),
+  )
+  return "granted"
+}

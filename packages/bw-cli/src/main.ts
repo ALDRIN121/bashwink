@@ -55,6 +55,7 @@ import {
   AcknowledgmentError,
   GUEST_BUILD,
   RELEASE_BUILD,
+  STANDARD_BUILD,
   STARTUP_FAILURE_LOG,
   StartupError,
   UNRESTRICTED_FLAG,
@@ -77,6 +78,7 @@ import {
 import { assertVmProjectRevision, openVmProject } from "./vm-project.js"
 import { recoverVmProject, reviewVmProject, vmProjectApplyPending } from "./vm-project-apply.js"
 import { SESSION_ID } from "./native-stage.js"
+import { offerWorkspaceTrust } from "./workspace-approval.js"
 import { listStages, purgeStages, renderStageReports } from "./vm-stages.js"
 
 /** Value of `--flag value` or `--flag=value`, or undefined. First occurrence wins. */
@@ -137,7 +139,7 @@ function err(text: string): void {
 function startupFailure(error: unknown, mode: ExecutionMode): MainResult {
   const message = error instanceof Error ? error.message : String(error)
   err(`${mode === "isolated-vm" ? "isolated VM" : "bashwink"}: ${message}`)
-  if (RELEASE_BUILD) {
+  if (RELEASE_BUILD || STANDARD_BUILD) {
     const code =
       error instanceof StartupError
         ? error.code
@@ -178,8 +180,26 @@ export async function main(input: readonly string[]): Promise<MainResult> {
       argv = input.slice(1)
     }
   }
+  if (STANDARD_BUILD && argv.includes("--sandbox")) {
+    // Sandbox mode is a separately qualified, optional artifact. This package does not contain it, so
+    // asking for it must fail closed rather than run the agent natively.
+    return startupFailure(
+      new StartupError(
+        "sandbox-unavailable",
+        "sandbox mode is not installed. It is an optional, separately qualified component that this " +
+          "package does not include, so Bashwink will not start. Run plain `bashwink` for standard " +
+          "(native, permission-controlled) mode, which is not an operating-system sandbox.",
+      ),
+      "isolated-vm",
+    )
+  }
   const [first, ...rest] = argv
-  const offlineVm = RELEASE_BUILD ? !unrestricted : offlineVmSelected(MODULE_DIR)
+  // The standard build never selects the VM, whatever the environment says.
+  const offlineVm = STANDARD_BUILD
+    ? false
+    : RELEASE_BUILD
+      ? !unrestricted
+      : offlineVmSelected(MODULE_DIR)
 
   if (first === "--version" || first === "-v") {
     out(`bashwink ${VERSION}`)
@@ -226,6 +246,12 @@ export async function main(input: readonly string[]): Promise<MainResult> {
   // forwards `--help` to the runtime where it means the runtime's help.
   switch (first) {
     case "sandbox": {
+      if (STANDARD_BUILD) {
+        err(
+          "sandbox commands belong to the optional sandbox component, which is not part of this package",
+        )
+        return { exitCode: 2, handled: true }
+      }
       if (rest[0] === "stages") {
         // Read-only by default. `--purge` removes only stages this installation recorded and can
         // prove are its own, idle directories; everything else is kept and reported.
@@ -457,7 +483,13 @@ export async function main(input: readonly string[]): Promise<MainResult> {
   let backend
   let timeoutMs
   try {
-    backend = selectBackend(RELEASE_BUILD ? "unrestricted-host" : process.env["BASHWINK_BACKEND"])
+    backend = selectBackend(
+      STANDARD_BUILD
+        ? "standard-native"
+        : RELEASE_BUILD
+          ? "unrestricted-host"
+          : process.env["BASHWINK_BACKEND"],
+    )
     if (first === "backend") {
       out(JSON.stringify(backend.capabilities, null, 2))
       return { exitCode: 0, handled: true }
@@ -470,6 +502,15 @@ export async function main(input: readonly string[]): Promise<MainResult> {
   }
 
   // Anything else belongs to the runtime.
+  if (STANDARD_BUILD && !process.env["BASHWINK_OPENCODE_BIN"]) {
+    // The launcher resolves the pinned runtime and passes it explicitly. Searching PATH instead could
+    // run some other OpenCode, so the standard build refuses to guess.
+    err(
+      "the pinned OpenCode runtime was not provided. Start Bashwink with the `bashwink` command that " +
+        "npm installed; it supplies the runtime.",
+    )
+    return { exitCode: 127, handled: true }
+  }
   let runtime
   try {
     runtime = resolveRuntime(
@@ -487,6 +528,22 @@ export async function main(input: readonly string[]): Promise<MainResult> {
 
   const resolved = paths()
   ensurePaths(resolved)
+  if (STANDARD_BUILD) {
+    try {
+      const decision = offerWorkspaceTrust({
+        configDirectory: resolved.config,
+        workspace: process.cwd(),
+        io: terminalIO(),
+        user: process.env["USER"] ?? process.env["USERNAME"] ?? "unknown",
+      })
+      if (decision === "declined")
+        out(
+          "not trusted: this session can read files but cannot write, run commands or use the network",
+        )
+    } catch {
+      // A trust file that cannot be read or written is reported by the launch policy below.
+    }
+  }
 
   // Pre-flight the credential for an explicitly requested model, before spawning.
   //
@@ -602,7 +659,13 @@ export async function main(input: readonly string[]): Promise<MainResult> {
   // in the title bar. The run record carries the same mode through `execution.backend.mode`.
   const hostMode = GUEST_BUILD
     ? describeMode("isolated-vm", "running inside the VM guest")
-    : describeMode(RELEASE_BUILD ? "unrestricted-host" : "development-host")
+    : describeMode(
+        STANDARD_BUILD
+          ? "standard-native"
+          : RELEASE_BUILD
+            ? "unrestricted-host"
+            : "development-host",
+      )
   err(hostMode.banner)
   if (process.stderr.isTTY) process.stderr.write(`\x1b]0;bashwink [${hostMode.short}]\x07`)
   environment["BASHWINK_EXECUTION_MODE"] = hostMode.mode

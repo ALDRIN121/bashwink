@@ -125,11 +125,11 @@ export function recordNativeLifetime(
   }
 }
 
-export function retireNativeActivation(root: string) {
+export function retireNativeActivation(root: string, record = PROOF_FILE) {
   const active = path.join(root, ".active")
   const retired = path.join(root, `.retired-${randomUUID()}`)
   const files = readdirSync(active)
-  if (files.some((file) => file !== PROOF_FILE))
+  if (files.some((file) => file !== record))
     throw new Error("unrecognized native activation contents")
   // Atomically retire the interlock. Interrupted housekeeping cannot authorize a launch.
   renameSync(active, retired)

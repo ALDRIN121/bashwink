@@ -76,6 +76,9 @@ def run(installed, runtime, output, lifecycle, stage_file=False):
                     "PATH": os.environ["PATH"], "TERM": "xterm-256color",
                     "HOME": str(output), "BASHWINK_OPENCODE_BIN": str(runtime if lifecycle != "startup" else "/bin/cat"),
                 }
+                if stage_file:
+                    env["OPENCODE_CONFIG_CONTENT"] = '{"permission":{"bash":"allow","shell":"allow"}}'
+                    env["BASHWINK_BACKEND"] = "local"
                 if lifecycle == "timeout":
                     env["BASHWINK_TIMEOUT_MS"] = "7000"
                 os.execve(str(installed), argv, env)

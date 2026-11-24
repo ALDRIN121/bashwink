@@ -74,9 +74,24 @@ test("staged export requires a recognized stage before reading any destination",
 })
 
 test("shell-capable offline stages fail closed without starting the mock or runtime", () => {
-  const result = Bun.spawnSync([process.execPath, cli, "sandbox", "offline", "12345"])
+  const result = Bun.spawnSync([process.execPath, cli, "sandbox", "offline", "12345"], {
+    env: {
+      ...process.env,
+      BASHWINK_BACKEND: "local",
+      OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: { bash: "allow" } }),
+    },
+  })
   expect(result.exitCode).toBe(3)
   expect(result.stderr.toString()).toContain("shell-capable native stages are disabled")
+})
+
+test("an explicit local backend cannot authorize an offline shell flag", () => {
+  const result = Bun.spawnSync(
+    [process.execPath, cli, "sandbox", "offline", "12345", "--stage-file", "--shell"],
+    { env: { ...process.env, BASHWINK_BACKEND: "local" } },
+  )
+  expect(result.exitCode).toBe(2)
+  expect(result.stderr.toString()).toContain("usage: bashwink sandbox offline")
 })
 
 test("stale-stage retirement refuses unregistered paths", () => {

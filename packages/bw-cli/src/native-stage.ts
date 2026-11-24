@@ -155,6 +155,15 @@ export function writeStage(root: string, state: StageState) {
   renameSync(temporary, path.join(root, STATE))
 }
 
+export function syncDirectory(directory: string) {
+  const fd = openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
+  try {
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+}
+
 export function captureEvidence(root: string, previous: EvidenceAnchor): EvidenceAnchor {
   const directory = path.join(root, "scratch", "evidence")
   directoryIdentity(directory)

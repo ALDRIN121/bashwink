@@ -159,6 +159,11 @@ def main():
                 db.execute("UPDATE session_v2 SET directory = ? WHERE id = ?", (str(stage / "work"), session_id))
             metadata = stage / "stage.json"
             old_metadata = metadata.read_bytes()
+            legacy_shell = json.loads(old_metadata)
+            del legacy_shell["destination"]
+            metadata.write_text(json.dumps(legacy_shell))
+            reject(["--continue"], "shell-capable fixture stages cannot be reopened")
+            reject(["--session", session_id], "shell-capable fixture stages cannot be reopened")
             incompatible = json.loads(old_metadata)
             incompatible["profile"] = "incompatible"
             metadata.write_text(json.dumps(incompatible))

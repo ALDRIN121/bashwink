@@ -58,6 +58,8 @@ COMMANDS
   sandbox offline <port> --stage <path> (--continue | --session <id>)
                             reopen a saved file-only offline stage
   sandbox export <path>     preview staged task.txt and ask before applying
+  sandbox recover-export <path>
+                            reconcile an approved interrupted export from its original directory
   sandbox recover <path>    retire a closed, attested native activation
   doctor                    check preconditions and report what is missing
   init                      create Bashwink's config and data directories

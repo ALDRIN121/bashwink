@@ -52,7 +52,7 @@ import {
 import { executionTimeout, runWithBackend, selectBackend } from "./execution-backend.js"
 import { OFFLINE_USAGE, parseOffline, runNativeOffline } from "./native-offline.js"
 import { recoverClosedNativeStage } from "./native-lifetime.js"
-import { exportNativeStage } from "./native-export.js"
+import { exportNativeStage, recoverNativeExport } from "./native-export.js"
 import { probeNativeSandbox } from "./native-sandbox.js"
 
 /** Value of `--flag value` or `--flag=value`, or undefined. First occurrence wins. */
@@ -182,6 +182,19 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
           return { exitCode: 0, handled: true }
         } catch (error) {
           err(error instanceof Error ? error.message : "staged export failed")
+          return { exitCode: 3, handled: true }
+        }
+      }
+      if (rest[0] === "recover-export" && rest.length === 2) {
+        try {
+          out(
+            recoverNativeExport(rest[1]!)
+              ? "Reconciled the interrupted staged export."
+              : "No interrupted staged export to reconcile.",
+          )
+          return { exitCode: 0, handled: true }
+        } catch (error) {
+          err(error instanceof Error ? error.message : "staged export reconciliation failed")
           return { exitCode: 3, handled: true }
         }
       }

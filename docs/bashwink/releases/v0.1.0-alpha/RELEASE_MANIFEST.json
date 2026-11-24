@@ -10,12 +10,12 @@
     {
       "id": "interactive-coding",
       "verdict": "BLOCKED",
-      "reason": "Installed VM-backed coding is not implemented."
+      "reason": "Installed VM lab coding passed. Exact release artifact and clean-host acceptance remain unqualified."
     },
     {
       "id": "real-provider",
       "verdict": "BLOCKED",
-      "reason": "No qualified host-side provider relay or accepted real coding run."
+      "reason": "Live CommandCode coding and model switching passed in a lab VM. Complete release qualification and provider failure controls remain open."
     },
     {
       "id": "clean-install",
@@ -30,7 +30,7 @@
     {
       "id": "shell-containment",
       "verdict": "BLOCKED",
-      "reason": "VM lab evidence does not qualify the installed runtime."
+      "reason": "Detached guest writer controls passed in a lab VM. Full installed workload and platform qualification remain open."
     },
     {
       "id": "host-access-denial",
@@ -40,17 +40,17 @@
     {
       "id": "credential-protection",
       "verdict": "BLOCKED",
-      "reason": "Host relay credentials have not been isolated in the product."
+      "reason": "A live lab session kept the raw key out of inspected guest state. Complete adversarial credential qualification remains open."
     },
     {
       "id": "session-recovery",
       "verdict": "BLOCKED",
-      "reason": "VM-backed recovery is unqualified."
+      "reason": "VM session recovery passed in lab fixtures. Clean-install and full failure qualification remain open."
     },
     {
       "id": "reviewed-edits",
       "verdict": "BLOCKED",
-      "reason": "Reviewed project transfer is not implemented."
+      "reason": "Reviewed multi-file application and recovery passed in lab fixtures. Complete release qualification remains open."
     },
     {
       "id": "critical-security-review",

@@ -1605,3 +1605,7 @@ and stage-created SIGKILL points, repeated recovery, session resume after an app
 batch and review of the remaining changes. The independent boundary fixture exited 0
 for forced stop, VM-owner SIGKILL, reopen, launcher SIGKILL, reopen, interrupt and
 timeout, while checking the detached guest writer and host controls.
+
+At documentation commit `c126e0d`, `bun test packages` exited 0 with 448 passed
+and 0 failed. Typecheck, Oxlint, formatting, lint negative controls, documentation
+manifest and task-register checks exited 0. Hosted CI was not run.

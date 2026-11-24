@@ -139,8 +139,8 @@
       "size_bytes": 1924
     },
     "NATIVE_SANDBOX_QUALIFICATION.json": {
-      "sha256": "d7257c585df116b7a3ba950edd89d7b1568481c573d25df912c828e669c66526",
-      "size_bytes": 40643
+      "sha256": "9ad2b75274835053cd79d38839e35c54ef45e88f0f12d6ead53de9f738062b6a",
+      "size_bytes": 40956
     },
     "NATIVE_SANDBOX_SECURITY_MODEL.md": {
       "sha256": "dfc3f85518b0ca1716b3704acf3d82038fd0a55bbe92c47c6a44daf6ac5d096b",
@@ -215,8 +215,8 @@
       "size_bytes": 911
     },
     "releases/v0.1.0-alpha/RELEASE_MANIFEST.json": {
-      "sha256": "e56db3054cbb525f432ea0242f789fa17e46097904c5b4ec5e47882b8be51de8",
-      "size_bytes": 2290
+      "sha256": "396279336ff3995edce059684c61516738f15f65a631646496eba53e8a7f8784",
+      "size_bytes": 2673
     },
     "releases/v0.1.0-alpha/RELEASE_NOTES.md": {
       "sha256": "00a3f35e0baf4ec669965bebe9f150ef0b3203b8cf5586fd7ffa0b5aa94ab58f",

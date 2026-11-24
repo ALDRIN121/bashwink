@@ -824,7 +824,7 @@
         "policyDigest": null,
         "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "An offline pinned VM lab passed. The installed VM backend and ordinary project coding are unqualified."
+        "reason": "Installed VM project coding passed in a lab fixture. Exact release artifact and clean-host acceptance remain unqualified."
       },
       {
         "id": "interactive-live-provider",
@@ -834,7 +834,7 @@
         "policyDigest": null,
         "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "The host provider relay and authorized end-to-end coding test are open."
+        "reason": "Live CommandCode coding and model switching passed in a lab VM. The release artifact and complete provider qualification remain open."
       },
       {
         "id": "file-and-link-policy",
@@ -844,7 +844,7 @@
         "policyDigest": null,
         "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "The lab has a host canary. Installed project staging, link and host path controls are open."
+        "reason": "Lab host canaries and staged-export controls passed. Complete clean-host file and link qualification remains open."
       },
       {
         "id": "subprocess-and-detached-cleanup",
@@ -854,7 +854,7 @@
         "policyDigest": null,
         "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "The VM lab passed owner and launcher death, but the installed backend and abnormal OpenCode exits are open."
+        "reason": "The VM lab passed detached-writer, owner death and launcher death controls. Complete installed-runtime qualification remains open."
       },
       {
         "id": "network-and-provider-transport",
@@ -864,7 +864,7 @@
         "policyDigest": null,
         "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "NIC-free lab passed basic controls. Provider-only mode and complete network controls are open."
+        "reason": "A NIC-free VM and host relay passed lab controls. Complete adversarial network qualification remains open."
       },
       {
         "id": "secret-isolation",
@@ -874,7 +874,7 @@
         "policyDigest": null,
         "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "No qualified provider relay or installed host credential controls."
+        "reason": "The provider key was absent from inspected live guest state. Complete secret-isolation qualification remains open."
       },
       {
         "id": "approval-and-alternate-dispatch",
@@ -894,7 +894,7 @@
         "policyDigest": null,
         "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "File-only recovery passed. VM persistence and reviewed project transfer are open."
+        "reason": "VM session recovery, reviewed application and fault controls passed in lab fixtures. Complete release qualification remains open."
       },
       {
         "id": "unsupported-host-and-no-fallback",
@@ -904,7 +904,7 @@
         "policyDigest": null,
         "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "The requested native CLI currently refuses. Installed VM error cases are open."
+        "reason": "Explicit VM selection fails closed without required assets. Unsupported-host and clean-install qualification remains open."
       },
       {
         "id": "resource-limits",
@@ -914,7 +914,7 @@
         "policyDigest": null,
         "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "The VM lab passed a host timer. Installed workload and provider limits are open."
+        "reason": "Lab VM deadlines and provider request limits were exercised. Full resource and timeout qualification remains open."
       },
       {
         "id": "ci-or-reviewed-equivalent",

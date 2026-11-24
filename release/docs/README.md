@@ -63,6 +63,13 @@ First-time setup, reviewing and applying changes, and resuming a session are in
 Your projects are never touched. Without `--purge-state` your saved sessions, evidence and
 provider settings stay in `~/.config/bashwink` and `~/.local/share/bashwink`.
 
+`--purge-state` lists what it will delete and asks you to type `delete`. It removes VM stage
+directories **only if this installation recorded them, they are still the directories it
+recorded, and no session is using them**. It never deletes something because its name looks like
+a Bashwink directory: stages from other installations, older builds or other tools are reported
+and kept. `bashwink sandbox stages` shows what is recorded and what would be removed; add
+`--purge` to remove the idle ones without uninstalling.
+
 ## Other documents
 
 [RELEASE_NOTES.md](RELEASE_NOTES.md) · [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) ·

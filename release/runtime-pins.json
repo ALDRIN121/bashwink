@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "note": "OpenCode 2.3.2 rebuilt from the pinned source (tag v2.3.2, commit c0ad18b402eb2827fc1ee71c171b1177b3fc02d1) with a libopentui built from OpenTUI v0.8.4 (commit d4a2af24ba50636da5f222367f91746a1bf89644) WITHOUT FFmpeg. See release/NOFFMPEG_RUNTIME.md. The builder refuses any runtime whose SHA-256 differs from these pins or that contains FFmpeg markers.",
+  "runtimes": {
+    "opencode-darwin-arm64": "9151ffc70771f5a27805a3e27279d804058a6c1f340c5f4106233c21c498caf2",
+    "opencode-linux-arm64-musl": "dac847cc9dbc031dd79adc1a6d86964986e6e25dc5591e5a55e96cea5a59578b"
+  }
+}

@@ -42,6 +42,7 @@ import {
   type AcknowledgmentIO,
 } from "./release.js"
 import { requireWorkspaceApproval } from "./workspace-approval.js"
+import { STAGE_PREFIX, STAGE_ROOT, forgetStage, registerStage } from "./vm-stages.js"
 
 const ASSETS = ["vm-owner", "Image", "initramfs"] as const
 const SECTOR_SIZE = 512
@@ -377,7 +378,11 @@ export async function runOfflineVm(
       // The checkpoint now holds everything worth keeping. A release build does not leave a
       // copy of the project and its session state behind in the shared temporary directory.
       // A failed or interrupted session keeps its stage for inspection and recovery.
-      if (RELEASE_BUILD) rmSync(path.dirname(result.disk), { recursive: true, force: true })
+      if (RELEASE_BUILD) {
+        const stage = path.dirname(result.disk)
+        rmSync(stage, { recursive: true, force: true })
+        forgetStage(paths().data, stage)
+      }
     }
     return result.code
   } finally {
@@ -449,7 +454,16 @@ async function launchOfflineVm(
     startRelay: typeof startProviderRelay
   },
 ) {
-  const stage = mkdtempSync("/private/tmp/bashwink-vm-")
+  const stage = mkdtempSync(path.join(STAGE_ROOT, STAGE_PREFIX))
+  // Record ownership before anything is written to it, so cleanup can prove it is ours. If the
+  // record cannot be written (for example, the state volume is full) the empty directory is
+  // removed again: an unregistered stage could never be cleaned up safely.
+  try {
+    registerStage(paths().data, stage)
+  } catch (error) {
+    rmSync(stage, { recursive: true, force: true })
+    throw error
+  }
   const disk = path.join(stage, "stage.raw")
   const fd = openSync(disk, "wx", 0o600)
   try {

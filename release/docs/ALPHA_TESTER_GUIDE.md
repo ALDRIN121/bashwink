@@ -54,7 +54,8 @@ bashwink
    and the provider that will receive their content. Answer `y` to continue or anything else
    to stop; declining starts nothing.
 2. The VM starts (about five seconds on the test Mac) and the terminal UI opens. A banner
-   before it, and a notice in the UI, say `ISOLATED VM`.
+   before it and a short notice in the UI say `ISOLATED VM`, and a line `[SANDBOXED VM]` stays on
+   screen for the whole session (on the home screen and beside the prompt).
 3. Ask for a change in plain language. The agent edits its copy of your files. Shell commands
    such as `bun test` ask for your approval each time (`Allow once`).
 4. Leave the UI with Ctrl+D on an empty prompt. Your work is saved.
@@ -104,7 +105,7 @@ state under `~/.local/share/bashwink/vm-projects/`.
 | `no model is selected` / `credential is missing` | Section 2. `bashwink doctor` shows which. |
 | `… has not been approved` | Launch `bashwink` once in an interactive terminal and approve, or `bashwink trust <dir> --by "your name"`. |
 | `reviewed apply is interrupted. Run bashwink sandbox vm-recover first` | Run `bashwink sandbox vm-recover`. It finishes or abandons the interrupted apply safely and can be repeated. A directory named `.bashwink-vm-apply-*` in your project is kept for inspection. |
-| `VM owner exited with status N; stage retained` | The VM did not finish. The partial session is kept in `/private/tmp/bashwink-vm-*`. Start again; report the status and your `bashwink doctor` output. |
+| `VM owner exited with status N; stage retained` | The VM did not finish. The partial session is kept in a `/private/tmp/bashwink-vm-*` directory that Bashwink recorded. `bashwink sandbox stages` lists it; start again, and once you no longer need it, `bashwink sandbox stages --purge` removes the idle ones. Report the status and your `bashwink doctor` output. |
 | A session reached the request limit | Start a new session, or raise `BASHWINK_VM_MAX_REQUESTS` (at most 40). |
 | The UI looks garbled | Make the terminal at least 120×34. |
 | Esc once does not stop a response | Press Esc twice, or Ctrl+C. |
@@ -120,7 +121,8 @@ and credentials. It exists for projects the VM cannot handle. It needs you to ty
 and no environment variable or setting can. Shell commands still ask first, and writes
 outside the approved scope are still refused, but these are guard rails, not a sandbox: a
 prompt-injected instruction that you approve runs with your full access. The terminal shows
-`UNRESTRICTED HOST ACCESS` before the UI and in a notice inside it.
+`UNRESTRICTED HOST ACCESS` before the UI and in a notice inside it, and a line
+`[UNSAFE LOCAL MODE]` stays on screen for the whole session.
 
 ## Reporting problems
 

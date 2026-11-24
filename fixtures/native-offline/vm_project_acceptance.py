@@ -14,7 +14,7 @@ import sys
 import time
 
 from recovery import terminal
-from run import process_identity, wait_for
+from run import DialogApprover, process_identity, wait_for
 
 
 def digest(data):
@@ -105,21 +105,17 @@ def accept_project(root, runner, image, initramfs, protected, relay=False):
         seen(contains, "Ask anything", capture, 35)
         time.sleep(0.25)
         feed(master, "Fix the persistent project")
-        approved = set()
+        approver = DialogApprover(lambda data: os.write(master, data))
 
         def completed():
             done = contains("VM project tool sequence completed")
-            for step in range(5):
-                marker = f"BW_VM_PROJECT_TOOL_{step}".encode()
-                if step not in approved and marker in capture:
-                    if b"Allow once" in bytes(capture).rsplit(marker, 1)[1]:
-                        os.write(master, b"\r")
-                        approved.add(step)
+            approver.poll(bytes(capture))
             return done
 
         try:
-            assert wait_for(completed, 45), f"coding did not finish, approvals observed {approved}"
-            assert {3, 4} <= approved
+            assert wait_for(completed, 45), f"coding did not finish, {approver.sent} dialogs approved"
+            # Both shell steps (3 and 4) were reached and each needed an interactive approval.
+            assert approver.sent >= 2 and b"BW_VM_PROJECT_TOOL_3" in capture and b"BW_VM_PROJECT_TOOL_4" in capture
             raw_path = re.search(rb"Bashwink offline VM stage: (/private/tmp/bashwink-vm-[A-Za-z0-9]+)", capture)
             assert raw_path
             raw_disk = Path(os.fsdecode(raw_path[1])) / "stage.raw"

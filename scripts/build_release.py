@@ -27,6 +27,7 @@ import gzip
 import hashlib
 import io
 import json
+import mmap
 import os
 import platform
 import shutil
@@ -41,6 +42,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / "release"
 LOCK = json.loads((RELEASE / "inputs.lock.json").read_text())["inputs"]
+RUNTIME_PINS = json.loads((RELEASE / "runtime-pins.json").read_text())["runtimes"]
+FFMPEG_MARKERS = (b"avcodec", b"avformat", b"swscale", b"swresample", b"libavutil", b"FFmpeg")
 IMAGE_SHA256 = json.loads((RELEASE / "inputs.lock.json").read_text())["derived"]["alpine/Image"]
 GUEST_USER_SESSION_MS = 1_740_000  # guest ends its session here, saves, then the host deadline
 HOST_VM_DEADLINE_MS = 1_800_000  # applies; the guest deadline must stay below this one
@@ -100,6 +103,24 @@ def npm_member(tarball: Path, member: str, destination: Path, expected: str | No
         raise SystemExit(f"{member} from {tarball.name} does not match its pinned digest")
 
 
+def runtime_binary(runtime_dir: Path, name: str, destination: Path) -> str:
+    """Copy a rebuilt OpenCode runtime after proving it is the pinned one and has no FFmpeg."""
+    source = runtime_dir / name
+    if not source.is_file():
+        raise SystemExit(f"{source} is missing; build it with release/NOFFMPEG_RUNTIME.md or pass --runtime-dir")
+    digest = sha256_file(source)
+    if digest != RUNTIME_PINS[name]:
+        raise SystemExit(f"{name} has SHA-256 {digest}, expected {RUNTIME_PINS[name]} (release/runtime-pins.json)")
+    # A pin is not a licence check: look inside the bytes, so a stock binary can never ship by accident.
+    with source.open("rb") as handle, mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as data:
+        for marker in FFMPEG_MARKERS:
+            if data.find(marker) != -1:
+                raise SystemExit(f"{name} contains the FFmpeg marker {marker!r}; refusing to package it")
+    shutil.copyfile(source, destination)
+    destination.chmod(0o755)
+    return digest
+
+
 def check_clean_tree(allow_dirty: bool) -> str:
     status = capture(["git", "status", "--porcelain"], cwd=ROOT)
     if status and not allow_dirty:
@@ -107,7 +128,7 @@ def check_clean_tree(allow_dirty: bool) -> str:
     return capture(["git", "rev-parse", "HEAD"], cwd=ROOT) + ("+dirty" if status else "")
 
 
-def build_guest(work: Path, inputs: dict[str, Path], bundle_dir: Path) -> tuple[Path, Path]:
+def build_guest(work: Path, inputs: dict[str, Path], bundle_dir: Path, runtime_dir: Path) -> tuple[Path, Path]:
     """Return the kernel Image and the initramfs."""
     guest = work / "guest"
     guest.mkdir()
@@ -127,8 +148,7 @@ def build_guest(work: Path, inputs: dict[str, Path], bundle_dir: Path) -> tuple[
 
     opt = guest / "opt"
     opt.mkdir(exist_ok=True)
-    npm_member(inputs["guest/opencode.tgz"], LOCK["guest/opencode.tgz"]["member"], opt / "opencode",
-               LOCK["guest/opencode.tgz"]["member_sha256"])
+    runtime_binary(runtime_dir, "opencode-linux-arm64-musl", opt / "opencode")
     npm_member(inputs["guest/bun.tgz"], LOCK["guest/bun.tgz"]["member"], opt / "bun",
                LOCK["guest/bun.tgz"]["member_sha256"])
 
@@ -219,6 +239,8 @@ def main() -> int:
     parser.add_argument("--cache", type=Path, default=Path.home() / ".cache/bashwink-release-inputs")
     parser.add_argument("--bun", default=shutil.which("bun") or "bun")
     parser.add_argument("--allow-dirty", action="store_true")
+    parser.add_argument("--runtime-dir", type=Path, default=Path.home() / ".cache/bashwink-release-inputs/runtime-nofmpeg",
+                        help="directory holding the no-FFmpeg OpenCode builds named in release/runtime-pins.json")
     args = parser.parse_args()
 
     if platform.system() != "Darwin" or platform.machine() != "arm64":
@@ -247,7 +269,7 @@ def main() -> int:
         stage_evidence_plugin(guest_bundle / "evidence")
 
         # 2. Guest image.
-        image, initramfs = build_guest(work, inputs, guest_bundle)
+        image, initramfs = build_guest(work, inputs, guest_bundle, args.runtime_dir.resolve())
 
         # 3. VM owner: compiled here, signed ad hoc with only the virtualization entitlement.
         owner = work / "vm-owner"
@@ -286,7 +308,7 @@ def main() -> int:
 
         # 6. Host runtimes (Bun for the CLI; OpenCode only for the explicit unrestricted mode).
         npm_member(inputs["host/bun.tgz"], LOCK["host/bun.tgz"]["member"], tree / "libexec/bun", None)
-        npm_member(inputs["host/opencode.tgz"], LOCK["host/opencode.tgz"]["member"], tree / "libexec/opencode", None)
+        runtime_binary(args.runtime_dir.resolve(), "opencode-darwin-arm64", tree / "libexec/opencode")
 
         # 7. Launcher, installers, metadata.
         shutil.copyfile(RELEASE / "launcher.sh", tree / "bin/bashwink")
@@ -301,6 +323,8 @@ def main() -> int:
                 f'  {{ "version": "{h["version"]}", "build": "{h["build"]}", "arch": "{h["arch"]}", "tier": "{h["tier"]}" }}'
                 for h in qualified) + "\n]\n")
         # install.sh greps for the exact "version": "x", "build": "y" spelling above.
+        shutil.copyfile(RELEASE / "runtime-pins.json", tree / "share/doc/runtime-pins.json")
+        shutil.copyfile(RELEASE / "NOFFMPEG_RUNTIME.md", tree / "share/doc/NOFFMPEG_RUNTIME.md")
         for doc in ("README.md", "ALPHA_TESTER_GUIDE.md", "RELEASE_NOTES.md", "KNOWN_LIMITATIONS.md", "SECURITY.md"):
             source = RELEASE / "docs" / doc
             if source.exists():
@@ -330,7 +354,7 @@ def main() -> int:
             "vm_assets": {"manifest_sha256": manifest_digest, "sizes": sizes,
                           "sha256": json.loads(manifest_bytes)["sha256"]},
             "runtime_hashes": {
-                "guest_opencode": LOCK["guest/opencode.tgz"]["member_sha256"],
+                "guest_opencode": RUNTIME_PINS["opencode-linux-arm64-musl"],
                 "guest_bun": LOCK["guest/bun.tgz"]["member_sha256"],
                 "host_bun": sha256_file(tree / "libexec/bun"),
                 "host_opencode": sha256_file(tree / "libexec/opencode"),

@@ -18,7 +18,7 @@ import termios
 import time
 import zlib
 from recovery import terminal
-from run import process_identity, wait_for as wait_until
+from run import DialogApprover, process_identity, wait_for as wait_until
 from vm_project_acceptance import accept_project
 
 
@@ -30,7 +30,8 @@ CHECKSUMS = {
     "initramfs-official": "a497b544282f1e0558e03529ce99d515aabdf3cea06011fbbcc48604f482cacc",
 }
 OPENCODE_INPUTS = {
-    "opencode": "0e214ccebc6f0dd8775be65104b8a9de0585427b8911ad838c9fd83d1c812e2d",
+    # The guest OpenCode is the FFmpeg-free rebuild that the release ships (release/runtime-pins.json).
+    "opencode": json.loads((FILES.parents[1] / "release/runtime-pins.json").read_text())["runtimes"]["opencode-linux-arm64-musl"],
     "bun": "a6a3d99a48600b59597070d2d2ff8d37b65975b8aab247ee3479b1eb33d000a6",
     "libgcc.apk": "eaaafda78fde1c904e1741680ddea91649f051e29a343152c8a4327605704b0f",
     "libstdc++.apk": "10d72e25f6fcc0f3d9fdd801c9bdaed81d6e836aa2b65b63f25d2d97f860a7d1",
@@ -159,7 +160,7 @@ def read_fixture_stage(sector):
     return contents
 
 
-def exercise_opencode(root, arguments, disk):
+def exercise_opencode(root, arguments, disk, detection="state"):
     log = root / "opencode-pty.log"
     disk_id = (disk.stat().st_dev, disk.stat().st_ino)
     with log.open("wb") as output:
@@ -179,21 +180,29 @@ def exercise_opencode(root, arguments, disk):
                 send(b"Fix the disposable VM task")
                 time.sleep(0.15)
                 send(b"\r")
-                approved = set()
+                approver = DialogApprover(send)
+                text_approved = set()
 
                 def completed():
                     assert b"Kernel panic" not in log.read_bytes(), f"guest init failed, see {log}"
                     console = log.read_bytes()
-                    for step in (0, 1):
-                        marker = f"BW_VM_TOOL_{step}".encode()
-                        if step not in approved and marker in console:
-                            if b"Allow once" in console.rsplit(marker, 1)[1]:
-                                send(b"\r")
-                                approved.add(step)
+                    if detection == "text":
+                        # Negative control: the original logic, which depends on repaint timing.
+                        for step in (0, 1):
+                            marker = f"BW_VM_TOOL_{step}".encode()
+                            if step not in text_approved and marker in console:
+                                if b"Allow once" in console.rsplit(marker, 1)[1]:
+                                    send(b"\r")
+                                    text_approved.add(step)
+                                    approver.sent += 1
+                    else:
+                        approver.poll(console)
                     return b"VM fixture tool sequence completed" in console
 
                 wait_for(completed, vm)
-                assert 1 in approved, "the shell request did not get an interactive approval"
+                console = log.read_bytes()
+                assert approver.sent >= 2 and b"sh check.sh" in console, (
+                    f"the shell request did not get an interactive approval (dialogs approved: {approver.sent})")
                 send(b"\x04")
                 wait_for(lambda: observed(b"BW_VM_OPENCODE_PASS"), vm)
                 assert vm.wait(timeout=10) == 0
@@ -281,23 +290,18 @@ def prove_installed_cli(root, runner, image, initramfs, protected):
         assert contains(f"BW_VM_INPUT {initial}")
         time.sleep(0.25)
         feed(master, "Fix the disposable VM task")
-        approved = set()
+        approver = DialogApprover(lambda data: os.write(master, data))
 
         def completed():
             done = contains("VM fixture tool sequence completed")
-            for step in (0, 1):
-                marker = f"BW_VM_TOOL_{step}".encode()
-                if step not in approved and marker in capture:
-                    if b"Allow once" in bytes(capture).rsplit(marker, 1)[1]:
-                        os.write(master, b"\r")
-                        approved.add(step)
+            approver.poll(bytes(capture))
             return done
 
         try:
-            assert wait_until(completed, 22), f"PTY coding timed out after approvals {approved}"
+            assert wait_until(completed, 22), f"PTY coding timed out after {approver.sent} approved dialogs"
         finally:
             (root / f"{label}.pty").write_bytes(capture)
-        assert 1 in approved, "host did not approve the actual shell request"
+        assert approver.sent >= 2 and b"BW_VM_TOOL_1" in capture, "host did not approve the actual shell request"
         disk = stage_of(capture)
         assert wait_until(lambda: tick(disk) >= 2, 5), "detached guest did not write"
         return disk
@@ -448,6 +452,12 @@ def main():
     parser.add_argument("--installed-cli", action="store_true", help="exercise bare Bashwink from the built install")
     parser.add_argument("--project-cli", action="store_true", help="exercise persistent multi-file project sessions")
     parser.add_argument("--relay-inputs", type=Path, help="exercise the synthetic provider relay with --project-cli")
+    parser.add_argument("--approval-detection", choices=("state", "text"), default="state",
+                        help="how the guest-TUI exercise notices permission dialogs. 'state' (default) counts OpenCode's own "
+                             "dialog events; 'text' is the original wait-for-'Allow once' logic, kept ONLY as a negative control "
+                             "that reproduces the intermittent failure")
+    parser.add_argument("--repeat", type=int, default=1, help="with --opencode-inputs: run the guest TUI exercise this many "
+                        "times against one built image, each on a fresh disk (independent boots; reports every result)")
     args = parser.parse_args()
     if (args.installed_cli or args.project_cli) and not args.opencode_inputs:
         parser.error("installed and project modes require --opencode-inputs")
@@ -486,9 +496,26 @@ def main():
     lock.touch(mode=0o600, exist_ok=False)
     arguments = [runner, image, initramfs, disk]
     if args.opencode_inputs:
-        exercise_opencode(root, arguments, disk)
-        assert protected_hash == digest(protected)
+        outcomes = []
+        for iteration in range(args.repeat):
+            if iteration:
+                disk = root / f"stage-{iteration}.raw"
+                with disk.open("wb") as output:
+                    output.truncate(8 * 1024 * 1024)
+                disk.with_suffix(".raw.lock").touch(mode=0o600, exist_ok=False)
+                arguments = [runner, image, initramfs, disk]
+            try:
+                exercise_opencode(root, arguments, disk, args.approval_detection)
+                assert protected_hash == digest(protected)
+                outcomes.append("pass")
+            except AssertionError as error:
+                outcomes.append("FAIL")
+                print(f"FAIL: repeat {iteration + 1}: {str(error)[:300]}", flush=True)
+            print(f"REPEAT {iteration + 1}/{args.repeat}: {outcomes[-1]}", flush=True)
+        print(f"REPEAT SUMMARY: {outcomes.count('pass')} passed, {outcomes.count('FAIL')} failed of {args.repeat}", flush=True)
         localhost.close()
+        if "FAIL" in outcomes:
+            raise SystemExit(1)
         return
 
     def marker():

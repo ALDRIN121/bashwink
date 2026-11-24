@@ -38,8 +38,9 @@ replies) and can ask to run commands. The release treats that agent as untrusted
 ## Supply chain
 
 The archive includes unmodified upstream binaries pinned by SHA-256 in
-`share/doc/inputs.lock.json`: Alpine Linux 3.23.8 kernel and userland, OpenCode 2.3.2 and Bun
-1.4.4. `RELEASE_MANIFEST.json` lists their hashes and sources. No dependency audit against an
+`share/doc/inputs.lock.json`: Alpine Linux 3.23.8 kernel and userland and Bun 1.4.4. OpenCode 2.3.2 is
+rebuilt from its pinned source without FFmpeg and pinned by hash in `share/doc/runtime-pins.json`
+(recipe: `share/doc/NOFFMPEG_RUNTIME.md`); it is not the upstream release binary. `RELEASE_MANIFEST.json` lists their hashes and sources. No dependency audit against an
 advisory database was run for this release.
 
 ## Credentials in the archive

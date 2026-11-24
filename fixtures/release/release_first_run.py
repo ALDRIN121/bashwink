@@ -29,6 +29,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "native-offline"))
 from recovery import terminal  # noqa: E402
 from run import wait_for  # noqa: E402
+from screen import screen_text  # noqa: E402
 
 BASE_URL = "https://api.commandcode.ai/provider/v1"
 MODELS = ["claude-sonnet-5:anthropic", "gpt-6.1-sol:openai"]
@@ -347,6 +348,9 @@ def run_stages(args, report, work):
         report.stage("execution mode shown inside the TUI (guest toast)",
                      "PASS" if wait_for(lambda: contains("Bashwink · ISOLATED VM"), 15) else "FAIL")
         time.sleep(3)
+        contains("")
+        report.stage("persistent indicator on the guest home screen",
+                     "PASS" if "[SANDBOXED VM]" in screen_text(bytes(capture)) else "FAIL")
         report.measure("idle_footprint_mib", round(sampler.footprint_mib(), 1))
         if not args.live and bogus:
             # A real request to the real endpoint with a deliberately invalid key. Nothing of
@@ -358,6 +362,8 @@ def run_stages(args, report, work):
             wait_for(lambda: contains("Reply with the single word ready"), 20)
             time.sleep(15)
             contains("")
+            report.stage("persistent indicator in the guest TUI session view",
+                         "PASS" if "[SANDBOXED VM]" in screen_text(bytes(capture)) else "FAIL")
         if not args.live:
             os.write(master, b"\x04")
             try:
@@ -463,16 +469,15 @@ def run_stages(args, report, work):
     state_kept = any((home / p).exists() for p in (".config/bashwink", ".local/share/bashwink"))
     report.stage("uninstall removes the install and keeps state", "PASS" if removed.returncode == 0 and gone and state_kept else "FAIL",
                  f"{sizes_before} bytes removed")
-    # The shipped uninstaller's purge also removes every /private/tmp/bashwink-vm-* directory the
-    # user owns. Those belong to whoever made them, so only run the purge when none exist.
-    foreign = sorted(p.name for p in Path("/private/tmp").glob("bashwink-vm-*") if p.is_dir())
-    if foreign:
-        report.stage("uninstall --purge-state removes state", "NOT_RUN",
-                     f"{len(foreign)} pre-existing /private/tmp/bashwink-vm-* directories would also be deleted; not touched")
-    else:
-        purge = subprocess.run([extracted / "uninstall.sh", "--purge-state"], cwd=home, env=env, input="delete\n", capture_output=True, text=True)
-        purged = not (home / ".config/bashwink").exists() and not (home / ".local/share/bashwink").exists()
-        report.stage("uninstall --purge-state removes state", "PASS" if purge.returncode == 0 and purged else "FAIL")
+    # --purge-state may only remove stages this installation recorded. Every stage directory that
+    # already existed on this machine (older builds, other tools) is a decoy that must survive.
+    decoys = {p.name: p.stat().st_ino for p in Path("/private/tmp").glob("bashwink-vm-*") if p.is_dir()}
+    purge = subprocess.run([extracted / "uninstall.sh", "--purge-state"], cwd=home, env=env, input="delete\n", capture_output=True, text=True)
+    purged = not (home / ".config/bashwink").exists() and not (home / ".local/share/bashwink").exists()
+    report.stage("uninstall --purge-state removes state and exits 0", "PASS" if purge.returncode == 0 and purged else "FAIL", f"exit {purge.returncode}")
+    survivors = {p.name: p.stat().st_ino for p in Path("/private/tmp").glob("bashwink-vm-*") if p.is_dir()}
+    report.stage("purge left every pre-existing stage directory alone", "PASS" if survivors == decoys else "FAIL",
+                 f"{len(decoys)} existed before, {len(survivors)} after")
     return 0
 
 

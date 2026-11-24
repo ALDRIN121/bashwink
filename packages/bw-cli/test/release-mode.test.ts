@@ -412,6 +412,58 @@ describe("release bundle process behavior", () => {
     }
   })
 
+  test("a bundle that does not list this Mac's real OS build refuses it, naming build and qualified list", () => {
+    const other = path.join(root, "other-qualified", "lib", "bashwink.js")
+    mkdirSync(path.dirname(other), { recursive: true })
+    const build = Bun.spawnSync({
+      cmd: [
+        process.execPath,
+        "build",
+        path.join(import.meta.dir, "../src/bin.ts"),
+        "--target=bun",
+        "--define",
+        "__BASHWINK_RELEASE__=true",
+        "--define",
+        `__BASHWINK_QUALIFIED_HOSTS__=${JSON.stringify(JSON.stringify([{ version: "26.9.9", build: "ZZZ99" }]))}`,
+        "--outfile",
+        other,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    expect(build.exitCode).toBe(0)
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, other],
+      env: { PATH: process.env["PATH"]!, HOME: root, BASHWINK_HOME: path.join(root, "other-home") },
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd: root,
+    })
+    const message = result.stderr.toString()
+    expect(result.exitCode).toBe(3)
+    expect(message).toContain("No model request was made and no tool was dispatched.")
+    if (process.platform === "darwin" && process.arch === "arm64") {
+      // The real host facts, read from this machine, are judged against the bundle's own list.
+      const version = Bun.spawnSync({
+        cmd: ["/usr/bin/sw_vers", "-productVersion"],
+        stdout: "pipe",
+      })
+        .stdout.toString()
+        .trim()
+      const osBuild = Bun.spawnSync({
+        cmd: ["/usr/sbin/sysctl", "-n", "kern.osversion"],
+        stdout: "pipe",
+      })
+        .stdout.toString()
+        .trim()
+      expect(message).toContain(`macOS ${version} (${osBuild}) is not a qualified host`)
+      expect(message).toContain("Qualified: 26.9.9 (ZZZ99)")
+    } else {
+      expect(message).toContain("macOS on Apple Silicon only")
+    }
+    expect(existsSync(marker)).toBe(false)
+  })
+
   test("a host invocation inside VM mode is refused as unsupported", () => {
     const before = failures().length
     const result = run(["run", "hello"])

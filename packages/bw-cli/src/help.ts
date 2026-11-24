@@ -66,6 +66,7 @@ COMMANDS
                             preview and apply selected changes from a stopped VM project
   sandbox vm-recover        finish an interrupted, approved VM project apply
   sandbox vm-verify         run protected tests against a fresh copy of the host project
+  sandbox stages [--purge]  list (or remove) the VM stage directories this installation recorded
   doctor                    check preconditions and report what is missing
   init                      create Bashwink's config and data directories
   trust <dir>               trust a workspace so shell/write actions are permitted there
@@ -174,6 +175,7 @@ COMMANDS
                             review the agent's changes as a diff; type apply to write them
   sandbox vm-recover        finish an interrupted apply
   sandbox vm-verify         run the protected tests against your project in a fresh VM
+  sandbox stages [--purge]  list (or remove) the VM stage directories this installation recorded
   trust <dir> --by <name> | trust --list | trust --revoke <dir>
   plan ... | contract ... | evidence ... | resume    task plan and evidence tools
   --version, -v | --help, -h

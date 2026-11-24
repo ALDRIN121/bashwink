@@ -10,6 +10,9 @@ make it suitable for external testers are not all complete; see
 
 ## What this release is
 
+The bundled OpenCode 2.3.2 is rebuilt from source without FFmpeg (see
+`share/doc/NOFFMPEG_RUNTIME.md`), not the upstream binary.
+
 - `bashwink` starts an isolated Linux virtual machine (Apple Virtualization framework, no
   network device, no shared folders) and runs the pinned OpenCode 2.3.2 agent inside it on a
   copy of your Git project.
@@ -35,9 +38,12 @@ make it suitable for external testers are not all complete; see
 - Sessions can run for about 30 minutes (previously about 100 seconds), and work is saved if
   the time limit ends the session.
 - The temporary VM stage directory is removed after a session's checkpoint is saved.
-- The execution mode is shown before the UI, inside it, in `bashwink doctor`, and in run
+- The execution mode is shown before the UI, in the UI, in `bashwink doctor`, and in run
   records.
-- Evidence plugin now also contributes the in-UI mode notice.
+- The evidence plugin also draws a persistent `[SANDBOXED VM]` or `[UNSAFE LOCAL MODE]` line in
+  the UI (home screen and beside the prompt) and a short notice at start.
+- VM stage directories are recorded per session. The uninstaller removes only stages this
+  installation recorded and that are idle; it never deletes by name pattern.
 
 ## Verified in this candidate
 

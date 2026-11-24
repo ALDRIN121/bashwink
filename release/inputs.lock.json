@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "Every external byte that reaches the release archive. The builder refuses any input whose SHA-256 differs. npm entries also record the registry's sha512 integrity string.",
+  "note": "Every external byte that reaches the release archive. The builder refuses any input whose SHA-256 differs. npm entries also record the registry's sha512 integrity string. OpenCode itself is not listed here: it is rebuilt without FFmpeg and pinned in release/runtime-pins.json.",
   "inputs": {
     "alpine/vmlinuz-virt": {
       "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/aarch64/netboot-3.23.8/vmlinuz-virt",
@@ -52,14 +52,6 @@
       "sha256": "7fe332c8af8b97579e89df56466f83f4abda5040a18e1842c07d684320bbef4b",
       "license": "X11"
     },
-    "guest/opencode.tgz": {
-      "url": "https://registry.npmjs.org/@opencode/cli-linux-arm64-musl/-/cli-linux-arm64-musl-2.3.2.tgz",
-      "sha256": "a22614aea091eb25484df9169bfa7335bd6b0351bdd47503d8e26dc8441256ee",
-      "npm_integrity": "sha512-g25SO2YjCaPxwjVu72K4MAzvQPgZtzOLtmEZM+YuJZfcMSiZ7gQvOaWqFaH9+4DqC8X1Qb+4Vd2AQMI1ruxg5A==",
-      "member": "package/bin/opencode",
-      "member_sha256": "0e214ccebc6f0dd8775be65104b8a9de0585427b8911ad838c9fd83d1c812e2d",
-      "license": "MIT; embeds LGPL-2.1-or-later FFmpeg inside libopentui (ADR-009)"
-    },
     "guest/bun.tgz": {
       "url": "https://registry.npmjs.org/@oven/bun-linux-aarch64-musl/-/bun-linux-aarch64-musl-1.4.4.tgz",
       "sha256": "20b64dd9e5364e80fc965bed24a052bd21d3ffcd169af720988063c17d275edd",
@@ -67,13 +59,6 @@
       "member": "package/bin/bun",
       "member_sha256": "a6a3d99a48600b59597070d2d2ff8d37b65975b8aab247ee3479b1eb33d000a6",
       "license": "MIT (Bun), plus bundled JavaScriptCore LGPL-2.0 and others (see bun.sh/docs licenses)"
-    },
-    "host/opencode.tgz": {
-      "url": "https://registry.npmjs.org/@opencode/cli-darwin-arm64/-/cli-darwin-arm64-2.3.2.tgz",
-      "sha256": "829f91179a6f4080f528d3a6756b87d2e9953debfb0a068a59bf473d2d7535a9",
-      "npm_integrity": "sha512-cYrIzW8CvYc52INFA/cXmw7U2mk+JNWaV+olH7AflYqa/5srSrA/hbLwF7G1N4QTRMtOFrmeTM0LVN81q396sg==",
-      "member": "package/bin/opencode",
-      "license": "MIT; embeds LGPL-2.1-or-later FFmpeg inside libopentui (ADR-009)"
     },
     "host/bun.tgz": {
       "url": "https://registry.npmjs.org/@oven/bun-darwin-aarch64/-/bun-darwin-aarch64-1.4.4.tgz",

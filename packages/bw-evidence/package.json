@@ -8,7 +8,7 @@
   "license": "MIT",
   "exports": {
     ".": "./src/index.ts",
-    "./tui": "./src/tui.ts"
+    "./tui": "./src/tui.tsx"
   },
   "scripts": {
     "test": "bun test",

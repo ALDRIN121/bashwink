@@ -13,15 +13,18 @@ OpenCode 2.3.2 (host: libexec/opencode; guest: inside the VM image)
   Licence: MIT, Copyright (c) 2025 opencode.
   Source:  https://github.com/anomalyco/opencode  tag v2.3.2,
            commit c0ad18b402eb2827fc1ee71c171b1177b3fc02d1
-  The binary embeds the OpenTUI library above. That library statically links FFmpeg, which is
-  licensed LGPL-2.1-or-later (see "FFmpeg" in the section above and its source pointer).
-  LGPL relinking: the OpenCode binary loads a replacement library from the path named by the
-  OPENTUI_LIB_PATH environment variable. A user may build a modified or FFmpeg-free libopentui
-  from OpenTUI v0.8.4 and run Bashwink's OpenCode against it.
+  These are NOT the upstream release binaries. They were rebuilt from that source with a
+  libopentui built from OpenTUI v0.8.4 (https://github.com/anomalyco/opentui, commit
+  d4a2af24ba50636da5f222367f91746a1bf89644) WITHOUT FFmpeg, so no FFmpeg code is present. The
+  recipe, the differences from the upstream build and the hashes are in
+  share/doc/NOFFMPEG_RUNTIME.md and share/doc/runtime-pins.json. The notices above cover the
+  components that remain in libopentui; no FFmpeg obligation applies to this archive.
 
-Bun 1.4.4 (host: libexec/bun; guest: inside the VM image)
+Bun 1.4.4 (host: libexec/bun; guest: inside the VM image; also the runtime inside each OpenCode build)
   Licence: MIT. Bun embeds JavaScriptCore (LGPL-2.0 and BSD) and other components; the list
-  is at https://bun.sh/docs/project/licensing .
+  is at https://bun.sh/docs/project/licensing . JavaScriptCore is an LGPL component in every
+  Bun-based binary in this archive. Removing FFmpeg does not remove it, and this notice does not
+  claim that its obligations are met.
   Source:  https://github.com/oven-sh/bun  tag bun-v1.4.4
 
 Alpine Linux 3.23.8 aarch64 guest (inside the VM image)

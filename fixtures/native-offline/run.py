@@ -33,6 +33,43 @@ def wait_for(check, seconds=15):
     return None
 
 
+OPENCODE_STATE = re.compile(rb"\x1b\]7501;state=(\w+)(?::[^\x1b\x07]*?kind=(\w+))?")
+
+
+def permission_dialogs(console):
+    """How many permission dialogs OpenCode has raised so far.
+
+    Counted from the state events OpenCode itself emits (OSC 7501 ``state=blocked:kind=permission``),
+    not from words on the screen. A terminal renderer repaints only changed cells, so the second of
+    two identical-looking dialogs can leave no new "Allow once" in the byte stream at all. Waiting
+    for that text made approval depend on repaint timing, and the fixture failed about one run in
+    eight with the permission request pending and the tool never run.
+    """
+    count, previous = 0, None
+    for state, kind in OPENCODE_STATE.findall(console):
+        key = (state, kind)
+        if key == (b"blocked", b"permission") and previous != key:
+            count += 1
+        previous = key
+    return count
+
+
+class DialogApprover:
+    """Approve each permission dialog exactly once, after it has been raised."""
+
+    def __init__(self, write):
+        self.write = write
+        self.sent = 0
+
+    def poll(self, console):
+        raised = permission_dialogs(console)
+        while self.sent < raised:
+            time.sleep(0.3)  # let the dialog take focus before answering it
+            self.write(b"\r")
+            self.sent += 1
+        return self.sent
+
+
 def process_identity(pid):
     result = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "lstart=,command="],
                             capture_output=True, text=True, check=False)

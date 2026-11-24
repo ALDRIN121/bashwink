@@ -22,6 +22,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "native-offline"))
 from recovery import terminal  # noqa: E402
 from run import wait_for  # noqa: E402
+from screen import screen_text  # noqa: E402
 
 PHRASE = "I accept host access"
 results = []
@@ -99,12 +100,18 @@ def run_checks(args, work):
                 print(re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", text)[-900:])
             check("mode is labelled before the TUI", "UNRESTRICTED HOST ACCESS" in text)
             check("mode is shown inside the TUI", wait_for(lambda: contains("Bashwink · UNRESTRICTED"), 15))
+            time.sleep(22)
+            contains("")
+            check("persistent indicator on the home screen after the toast period",
+                  "[UNSAFE LOCAL MODE]" in screen_text(bytes(capture)))
             # Untrusted workspace: the existing policy refuses shell.
             time.sleep(1)
             os.write(master, b"run the shell probe")
             time.sleep(0.3)
             os.write(master, b"\r")
             time.sleep(10)
+            contains("")
+            check("persistent indicator in the session view", "[UNSAFE LOCAL MODE]" in screen_text(bytes(capture)))
             check("untrusted workspace: shell is denied and nothing ran on the host", not canary.exists())
             os.kill(pid, 15)
             finish(130)

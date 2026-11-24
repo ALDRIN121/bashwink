@@ -77,6 +77,7 @@ import {
 import { assertVmProjectRevision, openVmProject } from "./vm-project.js"
 import { recoverVmProject, reviewVmProject, vmProjectApplyPending } from "./vm-project-apply.js"
 import { SESSION_ID } from "./native-stage.js"
+import { listStages, purgeStages, renderStageReports } from "./vm-stages.js"
 
 /** Value of `--flag value` or `--flag=value`, or undefined. First occurrence wins. */
 function flagOf(argv: readonly string[], flag: string): string | undefined {
@@ -225,6 +226,26 @@ export async function main(input: readonly string[]): Promise<MainResult> {
   // forwards `--help` to the runtime where it means the runtime's help.
   switch (first) {
     case "sandbox": {
+      if (rest[0] === "stages") {
+        // Read-only by default. `--purge` removes only stages this installation recorded and can
+        // prove are its own, idle directories; everything else is kept and reported.
+        if (rest.length > 2 || (rest.length === 2 && rest[1] !== "--purge")) {
+          err("usage: bashwink sandbox stages [--purge]")
+          return { exitCode: 2, handled: true }
+        }
+        try {
+          const data = paths().data
+          const purge = rest[1] === "--purge"
+          const reports = purge ? purgeStages(data) : listStages(data)
+          out(renderStageReports(reports, purge))
+          return { exitCode: 0, handled: true }
+        } catch (error) {
+          err(
+            `could not process the stage registry: ${error instanceof Error ? error.message : String(error)}`,
+          )
+          return { exitCode: 1, handled: true }
+        }
+      }
       if (
         RELEASE_BUILD &&
         rest[0] !== "vm-review" &&

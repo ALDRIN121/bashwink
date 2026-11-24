@@ -52,9 +52,11 @@ handling was tested with synthetic upstreams, not by exhausting a live quota.
 ## Where data lives
 
 - A session that ends normally leaves no copy of your project in `/private/tmp`. A session
-  that fails, is killed, or loses power keeps `/private/tmp/bashwink-vm-*` (your project
-  files and session state, readable only by you) until you delete it or run
-  `uninstall.sh --purge-state`.
+  that fails, is killed, or loses power keeps its `/private/tmp/bashwink-vm-*` directory (your
+  project files and session state, readable only by you). Bashwink records each stage it creates;
+  `bashwink sandbox stages` lists them and `--purge` removes the idle ones. Stages created by
+  builds before this one are not recorded and are never deleted by Bashwink; remove them by hand
+  if you recognise them.
 - Saved sessions, approvals and evidence live in `~/.local/share/bashwink` and
   `~/.config/bashwink`. Evidence is tamper-evident (hash-chained), not tamper-proof: someone
   who can write the file can truncate it or rebuild the chain.
@@ -71,10 +73,13 @@ handling was tested with synthetic upstreams, not by exhausting a live quota.
 
 ## Licensing
 
-The guest and host OpenCode binaries are the stock upstream builds. They contain a
-statically linked LGPL-2.1-or-later FFmpeg inside `libopentui` (see the project's FFmpeg
-decision record). Distributing them to others needs the project owner's sign-off. The notices
-and the relinking route are in `share/licenses/`.
+The OpenCode binaries in this archive are rebuilt from the pinned 2.3.2 source with a native UI
+library built **without FFmpeg**, so the FFmpeg (LGPL) obligation of the upstream binaries does not
+apply. The recipe and its limits are in `share/doc/NOFFMPEG_RUNTIME.md` (not byte-reproducible, web UI
+omitted). This is **not** a legal conclusion: Bun embeds JavaScriptCore (LGPL-2.0) in every binary here,
+and the Alpine guest contains GPL components. The notices and source pointers are in
+`share/licenses/`. Whether they satisfy each licence needs the project owner's review before the
+archive is given to anyone else.
 
 ## Unrestricted mode
 

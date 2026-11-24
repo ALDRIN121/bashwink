@@ -119,6 +119,7 @@ describe("standard bundle", () => {
     expect(text).toContain("STANDARD: native and permission-controlled")
     expect(text).toContain("NOT an")
     expect(text).toContain("auth add")
+    expect(text).toContain("trust <dir> --by <name>")
     // Nothing the standard package refuses is advertised, and the dev-only backend switch is gone.
     expect(text).not.toContain("sandbox probe")
     expect(text).not.toContain("sandbox vm-review")

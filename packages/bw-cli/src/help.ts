@@ -69,7 +69,7 @@ COMMANDS
   sandbox stages [--purge]  list (or remove) the VM stage directories this installation recorded
   doctor                    check preconditions and report what is missing
   init                      create Bashwink's config and data directories
-  trust <dir>               trust a workspace so shell/write actions are permitted there
+  trust <dir> --by <name>   trust a workspace so shell/write actions are permitted there
   trust --list              show trusted workspaces
   trust --revoke <dir>      remove a workspace's trust
   plan new <objective>      create a plan with a task graph

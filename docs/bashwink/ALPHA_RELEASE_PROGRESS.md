@@ -88,10 +88,28 @@ ADR-015 (standard default, sandbox optional), ADR-016 (future engines, direction
 
 ## Next exact engineering actions (in order)
 
-1. Fix the `/Users/me/` audit finding, rebuild, then `npm install -g --prefix <tmp> build/npm/bashwink-0.1.0-alpha.1.tgz`,
-   run `bashwink --version`, `doctor`, a PTY TUI smoke and a fixture project (macOS arm64 first). **Unverified:** that the
-   evidence plugin loads without a nested `node_modules/@opencode/plugin` (npm does not pack nested node_modules) and that
-   the Windows platform packages contain `bin/bun.exe` / `bin/opencode.exe` (launcher tries both names).
+1. **DONE on macOS arm64 (engineering host, not a clean host):** the audit finding was a comment example and is fixed
+   (the audit stays strict). The tarball installs with `npm install -g <tgz>` into a throwaway prefix, cache and HOME in
+   ~18 s with no source checkout, and `fixtures/release/npm_smoke.py` passes 17/17 checks against the installed package:
+   `--version`, `doctor` finds the npm-installed runtimes and plugin, `--sandbox` fails closed (exit 3, recorded), the
+   first-launch trust question, the TUI starts, the persistent `[STANDARD - native, not a sandbox]` label is on the
+   rendered screen, evidence boots, SIGTERM ends the session with 130 and the run record says `standard-native` with
+   evidence `recorded`, a second launch does not ask again, no process is left, `npm uninstall -g` removes the command
+   and leaves the user's state and project alone. Result file:
+   `docs/bashwink/releases/v0.1.0-alpha.1/npm-candidate/npm_smoke_macos_arm64.json`. The tarball built for it came from a
+   dirty tree, so it is **not** a candidate; the candidate is built from a clean commit.
+   Defects found and fixed by running the installed package (none were visible from the source checkout):
+   - npm's `bun` package moves the binary out of the platform package into `bun/bin/bun.exe`; the launcher looked only in
+     the platform package.
+   - The launcher did not forward SIGTERM/SIGINT/SIGHUP, so the runtime died without finalizing its run record
+     (`evidence: pending`). It forwards them now.
+   - OpenCode's JSX transform skips any file whose path contains `node_modules`, so the TUI plugin failed with "Cannot
+     find package '@opentui/solid'" (a visible "Plugin failed" banner; no label). The same files load from a path without
+     that segment (measured, same runtime, both the stock npm runtime and the rebuilt one). Plugins are therefore staged as a
+     **copy** when the package lives under `node_modules` and on Windows (symlinks need a privilege there); never a
+     second copy of `@opencode/plugin` (the host refuses one). 8 new tests; 539 pass, lint and typecheck clean.
+   Still unverified: that Windows' platform packages contain `bin/bun.exe` and `bin/opencode.exe` as assumed (the launcher
+   tries both names); Linux and Windows installs; reinstall/upgrade over an existing install.
 2. Add the standard-mode PTY/fixture checks to the runner and a `windows-latest` CI job.
 3. Windows portability audit of shared code (symlink staging → junction/copy, Unix tool calls, `process.getuid`, paths,
    signals); add unit tests that run everywhere; add a `windows-latest` CI job; write the Windows x64 qualification script

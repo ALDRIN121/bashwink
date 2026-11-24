@@ -434,7 +434,7 @@ export class EvidenceRecorder {
      *
      * Not the workspace: the plugin runs in the runtime's shared host process, whose cwd is
      * wherever that host was started. A probe recorded `cwd=/Users/me` for a workspace at
-     * `/Users/me/repo`, and reading that as the run's directory would be wrong every time.
+     * `/path/to/repo`, and reading that as the run's directory would be wrong every time.
      * `location` is the workspace.
      */
     readonly cwd: string

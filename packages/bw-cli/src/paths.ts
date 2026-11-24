@@ -16,7 +16,9 @@
  */
 
 import {
+  cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   renameSync,
@@ -297,9 +299,68 @@ function isFile(file: string): boolean {
 }
 
 /**
+ * Whether a plugin must be staged as a **copy** instead of a symlink.
+ *
+ *   - Under a `node_modules` directory (an npm install): OpenCode's JSX transform for terminal-UI
+ *     plugins skips files whose path contains `node_modules`, so the plugin's `.tsx` falls to the plain
+ *     transpiler and fails with "Cannot find package '@opentui/solid'". Measured on the npm-installed
+ *     package: identical files fail under `…/node_modules/bashwink/lib/evidence` and load from a copy
+ *     at a path without that segment. The runtime resolves a symlink to its real path, so a link does not help.
+ *   - On Windows: creating a symlink needs a privilege ordinary users do not have.
+ */
+export function mustCopyPlugin(
+  directory: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform === "win32") return true
+  let real = directory
+  try {
+    real = realpathSync(directory)
+  } catch {
+    // an unresolvable directory is reported by resolvePluginEntry
+  }
+  return real.split(/[\\/]+/).includes("node_modules")
+}
+
+/** What a staged copy leaves out: dependencies (the host provides `@opencode/plugin`; its loader refuses a second copy) and tooling. */
+const NOT_COPIED = new Set(["node_modules", ".turbo", ".git"])
+
+function copyPlugin(source: string, destination: string): void {
+  cpSync(source, destination, {
+    recursive: true,
+    dereference: true,
+    filter: (entry) => !NOT_COPIED.has(path.basename(entry)),
+  })
+}
+
+/** Put `built` (a finished directory) at `target`, replacing what is there with as small a gap as the file system allows. */
+function publishDirectory(built: string, target: string): void {
+  let displaced: string | undefined
+  try {
+    if (existsSync(target) || isLink(target)) {
+      displaced = `${target}.old-${process.pid}`
+      renameSync(target, displaced)
+    }
+    renameSync(built, target)
+  } finally {
+    if (displaced !== undefined) rmSync(displaced, { recursive: true, force: true })
+  }
+}
+
+function isLink(file: string): boolean {
+  try {
+    return lstatSync(file).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+/**
  * Write the plugin directory contents for a run.
  *
- * Each plugin is a **symlink to its real package directory**.
+ * Each plugin is, by default, a **symlink to its real package directory**; a package that cannot
+ * be loaded through a link (see `mustCopyPlugin`) is staged as a fresh copy on every run, so it cannot
+ * be stale after an upgrade.
  *
  * Two earlier attempts were wrong, and both failed *silently*:
  *   - `exports: { ".": "<absolute path>" }` — an `exports` target must be a relative
@@ -315,7 +376,11 @@ function isFile(file: string): boolean {
 export function stagePlugins(
   root: string,
   specs: readonly PluginSpec[],
-  options: { readonly preserveExisting?: boolean } = {},
+  options: {
+    readonly preserveExisting?: boolean
+    /** Test hook: pretend to be another platform when deciding link or copy. */
+    readonly platform?: NodeJS.Platform
+  } = {},
 ): StagedPlugin[] {
   const pluginRoot = path.join(root, "plugin")
   // Removing first is what actually disables a plugin (ADR-002 constraint 2).
@@ -328,19 +393,26 @@ export function stagePlugins(
     // Resolve exactly as the runtime will. A directory that resolves to nothing is dropped
     // by OpenCode's discovery with no log line, so it must fail here instead.
     const entry = resolvePluginEntry(spec.directory)
-    // OpenCode watches the staging directory. Publish a replacement only after the
-    // symlink is ready and only touch the requested slot.
-    if (options.preserveExisting) {
+    const copy = mustCopyPlugin(spec.directory, options.platform)
+    // OpenCode watches the staging directory. Build the replacement completely first and
+    // only touch the requested slot.
+    if (options.preserveExisting || copy) {
       const temporary = mkdtempSync(path.join(root, ".plugin-stage-"))
       try {
-        const link = path.join(temporary, spec.id)
-        symlinkSync(spec.directory, link, "dir")
-        renameSync(link, target)
+        const built = path.join(temporary, spec.id)
+        if (copy) copyPlugin(spec.directory, built)
+        else symlinkSync(spec.directory, built, "dir")
+        if (options.preserveExisting) publishDirectory(built, target)
+        else renameSync(built, target)
       } finally {
         rmSync(temporary, { recursive: true, force: true })
       }
     } else symlinkSync(spec.directory, target, "dir")
-    staged.push({ id: spec.id, path: target, entry })
+    staged.push({
+      id: spec.id,
+      path: target,
+      entry: copy ? path.join(target, path.relative(spec.directory, entry)) : entry,
+    })
   }
   return staged
 }

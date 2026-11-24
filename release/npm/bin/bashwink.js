@@ -83,7 +83,9 @@ function main(argv) {
     process.stderr.write(`bashwink: ${plan.unsupported}\n`);
     return 1;
   }
-  const bun = findBinary(plan.bun, "bun", plan.executable);
+  // npm's `bun` package moves the real binary from its platform package into its own bin/bun.exe (on every OS)
+  // during install, so look in both places.
+  const bun = findBinary(plan.bun, "bun", plan.executable) || findBinary("bun", "bun", ".exe");
   const opencode = findBinary(plan.opencode, "opencode", plan.executable);
   if (!bun || !opencode) {
     const missing = [!bun ? plan.bun : undefined, !opencode ? plan.opencode : undefined].filter(Boolean);
@@ -99,6 +101,18 @@ function main(argv) {
     stdio: "inherit",
     env: { ...process.env, BASHWINK_OPENCODE_BIN: opencode },
   });
+  // The runtime owns the session and finalizes its run record on SIGINT/SIGTERM/SIGHUP. Forward those signals
+  // instead of dying with the launcher, and exit with whatever the runtime exits with. (Ctrl+C in a terminal
+  // reaches both processes; a signal sent to this process alone reaches the runtime only through this.)
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+    process.on(signal, () => {
+      try {
+        child.kill(signal);
+      } catch {
+        // the child already exited
+      }
+    });
+  }
   child.on("error", (error) => {
     process.stderr.write(`bashwink: could not start the runtime: ${error.message}\n`);
     process.exit(127);

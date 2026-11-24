@@ -1,0 +1,87 @@
+[
+  {
+    "check": "npm install -g <tarball> succeeds without any source checkout",
+    "verdict": "PASS",
+    "detail": "17s"
+  },
+  {
+    "check": "installed size recorded",
+    "verdict": "PASS",
+    "detail": "315218105 bytes including runtimes"
+  },
+  {
+    "check": "no workspace dependency or source-tree path leaked into the installed manifest",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "bashwink --version",
+    "verdict": "PASS",
+    "detail": "bashwink 0.1.0-alpha.1"
+  },
+  {
+    "check": "doctor finds the npm-installed runtimes and evidence plugin",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "--sandbox fails closed and is recorded",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "first launch asks whether to trust the folder and says it is not a sandbox",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "the TUI starts",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "the persistent STANDARD label is on screen",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "evidence booted for this run",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "SIGTERM ends the session with 130",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "the run record names the execution mode standard-native",
+    "verdict": "PASS",
+    "detail": "standard-native"
+  },
+  {
+    "check": "the run record shows evidence recorded",
+    "verdict": "PASS",
+    "detail": "recorded"
+  },
+  {
+    "check": "a second launch does not ask again and reaches the TUI",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "no bashwink or its runtime is left running",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "npm uninstall -g removes the command and package",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "uninstall leaves the user's state and project alone",
+    "verdict": "PASS",
+    "detail": ""
+  }
+]

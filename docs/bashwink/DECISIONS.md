@@ -207,3 +207,38 @@ it does not make the multi-file apply atomic.
   the list with evidence. The list is compiled in, so extending it needs a new build. Reverse
   decision 3 only with a persistent indicator and a new review.
 - **Status:** Accepted for the candidate; external distribution not approved.
+
+## ADR-014 — RC2 stabilization: stage ownership, approval detection, persistent mode indicator
+
+- **Date / owner:** 2026-11-25, Aldrin Joseph.
+- **Problem and context:** Three defects survived RC1: the uninstaller deleted every
+  `/private/tmp/bashwink-vm-*` directory the user owned; a security-sensitive boundary fixture
+  failed intermittently with no known cause; and the execution mode was visible only as a short
+  notice. RC1 also left the licensing and clean-host questions open.
+- **Decisions.**
+  1. **Stage ownership.** Each stage directory is registered under the creating installation's data
+     directory and carries an ownership marker with the same random nonce. Cleanup
+     (`bashwink sandbox stages [--purge]`, used by `uninstall.sh --purge-state`) removes a stage only
+     if the registry entry parses, the path is directly under the stage root with the expected name
+     shape, a real directory (never a symlink) of this user's with the recorded device and inode
+     is there, the marker matches, the recorded process is gone and nothing has the disk open.
+     Everything else is kept and reported. Unregistered directories (older builds, other
+     installations, other tools) are never examined for deletion. The uninstaller no longer contains
+     a glob delete. Negative regression tests include the old logic as a control.
+  2. **Approval detection in PTY fixtures.** Permission dialogs are counted from OpenCode's own state
+     events (`OSC 7501 state=blocked:kind=permission`), not from words on the screen. Root cause of the
+     intermittent failure: the terminal renderer repaints only changed cells, so a second dialog
+     with the same option row leaves no new "Allow once" in the byte stream, the fixture waited for
+     it, never approved, and the guest's own deadline ended the session with the tool never run.
+     It was a harness observation defect, not an isolation defect: no tool ran in the failing runs,
+     so no isolation assertion was evaluated, and no assertion was weakened or removed.
+  3. **Persistent indicator.** The evidence plugin's TUI entry claims the supported
+     `home.footer` and `prompt.footer.status` slots with `[SANDBOXED VM]` or `[UNSAFE LOCAL MODE]`,
+     keeping the start-up notice. Wording and the "unknown is never shown as isolated" rule live in a
+     type-checked, unit-tested module; only JSX glue is untyped. No TUI fork.
+  4. **Manifest.** Intentional documentation edits are recorded with
+     `scripts/refresh_docs_manifest.py --write`, which updates existing entries only and prints every
+     change. The strict check is unchanged.
+- **Consequences:** Stages created by RC1 and earlier are unregistered, so they are never deleted
+  automatically. Registration happens before anything is written to a stage.
+- **Status:** Accepted.

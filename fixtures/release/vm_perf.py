@@ -85,12 +85,15 @@ def main():
                     began_turn = time.monotonic()
                     os.write(master, b"\r")
                     end = time.monotonic() + 120
+                    approved = 0
                     while time.monotonic() < end and not contains(marker):
-                        if b"Allow once" in bytes(capture)[-1500:]:
-                            time.sleep(0.5)
+                        # One Enter per new permission dialog: count dialogs, do not re-press
+                        # while an old dialog's text is still in the buffer.
+                        if bytes(capture).count(b"Allow once") > approved:
+                            time.sleep(0.3)
                             os.write(master, b"\r")
-                            time.sleep(1.5)
-                        time.sleep(0.25)
+                            approved += 1
+                        time.sleep(0.1)
                     done = time.monotonic() - began_turn if contains(marker) else None
                 footprint = sampler.footprint_mib() if sampler else None
                 os.write(master, b"\x04")

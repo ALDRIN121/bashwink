@@ -141,6 +141,39 @@ class Sampler(threading.Thread):
         return total
 
 
+def auth_failure_from_checkpoint(home):
+    """Independent observation of the provider's answer: the guest's saved session database."""
+    import base64
+    import glob
+    import sqlite3
+    found = glob.glob(str(home / ".local/share/bashwink/vm-projects/*/checkpoint.json"))
+    if not found:
+        return "FAIL", "no checkpoint"
+    record = json.loads(json.loads(Path(found[0]).read_text())["payload"])
+    state = record["snapshot"]["state"]
+    scratch = Path(tempfile.mkdtemp(prefix="bw-auth-db-"))
+    try:
+        (scratch / "o.db").write_bytes(base64.b64decode(state["bashwink/opencode/opencode.db"]))
+        if state.get("bashwink/opencode/opencode.db-wal"):
+            (scratch / "o.db-wal").write_bytes(base64.b64decode(state["bashwink/opencode/opencode.db-wal"]))
+        errors = []
+        for (content,) in sqlite3.connect(scratch / "o.db").execute("select data from session_message"):
+            try:
+                value = json.loads(content)
+            except (TypeError, ValueError):
+                continue
+            error = value.get("error") if isinstance(value, dict) else None
+            if isinstance(error, dict):
+                errors.append((error.get("type"), error.get("status"), error.get("message")))
+        usage = [json.loads(Path(f).read_text()) for f in glob.glob(str(Path(found[0]).parent / "provider-usage-*.json"))]
+        sent = sum(u["requests"] for u in usage)
+        tokens = sum(u["inputTokens"] + u["outputTokens"] for u in usage)
+        ok = any(e[0] == "provider.auth" and e[1] == 401 for e in errors) and sent == 1 and tokens == 0
+        return ("PASS" if ok else "FAIL"), f"errors={errors[:2]} requests_sent={sent} tokens={tokens}"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def tree_size(path):
     return sum(p.stat().st_size for p in Path(path).rglob("*") if p.is_file() and not p.is_symlink())
 
@@ -315,6 +348,16 @@ def run_stages(args, report, work):
                      "PASS" if wait_for(lambda: contains("Bashwink · ISOLATED VM"), 15) else "FAIL")
         time.sleep(3)
         report.measure("idle_footprint_mib", round(sampler.footprint_mib(), 1))
+        if not args.live and bogus:
+            # A real request to the real endpoint with a deliberately invalid key. Nothing of
+            # value is sent. The outcome is read back from the saved session, not the screen.
+            time.sleep(0.5)
+            os.write(master, b"Reply with the single word ready.")
+            time.sleep(0.2)
+            os.write(master, b"\r")
+            wait_for(lambda: contains("Reply with the single word ready"), 20)
+            time.sleep(15)
+            contains("")
         if not args.live:
             os.write(master, b"\x04")
             try:
@@ -353,12 +396,15 @@ def run_stages(args, report, work):
                          f"{approved} approval(s)")
         text = bytes(capture).decode(errors="replace")
         usage = re.search(r"VM provider usage: (\d+)/(\d+) requests", text)
+        report.measure("usage_line", usage[0] if usage else None)
         if usage:
             report.measure("provider_requests_used", int(usage[1]))
             report.measure("provider_request_limit", int(usage[2]))
         (work / "first-session.pty").write_bytes(bytes(capture))
     sampler.stop.set()
     sampler.join(timeout=5)
+    if not args.live and bogus:
+        report.stage("live endpoint rejects an invalid key (read from the saved session)", *auth_failure_from_checkpoint(home))
     report.measure("peak_workload_rss_kib", sampler.peak_rss_kib)
     report.measure("peak_workload_cpu_percent_of_one_core", round(sampler.peak_cpu_percent, 1))
     report.measure("peak_workload_footprint_mib", round(sampler.peak_footprint_mib, 1))

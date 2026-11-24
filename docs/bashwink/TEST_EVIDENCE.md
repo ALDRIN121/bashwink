@@ -1,5 +1,32 @@
 # Bashwink — Test Evidence Register
 
+## Installed macOS offline TUI milestone (2026-11-24)
+
+Source revision `ac3566340a420304345c1419a2eea0e02ef1f4d2`. macOS arm64 27.0.1 build 26A434. Bun 1.4.4
+and OpenCode 2.3.2 were pinned. The build landed outside the source checkout and used
+a disposable workspace and local mock. No Docker or provider credentials were used.
+
+| Command or control | Exit | Result |
+| --- | ---: | --- |
+| `./scripts/build_alpha.sh <temporary-output>` and `python3 fixtures/native-offline/run.py <installed-bashwink> <pinned-runtime> --lifecycle coding` | 0 each | The installed private server attested the evidence plugin and staged workspace. A normal keyboard prompt completed a real in-process write and shell child. ScopeFence refused a second in-process write outside the workspace. The OS rejected the real child's sibling write and unrelated IPv4 loopback connection. The host confirmed the same hash/inode and no connection on its unrelated listener. The durable SQLite session directory and evidence session agreed. |
+| Lifecycle fixture with `--lifecycle ctrl-c\|server-crash\|timeout\|startup` | harness 0 each | App exit 0, 3, 124 and 3 respectively. Normal and supervised stops removed both directly owned processes and the lease. Wrong runtime startup made no provider request. |
+| Lifecycle fixture with `--lifecycle abrupt` | harness 0, wrapper -9 | Both owned children were gone when externally observed. The readiness lease survived. This is an observed cleanup gap. Detached descendants were outside this test. |
+| `bun run packages/bw-evidence/src/cli.ts verify <offline-evidence.jsonl>` | 0 | Native TUI run verified with nine entries. |
+| `bun run test`, typecheck, lint, formatting, lint-gate controls | 0 each | 396 tests, zero failures, 59 formatted files and six lint-gate checks. |
+| Existing real runtime and policy fixtures | 0 each | Runtime health, tool lifecycle, contract and idempotent resume passed 11, 19, 14 and 10 checks. These run the normal local backend. |
+| Ubuntu and Bubblewrap | BLOCKED | Available host is Darwin arm64, no Bubblewrap helper, `podman machine list --format json` returned `[]`, and no Docker daemon responded. Historical Ubuntu readiness failure remains after SQLite bootstrap, before tool lifecycle. Its log lacks a specific readiness substep. No host security settings were modified. |
+| Hosted CI for the review branch | NOT_RUN | No new run was started under the existing Actions pause. Historical macOS runtime job passed both steps. Historical Ubuntu runtime readiness failed and the tool lifecycle step was skipped. |
+
+The first native TUI start failed at raw-mode setup. Granting ioctl access to the exact
+inherited PTY resolved it. The keyboard test also needed to wait for the prompt surface.
+The first shell-canary command used an absolute executable path and ScopeFence correctly
+refused it before dispatch. The final run used the approved staged fixture helper and
+verified the kernel denial inside the shell child. Native session reopening, host export,
+detached cleanup and general native admission remain open.
+
+[Historical hosted run](https://github.com/ALDRIN121/bashwink/actions/runs/45266792026)
+· [Qualification results](BW-032_QUALIFICATION_RESULTS.md).
+
 ## Installed Seatbelt probe milestone (2026-11-24)
 
 Code revision `368f81173a5c39efc65ae020ac23f4333a682763`. The installed command

@@ -12,8 +12,12 @@ in the [machine-readable matrix](NATIVE_SANDBOX_QUALIFICATION.json).
 | Real OpenCode runtime regressions in existing local mode | PASS, readiness 11 checks, tool lifecycle 19, contract 14, recovery 10. Each fixture exited 0 |
 | Installed local TUI regression in a real PTY | PASS. The startup prompt rendered. SIGTERM returned 130, removed the readiness lease and reaped the owned server. No coding turn was submitted. |
 | Installed macOS arm64 native diagnostic | PASS, six controls, exit 0 on macOS 27.0.1 build 26A434 with the system helper. Docker-family tooling was unused. Docker was present on the machine, so the clean-host criterion remains blocked |
-| Real native PTY coding, session recovery and reviewed export | NOT_RUN. No native agent launch path |
-| Real provider relay and live turn | BLOCKED. Provider relay and native workload admission are absent |
+| Real native PTY coding | PASS at fixture tier. The installed client submitted keyboard input, completed a real write and a shell against the local mock, and recorded a durable session. |
+| Native recovery and reviewed export | NOT_RUN. The experimental fixture always creates a new private workspace. |
+| Native OS denial | PASS at fixture tier. The real shell received OS denials for a protected sibling write and unrelated TCP loopback access. ScopeFence separately refused a forbidden file-tool write. |
+| Native lifecycle | Normal exit and Ctrl+C returned 0, owned server failure returned 3, and timeout returned 124. External observation confirmed both direct children were gone and the lease was removed in these cases. Wrong executable startup returned 3 with no model request. Abrupt launcher death left a stale lease. |
+| Detached descendants | NOT_RUN. The fixture observations cover the two directly owned processes. |
+| Real provider relay and live turn | BLOCKED. Provider relay and general native admission are absent |
 | Detached-workload cancellation and resource enforcement | NOT_RUN. The probe supervises direct diagnostic invocations |
 | Ubuntu x86-64 with distro AppArmor and Bubblewrap | BLOCKED. No disposable Ubuntu host was available for execution in this cycle |
 | Optional Docker | NOT_RUN. Outside this milestone |

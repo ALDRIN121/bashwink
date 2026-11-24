@@ -118,6 +118,156 @@
       "verdict": "FAIL",
       "exitCode": 1,
       "reason": "The exact failing substep is absent from the historical run diagnostics"
+    },
+    {
+      "id": "installed-tui-mock",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "ac3566340a420304345c1419a2eea0e02ef1f4d2",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/run.py /absolute/path/to/bashwink /absolute/path/to/native/opencode --lifecycle coding",
+      "expected": "Pass the indicated native fixture control with independent host observations.",
+      "observed": "Keyboard input completed real write and shell tools in the staged workspace.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 0,
+      "reason": ""
+    },
+    {
+      "id": "real-shell-os-canaries",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "ac3566340a420304345c1419a2eea0e02ef1f4d2",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/run.py /absolute/path/to/bashwink /absolute/path/to/native/opencode --lifecycle coding",
+      "expected": "Pass the indicated native fixture control with independent host observations.",
+      "observed": "Seatbelt denied the protected sibling write and unrelated IPv4 loopback connect. Host hash, inode and listener state stayed unchanged.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 0,
+      "reason": ""
+    },
+    {
+      "id": "normal-exit",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "ac3566340a420304345c1419a2eea0e02ef1f4d2",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/run.py /absolute/path/to/bashwink /absolute/path/to/native/opencode --lifecycle coding",
+      "expected": "Pass the indicated native fixture control with independent host observations.",
+      "observed": "Both direct children were gone and the readiness lease was removed.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 0,
+      "reason": ""
+    },
+    {
+      "id": "ctrl-c",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "ac3566340a420304345c1419a2eea0e02ef1f4d2",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/run.py /absolute/path/to/bashwink /absolute/path/to/native/opencode --lifecycle ctrl-c",
+      "expected": "Pass the indicated native fixture control with independent host observations.",
+      "observed": "Both direct children were gone and the readiness lease was removed.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 0,
+      "reason": ""
+    },
+    {
+      "id": "server-crash",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "ac3566340a420304345c1419a2eea0e02ef1f4d2",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/run.py /absolute/path/to/bashwink /absolute/path/to/native/opencode --lifecycle server-crash",
+      "expected": "Pass the indicated native fixture control with independent host observations.",
+      "observed": "The launcher closed the TUI, reaped its direct children and retired readiness.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 3,
+      "reason": ""
+    },
+    {
+      "id": "timeout",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "ac3566340a420304345c1419a2eea0e02ef1f4d2",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/run.py /absolute/path/to/bashwink /absolute/path/to/native/opencode --lifecycle timeout",
+      "expected": "Pass the indicated native fixture control with independent host observations.",
+      "observed": "Both direct children were gone and the readiness lease was removed.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 124,
+      "reason": ""
+    },
+    {
+      "id": "startup",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "ac3566340a420304345c1419a2eea0e02ef1f4d2",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/run.py /absolute/path/to/bashwink /absolute/path/to/native/opencode --lifecycle startup",
+      "expected": "Pass the indicated native fixture control with independent host observations.",
+      "observed": "Unpinned executable refused with no model request.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 3,
+      "reason": ""
+    },
+    {
+      "id": "abrupt",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "ac3566340a420304345c1419a2eea0e02ef1f4d2",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/run.py /absolute/path/to/bashwink /absolute/path/to/native/opencode --lifecycle abrupt",
+      "expected": "Pass the indicated native fixture control with independent host observations.",
+      "observed": "No directly owned child was observed alive after disposition, but the host readiness lease remained.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "FAIL",
+      "exitCode": -9,
+      "reason": "No directly owned child was observed alive after disposition, but the host readiness lease remained."
+    },
+    {
+      "id": "native-session-reopen",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "ac3566340a420304345c1419a2eea0e02ef1f4d2",
+      "policyDigest": null,
+      "command": null,
+      "expected": "Pass the indicated native fixture control with independent host observations.",
+      "observed": "An isolated session was saved. The CLI has no trusted reopening path.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "NOT_RUN",
+      "exitCode": null,
+      "reason": "An isolated session was saved. The CLI has no trusted reopening path."
+    },
+    {
+      "id": "detached-child-cleanup",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "ac3566340a420304345c1419a2eea0e02ef1f4d2",
+      "policyDigest": null,
+      "command": null,
+      "expected": "Pass the indicated native fixture control with independent host observations.",
+      "observed": "The conducted observer tracked only the directly owned TUI and server.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "NOT_RUN",
+      "exitCode": null,
+      "reason": "The conducted observer tracked only the directly owned TUI and server."
     }
   ],
   "qualification": [
@@ -145,7 +295,7 @@
       "observed": "No release-tier evidence",
       "evidence": "BW-032_QUALIFICATION_RESULTS.md",
       "verdict": "BLOCKED",
-      "reason": "Native TUI and runtime admission are not implemented"
+      "reason": "An installed mock coding turn passed at fixture tier. The clean qualification host and production staged-workspace workflow remain unavailable."
     },
     {
       "id": "interactive-live-provider",
@@ -183,8 +333,8 @@
       "expected": "External observer verifies descendant containment and cleanup",
       "observed": "No release-tier evidence",
       "evidence": "BW-032_QUALIFICATION_RESULTS.md",
-      "verdict": "NOT_RUN",
-      "reason": "The installed probe does not exercise the full BW-032 control"
+      "verdict": "BLOCKED",
+      "reason": "The fixture observations are narrower than this required release control. See BW-032 qualification results."
     },
     {
       "id": "network-and-provider-transport",
@@ -197,7 +347,7 @@
       "observed": "No release-tier evidence",
       "evidence": "BW-032_QUALIFICATION_RESULTS.md",
       "verdict": "BLOCKED",
-      "reason": "Only the offline TCP loopback probe ran; relay and remaining protocols are unqualified"
+      "reason": "The fixture observations are narrower than this required release control. See BW-032 qualification results."
     },
     {
       "id": "secret-isolation",
@@ -235,8 +385,8 @@
       "expected": "Verified session recovery and valid, approved staged import",
       "observed": "No release-tier evidence",
       "evidence": "BW-032_QUALIFICATION_RESULTS.md",
-      "verdict": "NOT_RUN",
-      "reason": "The installed probe does not exercise the full BW-032 control"
+      "verdict": "BLOCKED",
+      "reason": "The fixture observations are narrower than this required release control. See BW-032 qualification results."
     },
     {
       "id": "unsupported-host-and-no-fallback",

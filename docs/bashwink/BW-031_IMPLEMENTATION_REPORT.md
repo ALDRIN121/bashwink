@@ -1,9 +1,12 @@
 # BW-031 native sandbox milestone
 
-**Status** PARTIAL. Source milestone `368f81173a5c39efc65ae020ac23f4333a682763`.
+**Status** PARTIAL. Installed macOS offline TUI coding works for the disposable
+mock fixture. The server and TUI both run inside Seatbelt. The fixture can edit its staged
+workspace and records real file and shell tools. Native admission for general projects
+remains unavailable. The earlier diagnostic source milestone was `368f81173a5c39efc65ae020ac23f4333a682763`.
 The installed CLI can execute the offline default-deny macOS Seatbelt probe. The probe
 tests a disposable workload and optionally starts the staged native OpenCode binary with
-`--version`. Native coding admission remains unavailable.
+`--version`. The probe remains available as a separate diagnostic.
 
 ## Run the milestone
 
@@ -44,6 +47,31 @@ switch and separately acknowledged local restart are outstanding.
 | `scripts/verify_native_release.py`, `scripts/test_native_release_gate.py` | Executable qualification gate and unit controls |
 | `docs/bashwink/NATIVE_SANDBOX_QUALIFICATION.json` | Required release controls plus observed milestone evidence |
 
+## Run the offline TUI
+
+Use the installed CLI and the pinned native OpenCode v2.3.2 executable. The repeatable
+qualification entry point starts a controlling PTY and its own offline fixture provider.
+
+```sh
+python3 fixtures/native-offline/run.py /absolute/path/to/bashwink \
+  /absolute/path/to/native/opencode --output /absolute/path/to/disposable-results
+```
+
+The harness calls `bashwink sandbox offline <mock-port>`. The command checks the fixture's
+health marker, checks the pinned version in confinement and prepares a new private
+workspace. It ignores project configuration and installs only Bashwink's packaged policy
+plugin. OpenCode's owned server has a stdio lease and a single IPv4 loopback listener.
+Its outbound grant is the fixture provider's specific TCP port. The TUI can reach only
+its separately authenticated, workspace-scoped admission endpoint. Terminal ioctl access
+targets its inherited PTY. The app retains private fixture state for observation and never
+exports edits to the caller's checkout. Use this command only for the controlled fixture.
+
+The host verified a durable session associated with the tool evidence. Restart and import
+of retained session state still need a trusted reopening path. The abrupt launcher case
+left a stale readiness file even though neither directly owned child was alive when
+observed. Detached descendants and security of a production terminal boundary remain
+unqualified. [Recorded evidence](TEST_EVIDENCE.md).
+
 ## Open work in order
 
 1. Reproduce the Ubuntu readiness failure on a disposable Ubuntu x86-64 system. Use
@@ -53,9 +81,9 @@ switch and separately acknowledged local restart are outstanding.
 2. Run native mounts, network namespace, seccomp and lifecycle controls with the distro
    Bubblewrap on an AppArmor-enabled host. Keep the macOS deny profile small and qualify
    it on each advertised release.
-3. Put the pinned private server and TUI inside the native workload, then verify offline
-   interactive coding, staged import, cancellation and session recovery. Admit the first
-   prompt only after both workload and plugin readiness are bound to the run.
+3. Extend the proven fixture workload with trusted reopening of staged sessions, reviewed
+   import and detached-descendant observation. Keep the first prompt gated on fresh
+   workload and plugin identity.
 4. Implement the narrow host provider relay with credential separation. Qualify its
    negative controls, then exercise an authorized live provider and model switching.
 5. Verify detached cleanup, resource limits and clean Docker-free installs through BW-032.

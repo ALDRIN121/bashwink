@@ -1,8 +1,8 @@
 # BW-031 native sandbox milestone
 
 **Status** PARTIAL. Installed macOS offline TUI coding works for the disposable
-mock fixture. The server and TUI both run inside Seatbelt. The fixture can edit its staged
-workspace and records real file and shell tools. Native admission for general projects
+mock fixture. The server and TUI both run inside Seatbelt. The admitted profile supports
+in-process file edits. Shell-capable native startup is refused. Native admission for general projects
 remains unavailable. The earlier diagnostic source milestone was `368f81173a5c39efc65ae020ac23f4333a682763`.
 The installed CLI can execute the offline default-deny macOS Seatbelt probe. The probe
 tests a disposable workload and optionally starts the staged native OpenCode binary with
@@ -57,7 +57,7 @@ python3 fixtures/native-offline/run.py /absolute/path/to/bashwink \
   /absolute/path/to/native/opencode --output /absolute/path/to/disposable-results
 ```
 
-The harness calls `bashwink sandbox offline <mock-port>`. The command checks the fixture's
+The harness calls `bashwink sandbox offline <mock-port> --stage-file`. The command checks the fixture's
 health marker, checks the pinned version in confinement and prepares a new private
 workspace. It ignores project configuration and installs only Bashwink's packaged policy
 plugin. OpenCode's owned server has a stdio lease and a single IPv4 loopback listener.
@@ -74,9 +74,10 @@ Security of a production terminal boundary remains unqualified. [Recorded eviden
 From the host directory containing the regular text file `task.txt`, start
 `bashwink sandbox offline <mock-port> --stage-file`. This explicitly stages a copy of
 that one file. The recovery profile denies process creation and shell execution. It also
-checks the shell refusal through Seatbelt before starting OpenCode. The separate
-shell-enabled fixture still exercises kernel file and network denials in a real shell
-child. A shell-enabled stage cannot be reopened or exported.
+checks the shell refusal through Seatbelt before starting OpenCode. A bare offline
+invocation is refused before runtime startup. Historical shell-profile probes require
+an explicitly supplied historical installation and the harness's `--baseline-shell` flag.
+A shell-enabled stage cannot be reopened or exported.
 
 Use the printed stage root with
 `bashwink sandbox offline <mock-port> --stage <root> --continue` or replace
@@ -93,11 +94,29 @@ retains it if a concurrent mutation makes recovery ambiguous. This fixture suppo
 one file and preserves ordinary permission bits. General project import, extended
 file metadata, and atomic transactions across files remain unqualified.
 
-The host retains an activation interlock until supervised shutdown and evidence
-checkpointing complete. An abrupt kill can leave both the interlock and a readiness
-file behind. Such stages remain closed. The baseline shell profile allowed an inert
-disowned process to outlive both owned OpenCode processes. Complete descendant cleanup
-remains a release blocker. [Test evidence](TEST_EVIDENCE.md).
+## Workload lifetime and interruption
+
+The historical shell fixture produced a disowned writer with parent PID 1 and a process
+group and session distinct from the launcher. It survived normal TUI and server
+shutdown and could still write to staging. The protected host canary remained
+unchanged. Apple's launchd teardown targets the job's process group, so that behavior
+cannot establish cleanup for this workload. Shell-capable supervision remains unqualified.
+[Apple launchd manual](https://github.com/apple-oss-distributions/launchd/blob/main/man/launchd.plist.5).
+
+The host acquires a private stage lock. Both owned OpenCode processes inherit the same
+lock and must retain it after exec. A host-side descriptor inspection verifies the
+staged executable and the lock inode before the admission endpoint accepts tool
+requests. Shutdown closes admission before stopping the owned processes. Seatbelt
+denied both fork and spawn in the active file-only profile. The comparison profile
+allowed a disposable child to create a new session and a nested process.
+
+After launcher death, run `bashwink sandbox recover <root>` from the host. Recovery
+requires competing exclusive lock acquisition and a saved proof binding the
+stage, lock, and profile. It checks the evidence prefix and retires recognized
+readiness files and the activation interlock. It never sends signals to persisted
+process IDs. A live writer, incomplete activation proof, corrupt evidence or
+interrupted export keeps the stage closed. Export takes the same lock and still
+requires a separate reviewed apply. [Test evidence](TEST_EVIDENCE.md).
 
 ## Open work in order
 

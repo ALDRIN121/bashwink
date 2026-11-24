@@ -100,8 +100,12 @@ A disowned process survived ordinary TUI and server shutdown in the shell-enable
 fixture. Saved-stage reopening and host export therefore require the file-only profile.
 Seatbelt denies process creation and shell execution for that profile. Only the staged
 text file can leave through a separate host preview and approval. An abandoned
-activation marker remains a refusal condition. There is no automatic PID-based reaping
-of abandoned descendants.
+activation marker remains a refusal condition until the host proves quiescence.
+Admission requires both pinned OpenCode processes to hold an inherited kernel lock
+under a no-fork Seatbelt profile. Stale retirement requires independent exclusive
+acquisition and a matching prior writer proof. An ambiguous activation or export
+stays quarantined. Shell-capable native startup is disabled pending demonstrated
+whole-workload supervision.
 [Milestone report](BW-031_IMPLEMENTATION_REPORT.md) · [Qualification](BW-032_QUALIFICATION_RESULTS.md).
 
 ## Decision template

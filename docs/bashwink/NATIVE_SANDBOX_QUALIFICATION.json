@@ -343,6 +343,66 @@
       "verdict": "BLOCKED",
       "exitCode": null,
       "reason": "No disposable supported Ubuntu host was available. Historical logs stop at generic readiness failure."
+    },
+    {
+      "id": "live-writer-stage-interlock",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "35a59ec3a6bd75dcdb237816152d415b7b049994",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/lifetime.py",
+      "expected": "Refuse recovery, reopen and export while an independently observed writer remains alive",
+      "observed": "Stopped real server retained its lock after launcher SIGKILL. Recovery, reopen and export were refused.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 0,
+      "reason": ""
+    },
+    {
+      "id": "file-only-stale-stage-retirement",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "35a59ec3a6bd75dcdb237816152d415b7b049994",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/lifetime.py",
+      "expected": "Require a prior verified writer proof and independent quiescence before retirement",
+      "observed": "Retirement and reopen succeeded after server exit. Concurrent and repeated retirement were safe. Invalid state and interrupted export remained quarantined.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 0,
+      "reason": ""
+    },
+    {
+      "id": "file-only-process-creation-denial",
+      "tier": "os-probe",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "35a59ec3a6bd75dcdb237816152d415b7b049994",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/process-policy.py",
+      "expected": "Observe OS denial of fork and spawn with a positive comparison",
+      "observed": "Comparison allowed a new session and nested child. File-only policy returned EPERM for both process creation calls.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 0,
+      "reason": ""
+    },
+    {
+      "id": "admission-shutdown",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "35a59ec3a6bd75dcdb237816152d415b7b049994",
+      "policyDigest": null,
+      "command": "bun fixtures/native-offline/admission-shutdown.ts",
+      "expected": "Block a prompt waiting on ownership and a new prompt when shutdown closes admission",
+      "observed": "Both prompts received HTTP 403 and the forward counter remained zero.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 0,
+      "reason": ""
     }
   ],
   "qualification": [
@@ -406,10 +466,10 @@
       "policyDigest": null,
       "command": null,
       "expected": "External observer verifies descendant containment and cleanup",
-      "observed": "No release-tier evidence",
+      "observed": "The historical disowned shell writer survived both owned OpenCode processes and wrote into staging after shutdown.",
       "evidence": "BW-032_QUALIFICATION_RESULTS.md",
       "verdict": "FAIL",
-      "reason": "The observed disowned shell process survived both owned runtime processes."
+      "reason": "Shell-capable startup is now disabled. The current no-fork controls qualify only the file-only fixture."
     },
     {
       "id": "network-and-provider-transport",
@@ -461,7 +521,7 @@
       "observed": "No release-tier evidence",
       "evidence": "BW-032_QUALIFICATION_RESULTS.md",
       "verdict": "BLOCKED",
-      "reason": "File-only fixture recovery and export passed. Shell-capable and abrupt recovery and general project export remain outside the verified boundary."
+      "reason": "File-only fixture reopen, verified retirement after launcher death and approved one-file export passed. Shell-capable recovery, interrupted export reconciliation and general project export remain open."
     },
     {
       "id": "unsupported-host-and-no-fallback",

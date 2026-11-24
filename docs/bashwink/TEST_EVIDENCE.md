@@ -1,5 +1,33 @@
 # Bashwink — Test Evidence Register
 
+## Native file-only workload lifetime (2026-11-24)
+
+Source revision `35a59ec3a6bd75dcdb237816152d415b7b049994`. Clean local installation
+using Bun 1.4.4 and native OpenCode v2.3.2 on macOS arm64 27.0.1 (26A434). The
+PTY, loopback mock and host file canaries used disposable fixtures.
+
+| Command or control | Exit | Result |
+| --- | ---: | --- |
+| `python3 fixtures/native-offline/run.py <historical-install> <runtime> --baseline-shell --lifecycle detached` | harness 0 | **FAIL** for cleanup at historical revision `d402900`. The launcher, TUI and server stopped. The detached worker retained the same PID and start identity, already had parent 1, and had its own group and a different session from the launcher. It wrote into staging after shutdown. The protected host hash was unchanged, and the worker exited on its bounded fixture control. |
+| `python3 fixtures/native-offline/lifetime.py <installed> <runtime>` | 0 | **PASS**. A stopped real OpenCode server outlived launcher SIGKILL and retained its kernel lock. Repeated recovery, reopen and export were refused. Once the observed server exited, incomplete proof and manifest were refused. Partial readiness retirement, concurrent recovery and idempotent retry succeeded. A clean stage reopened. Killing the exporter at preview kept the stage interlocked and the original host hash intact. Interruption after atomic exchange was NOT_RUN here. |
+| `python3 fixtures/native-offline/recovery.py <installed> <runtime>` | 0 | **PASS**. Installed PTY turns, `--continue` and `--session`, fresh boot proofs, unchanged evidence prefix and explicit one-file export passed. Wrong owner/profile, stale proof, corrupt evidence, links, traversal, FIFO, conflicting host edits and cancellation were refused safely. |
+| `python3 fixtures/native-offline/process-policy.py` | 0 | **PASS**. The positive policy allowed fork and spawn, and the synthetic worker created a new session and a nested descendant. The production file-only rule returned EPERM for fork and posix_spawn. |
+| `bun fixtures/native-offline/admission-shutdown.ts` | 0 | **PASS**. A prompt waiting on session lookup and a new prompt both received HTTP 403 after the admission gate closed. The upstream counted zero forwarded prompts. |
+| `fixtures/native-offline/run.py` lifecycle modes | harness 0 | **PASS** for directly owned processes. Normal exit and Ctrl+C returned 0, server crash 3 and timeout 124. Both owned identities exited and the readiness lease was removed. Wrong executable startup refused before a provider request. Abrupt launcher exit -9 left a readiness lease for explicit verified retirement. |
+| `bun run test`, typecheck, lint, formatting, lint gate | 0 each | **PASS**. 402 tests across 23 files with 1,159 assertions, including cancellation escalation and reaping of an inert direct child that ignored TERM. 62 formatted files and six lint-gate checks. |
+| `fixtures/runtime-health/run.sh`, tool lifecycle, contract and idempotent resume | 0 each | **PASS**. 11, 19, 14 and 10 checks respectively with the pinned runtime. |
+| `bun run verify:evidence <reopened-evidence.jsonl>` | 0 | **PASS**. Nine chain entries verified. |
+| Manifest, register summary, license scope, credential-pattern scan and Git whitespace checks | 0 each | **PASS**. No added credential-pattern matches or dependency changes. |
+| `python3 scripts/test_native_release_gate.py` and `python3 scripts/verify_native_release.py --revision <source>` | 0 and 1 | Four validator tests passed. The release gate refused the incomplete qualification. |
+| Ubuntu / Bubblewrap | — | **BLOCKED**. No supported disposable Linux host was available. The historical Ubuntu readiness failure remains without a verified root cause. |
+| New hosted CI | — | **NOT_RUN** under the Actions quota pause. |
+
+Shell-capable native startup is disabled. File-only retirement depends on the
+attested no-fork profile, the trusted pinned runtime, and an available host lock
+inspector. A stage without a complete writer proof and an interrupted export stay
+quarantined. BW-031 and BW-032 remain partial. External alpha remains blocked.
+[Qualification results](BW-032_QUALIFICATION_RESULTS.md).
+
 ## Native offline recovery and single-file export (2026-11-24)
 
 Source revision `f04c5cbdb4f892804bd5c4d204c36836cff0dbfe`. Installed outside the checkout with Bun 1.4.4 and

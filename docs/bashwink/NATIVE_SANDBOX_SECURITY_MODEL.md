@@ -16,6 +16,13 @@ remain host-owned. Third-party plugins, MCP, provider connections, automations a
 host IPC are outside the initial probe entirely. An explicit user-authorized provider
 may receive task context through the eventual qualified relay.
 
+The experimental file-only offline workload uses the pinned TUI and server under a
+Seatbelt profile that denies process creation. The host controls the stage lock
+and admission endpoint. Both runtime processes must retain the inherited lock
+descriptor before dispatch. Reopen, export, and recovery contend for the same
+lock. A prior writer proof is required to retire a stale activation. Unknown
+or interrupted state stays closed. Shell-capable lifecycle remains unqualified.
+
 A probe report is evidence of observed fixture operations. It does not authorize an
 agent run or attest a product-level profile. Administrators, compromised trusted binaries,
 OS vulnerabilities and side channels remain outside the proposed workload threat model.

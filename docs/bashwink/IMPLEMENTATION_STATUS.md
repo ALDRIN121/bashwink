@@ -39,8 +39,14 @@ The Ubuntu real-runtime readiness fixture failed, and further hosted execution i
 The private server validates
 policy readiness before prompt admission. The local backend owns client and server and reports
 cancellation, deadlines, exits and readiness failures. Phase 2 has **3/16 Done** and Phase 3
-remains open. There is still no OS sandbox.
+remains open. The ordinary local backend still runs commands with the user's host access.
 [BW-018 implementation](BW-018_IMPLEMENTATION_REPORT.md) · [BW-030 design](BW-030_EXECUTION_BACKEND_DESIGN.md) · [Test evidence](TEST_EVIDENCE.md).
+
+**BW-031 and BW-032 remain In progress (PARTIAL).** The experimental macOS file-only
+offline profile has tested Seatbelt confinement and stage protection through launcher
+SIGKILL. Shell-capable startup is disabled after the detached-writer failure.
+Ubuntu qualification, live provider connectivity, and external alpha remain blocked.
+[Qualification results](BW-032_QUALIFICATION_RESULTS.md).
 
 ## LLM integration (BW-091)
 

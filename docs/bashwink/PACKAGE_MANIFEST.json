@@ -91,16 +91,16 @@
       "size_bytes": 6212
     },
     "BW-031_IMPLEMENTATION_REPORT.md": {
-      "sha256": "83df6ffc8e6c437bd281204d27dce65164f7384ac95a9145ce4d349798e0ddb4",
-      "size_bytes": 7283
+      "sha256": "f829e33604adcef32f18740e71dd9c6b277ab57585e9cab771a6c4a58bfad6ba",
+      "size_bytes": 8604
     },
     "BW-032_PLATFORM_QUALIFICATION.md": {
       "sha256": "b086061e8ea0a9ee6ffc688ea4bb44028b3b6cf4c6c5d91a4d26512c1e8e8db3",
       "size_bytes": 6694
     },
     "BW-032_QUALIFICATION_RESULTS.md": {
-      "sha256": "92d3eca1d7b6d635e9eb6da1fb7cbf50829497c8686fd460a0d76a23014aee62",
-      "size_bytes": 4217
+      "sha256": "5a9ba362c582cac36d0ad617840a7149cfe9f27e9a3c9cdf8a008c65cf02696d",
+      "size_bytes": 4749
     },
     "CI_BASELINE_RECONCILIATION.md": {
       "sha256": "14d4f9555edbae2f3ef7e8c5d2185ddaaa83de9df6c528c7286934df6e273b47",
@@ -135,16 +135,16 @@
       "size_bytes": 14116
     },
     "NATIVE_SANDBOX_KNOWN_LIMITATIONS.md": {
-      "sha256": "c4eb4571479f72a8b48addaf8bead449dfb5d06880efbf0cae479dbc199dab95",
-      "size_bytes": 1803
+      "sha256": "f9c6db876daf3f169487baef362c339a320c07d99b52f07bed3dd207eef6e720",
+      "size_bytes": 1867
     },
     "NATIVE_SANDBOX_QUALIFICATION.json": {
-      "sha256": "9bf514897af7773794e612b8fb5a97f3f1eeb74950adc85f320a0a2f177f147d",
-      "size_bytes": 28826
+      "sha256": "6fb2cb84617b79473ca4c071299e23c0e6cd114b62a39a31a0ca442b96313621",
+      "size_bytes": 31647
     },
     "NATIVE_SANDBOX_SECURITY_MODEL.md": {
-      "sha256": "16047b1a076ff852cc28d8ded6a5300791eebc353023084e8ae6d14eead72a68",
-      "size_bytes": 1578
+      "sha256": "dfc3f85518b0ca1716b3704acf3d82038fd0a55bbe92c47c6a44daf6ac5d096b",
+      "size_bytes": 2055
     },
     "PHASE-00-FOUNDATION.md": {
       "sha256": "991ce144e537f87298e4b19c9c63718d0e775c5f84c867475f0a5f6e571b3abf",

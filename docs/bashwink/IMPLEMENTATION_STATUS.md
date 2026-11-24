@@ -38,8 +38,8 @@ The host relay accepts a per-run capability over a private VM socket, selects a 
 provider route and configured model, and supplies the provider credential only on the
 host. An isolated OpenCode PTY completed a scripted synthetic-provider coding task,
 resume, reviewed export and protected tests. This fixture does not qualify a paid
-provider. A bounded live CommandCode coding task has since passed. Live cancellation,
-model switching and broader provider error handling remain unverified. Authentication and rate-limit statuses have synthetic controls. Other upstream failures
+provider. A bounded live CommandCode coding task has since passed. Broader provider error and cancellation handling remain unverified. Later
+fixture observations cover a model switch and two live cancellation controls. Authentication and rate-limit statuses have synthetic controls. Other upstream failures
 currently become a generic relay failure. External alpha remains blocked. See [test evidence](TEST_EVIDENCE.md).
 
 ## Permission and backend foundation
@@ -281,3 +281,13 @@ The installed VM fixture completed a live CommandCode coding task, approved gues
 tests, resumed the session, and applied reviewed edits in a disposable checkout.
 The provider credential was absent from inspected saved guest state. The narrow test
 does not close BW-031 or BW-032. See [test evidence](TEST_EVIDENCE.md).
+
+
+## Milestone 5 stabilization
+
+The VM apply path now records and safely abandons an interrupted early journal while
+retaining unidentified staging. Committed receipts refresh the project baseline on
+reopen, including older sequential receipts. The installed fixture exercised SIGKILL,
+review, repeated recovery, resume after an applied batch and protected tests. Live
+CommandCode tests switched Claude to GPT in one session. Qualification, the
+distributable VM installation, and the external-alpha gate remain open.

@@ -194,8 +194,24 @@ for session management will hit this.
 
 ## Live VM provider limitations
 
-A single CommandCode model completed a live lab task. Live model switching and provider cancellation remain unverified. Synthetic relay
-controls cover client disconnect, timeout, size limits and malformed responses. The VM
-installation is a local fixture rather than a qualified distributable. The early
-export-journal window, baseline refresh between apply batches, and wider workspace
-support remain open. Request budgets do not enforce a monetary ceiling.
+A single CommandCode model completed a live lab task. One live model switch and bounded cancellation controls passed in the lab. Synthetic
+relay controls cover client disconnect, timeout, size limits and malformed responses. The VM
+installation is a local fixture rather than a qualified distributable. Wider workspace support and full power-loss qualification remain open. The early
+recovery and baseline-refresh fixture results are recorded below. Request budgets do not enforce a monetary ceiling.
+
+
+## Milestone 5 limits
+
+An unidentified early apply stage is preserved for manual inspection. Recovery writes
+an abandoned record and checks the original host files before clearing the journal.
+Committed receipt reconciliation supports tested bounded top-level files. Multi-file
+application remains individually atomic and can be partially applied before recovery.
+Power loss, broad workspace layouts, all possible host races and corrupted historical
+state have not been fully qualified.
+
+The local build script produces no VM image and its launcher names the Bun executable
+used at build time. Plain `bashwink` from that build selected the host execution path.
+A relay-enabled VM build is still a lab fixture. The pinned TUI required two Escape
+presses to interrupt one live response. Single Escape did not close the observed
+provider connection in the control. Full provider failure and cleanup qualification,
+a clean Docker-free install and an exact-candidate CI run remain open.

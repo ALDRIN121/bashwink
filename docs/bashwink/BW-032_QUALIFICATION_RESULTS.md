@@ -22,7 +22,7 @@ in the [machine-readable matrix](NATIVE_SANDBOX_QUALIFICATION.json).
 | Detached guest writer | PASS at Virtualization.framework lab tier. A new-session guest worker closed its inherited descriptor and wrote to the private stage disk. Whole-VM stop and VM-owner SIGKILL stopped disk writes. The fixture refused concurrent open and reopened the disk after owner death. Packaged shell-capable OpenCode remains unqualified. |
 | OpenCode guest PTY and stage handoff | PASS at Virtualization.framework lab tier. The sandboxed real runtime streamed an offline prompt, edited a file, paused for shell approval and ran the approved command. The host independently inspected two expected files after teardown. Project export, VM session recovery and a live provider remain unqualified. |
 | Separate launcher death, interrupt, and timeout | PASS at Virtualization.framework lab tier. A host-only pipe caused VM stop on launcher SIGKILL. SIGINT and the owner timer returned 130 and 124. The independent disk observer saw no surviving writes and reopened the marker after launcher death. |
-| Real provider relay and live turn | BLOCKED. Provider relay and general native admission are absent |
+| Real provider relay and live turn | PASS at lab fixture tier. A CommandCode coding task and resumed model switch completed. Full release qualification remains open. |
 | Detached-workload cancellation and resource enforcement | NOT_RUN. The probe supervises direct diagnostic invocations |
 | Ubuntu x86-64 with distro AppArmor and Bubblewrap | BLOCKED. No disposable Ubuntu host was available for execution in this cycle |
 | Optional Docker | NOT_RUN. Outside this milestone |
@@ -55,5 +55,21 @@ developer alpha and public release are blocked.
 A disposable macOS Apple Silicon VM fixture completed live model-driven edits, guest
 tests, session resume, reviewed host apply and independent protected tests. Inspected
 saved guest state did not contain the provider key. This is a single lab-host result,
-not complete platform qualification. Model switching, clean installation, remaining
-negative controls and the exact-release CI run remain open. See [test evidence](TEST_EVIDENCE.md).
+not complete platform qualification. At that stage model switching, clean installation,
+negative controls and exact-release CI remained open. Later observations appear below. See [test evidence](TEST_EVIDENCE.md).
+
+
+## Milestone 5 observations
+
+The lab macOS VM completed a live Claude-to-GPT model switch in a resumed session.
+The saved messages attributed each response to its model and retained conversation
+context. In separate live controls, Ctrl+C and two Escape presses closed the observed
+provider connection. A cancelled guest shell did not create its delayed marker after
+its deadline and the saved session reported `Command cancelled`. Independent guest
+process reaping remains unverified. Invalid synthetic credentials returned 401 from
+the live endpoint. Other provider failure controls remain synthetic or unrun.
+
+The installed synthetic VM fixture tested early SIGKILL, reviewed batches, resume
+after application, protected tests and host canaries. The release matrix, clean
+Docker-free installation, supported OS range, and exact-candidate hosted CI remain
+open. Linux remains unqualified. [Evidence](TEST_EVIDENCE.md).

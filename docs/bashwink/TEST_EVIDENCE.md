@@ -31,9 +31,8 @@ own VM with the originally captured test bytes and no model session.
 The profile covers bounded tracked top-level text files and compatible fresh VM
 instances. Interrupted sessions retain the last sealed checkpoint. Multi-file
 apply is visible one file at a time. An early crash before publishing the apply
-staging directory identity remains quarantined before source mutations. Automated
-baseline refresh after apply, broader workspace support, and power-loss behavior
-remain unverified. BW-031 and BW-032 remain In progress.
+staging directory identity remains quarantined before source mutations. At that historical source, automated baseline refresh, broader workspace support,
+and power-loss behavior remained unverified. See the later milestone 5 observations. BW-031 and BW-032 remain In progress.
 
 ## v0.1.0-alpha freeze, VM runtime and installed entry (2026-11-24)
 
@@ -1554,7 +1553,7 @@ Anthropic cache-read and cache-write input counters. A focused regression covers
 new separate counters. The final local complete package run reported 434 passed and 0 failed, exit 0. Live tests used the previously built installed fixture,
 so the new usage display is covered by regression tests rather than that installed run.
 Synthetic relay tests cover oversized requests and responses, client disconnect,
-timeout, malformed response and upstream 5xx. Real-provider model switching and
+timeout, interrupted streams, malformed response and upstream 5xx. Real-provider model switching and
 cancellation, complete network and replay negatives, and full BW-032 qualification
 remain unverified. External alpha remains blocked.
 
@@ -1564,3 +1563,45 @@ task with the guest file tool and a finished model response. It reported 2 reque
 coding workflow was not rerun after the reporting change. One earlier live coding
 attempt hit the 100-second guest execution deadline while the automation was waiting
 for an edit approval. The stage was retained and the host checkout stayed unchanged.
+
+
+## Milestone 5 stabilization observations
+
+Host macOS 27.0.1 build 26A434 arm64, Bun 1.4.4 and pinned OpenCode 2.3.2.
+The installed synthetic VM fixture used a disposable Git project. It tested
+SIGKILL after journaling and before stage identity, preserved the unidentified
+directory and host files, repeated recovery, resumed after the first reviewed batch,
+and omitted the already-applied file from the next review. The fixture also passed
+partial apply recovery and protected tests. Changes are applied one file at a time.
+The legacy receipt-chain and host-conflict cases have focused local tests.
+
+A live CommandCode session used `claude-sonnet-5`, then selected `gpt-6.1-sol`
+through the TUI picker. The saved session recorded the model identities and GPT
+recalled the earlier conversation. Changing the host default alone did not change
+the resumed session model. In live cancellation controls Ctrl+C closed the observed
+provider TCP connection. One Escape did not close the original connection within
+eight seconds. Two Escapes closed it. A separately approved `sleep 30` shell was
+interrupted with Ctrl+C. After waiting beyond 30 seconds in the running guest, the
+marker was absent and saved session data recorded `Command cancelled`. The shell's
+individual guest process was not independently observed. A synthetic invalid key
+returned 401 through the live provider relay. Synthetic controls cover 429, 5xx,
+size limits, timeout, disconnect, malformed responses and capability replay.
+
+On this same lab host, four separate VM session resumes reached their TUI in 5.16,
+4.87, 4.74 and 4.37 seconds, measured from launch. Two point-in-time VM-owner samples
+were 8,480 and 8,848 KiB RSS and 0.0% CPU. These are owner-process samples, not total
+VM memory, CPU peaks, or clean-host measurements. The lab installation occupied
+396,464 KiB by `du -sk`. A fresh local development build with warm dependencies took
+0.20 seconds and had no VM asset manifest. Its plain TUI selected local host execution.
+First installation on a clean machine, first token latency, peak memory, export latency,
+and warm-host versus cold-host comparisons were not measured.
+
+The single-Escape control and a 100-second guest deadline remain usability limits.
+No external alpha or public release is approved. The exact release gate still fails.
+
+The source commit for the tested export and baseline implementation is `2eef59c`.
+The final synthetic installed-VM fixture exited 0 and exercised both the journaled
+and stage-created SIGKILL points, repeated recovery, session resume after an applied
+batch and review of the remaining changes. The independent boundary fixture exited 0
+for forced stop, VM-owner SIGKILL, reopen, launcher SIGKILL, reopen, interrupt and
+timeout, while checking the detached guest writer and host controls.

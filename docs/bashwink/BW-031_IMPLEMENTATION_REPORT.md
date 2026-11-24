@@ -255,3 +255,14 @@ through the host relay, then resumed and exported the reviewed edits. The guest 
 and separate protected verification passed. Provider model switching, complete
 lifecycle qualification and a distributable VM installation remain open. The
 observations and limitations are recorded in [test evidence](TEST_EVIDENCE.md).
+
+
+## Milestone 5 apply recovery
+
+Before host mutations, the apply journal is durable. If a crash occurs before the
+stage identity is recorded, recovery checks the recorded host base, writes an
+abandoned receipt and preserves any unidentified stage. Repeating recovery is safe
+in the tested fixtures. Committed receipt reconciliation refreshes only approved
+files in the saved project baseline, and keeps unresolved journal states closed.
+Controlled SIGKILL and session-resume results are in [test evidence](TEST_EVIDENCE.md).
+Power-loss and complete platform qualification remain open.

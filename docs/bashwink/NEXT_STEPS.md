@@ -1,36 +1,17 @@
 # Bashwink next steps
 
-A disposable relay-enabled VM completed a live CommandCode coding task and resume.
-Qualify the remaining relay, export, installation and platform controls before
-advancing the external-alpha gate.
+The local macOS VM fixture has live CommandCode coding, model switching, reviewed
+application, and session recovery evidence. Early apply recovery quarantines an
+unidentified directory and records the abandoned transaction. Committed receipts
+refresh the saved baseline on the next project open. These are bounded fixture results,
+not full release qualification.
 
-The pre-dispatch readiness and local backend foundation have local evidence. Hosted macOS
-runtime health passed. The Ubuntu readiness failure remains open. The supervised internal
-alpha remains conditional, and external alpha remains blocked. [Current test evidence](TEST_EVIDENCE.md).
-
-The locally provisioned VM now has installed session resume and reviewed project
-application for bounded top-level Git files. Resolve wider workspace support,
-baseline refresh for subsequent reviewed batches, and the quarantined early journal
-window before treating the workflow as release-qualified. The synthetic-tested provider relay needs accurate upstream error handling, expanded negative controls, an authorized live-provider coding run, clean macOS qualification, and candidate CI. Ubuntu regression coverage
-remains active for the macOS-only alpha scope.
-[Release readiness](releases/v0.1.0-alpha/RELEASE_READINESS.md)
-
-1. Reproduce the Ubuntu readiness failure with the pinned Linux binaries on a disposable
-   Linux machine. Use the local substep diagnostics to identify the failing stage and qualify
-   the fix before closing BW-018 and BW-030. Keep additional hosted runs paused.
-2. Run pinned Linux OpenCode in an entitled Virtualization.framework fixture with a
-   real PTY and a private guest disk. Keep shell-capable startup disabled until the
-   launcher-to-owner lifetime and stage retirement are independently verified. For
-   file-only Seatbelt, qualify the inherited-lock and export recovery design on each
-   supported macOS release. Keep ambiguous stage state quarantined.
-3. Qualify the host provider channel against an authorized real account, then run BW-032 using clean Docker-free installs
-   on each advertised platform. Hold external alpha until the real runtime, provider and
-   OS-level negative controls pass. Optional Docker has a separate qualification path.
-   [BW-031 plan](BW-031_IMPLEMENTATION_PLAN.md) · [BW-032 requirements](BW-032_PLATFORM_QUALIFICATION.md).
-
-The Phase 2 release gate still requires protected-test integrity, independently verified
-receipts, scenario coverage and packaged alpha acceptance. Phase 3 and Phase 4 release
-gates remain open.
+Before external alpha, provide a self-contained relay-enabled installation and test it
+on a clean Apple Silicon host without Docker. Qualify all required BW-032 controls,
+including cancellation and process observations, and validate the exact candidate and
+its CI evidence. Resolve the current guest execution deadline and unverified power-loss
+cases. Preserve quarantined directories for inspection. Broader workspace support and
+Linux qualification remain open. [Current evidence](TEST_EVIDENCE.md).
 
 ## Phase 1 history
 
@@ -110,7 +91,6 @@ and git subprocess differences (`git 2.56.1` vs Apple Git 2.54.0).
 
 ## Following the live CommandCode run
 
-Qualify live model switching, relay cancellation and negative controls, and resolve
-the early export journal window and baseline refresh. Package and qualify a
+Qualify remaining live cancellation, interrupted upstream and platform controls. Package and qualify a
 relay-enabled installation on a clean target host. Keep BW-031, BW-032 and external
 alpha open until their full acceptance criteria pass.

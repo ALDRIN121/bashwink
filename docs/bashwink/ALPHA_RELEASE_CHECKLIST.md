@@ -160,3 +160,12 @@ A CommandCode model completed a disposable installed-VM coding and resume exerci
 The release gate remains failed pending full platform qualification, a clean
 installation, remaining relay and export controls, and release-candidate evidence.
 See [test evidence](TEST_EVIDENCE.md).
+
+
+## Milestone 5 release decision
+
+Personal use is conditional on supervised use of the locally provisioned fixture.
+Internal alpha remains conditional. External alpha and public release remain FAIL.
+The local build lacks VM assets, the clean install and release archive are not
+qualified, and mandatory platform, lifecycle, provider, and CI evidence remains
+incomplete. See [current evidence](TEST_EVIDENCE.md).

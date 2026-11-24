@@ -10,6 +10,22 @@ requires all macOS controls for the supported build and keeps macOS and Ubuntu
 regression CI mandatory. Platform qualification for Ubuntu remains in the broader
 BW-032 gate. [Alpha release decision](releases/v0.1.0-alpha/RELEASE_READINESS.md)
 
+## Apple VM evidence mapping
+
+For the Apple Virtualization.framework backend, record the signed VM owner, guest
+kernel and image hashes, guest runtime, virtual-device configuration, relay policy,
+and workspace-transfer policy alongside the Bashwink revision. Test file and network
+controls from the actual OpenCode guest and independently observe host canaries. A
+guest with no network interface uses the host-owned provider relay for authorized
+model traffic. Confirm the relay cannot reach unapproved destinations and that its
+run capability expires when the workload ends.
+
+Observe workload retirement at the VM and disk boundaries, including launcher and
+owner failure, and confirm a guest descendant can no longer write before treating a
+stage as retired. Verify host review and receipt recovery separately from guest
+execution. The required controls below apply unchanged to this backend. Lab VM
+fixtures alone do not qualify a clean installation or an advertised macOS version.
+
 ## Qualification environment
 
 - Use a clean machine for each advertised combination. Start with macOS arm64 on the

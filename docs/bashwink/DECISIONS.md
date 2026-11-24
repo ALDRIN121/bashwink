@@ -151,3 +151,18 @@ actual exit. [Test evidence](TEST_EVIDENCE.md)
 - **Source commit or experimental evidence:**
 - **Consequences and reversal conditions:**
 - **Status:** Proposed / Accepted / Superseded
+
+## VM reviewed-apply recovery and baseline
+
+An early apply journal with no recorded staging identity cannot authorize deletion of
+whatever now occupies the staging path. Recovery verifies the enrolled host base,
+publishes a durable abandoned receipt and leaves that path untouched for inspection.
+The journal is cleared only after the receipt is durable. A changed host base or an
+ambiguous existing record retains the journal.
+
+On a later project open with no pending apply journal, checksum-validated committed
+receipts update the saved baseline for their approved files. Receipt identities and
+before/after revisions must form a valid chain, final bytes must match the saved guest
+snapshot, and the processed receipt list is stored atomically with the checkpoint.
+Missing or malformed receipts fail closed. The scheme preserves per-file recovery;
+it does not make the multi-file apply atomic.

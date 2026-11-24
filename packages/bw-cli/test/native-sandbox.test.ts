@@ -34,3 +34,14 @@ test("a required native coding run still refuses unavailable admission", () => {
   expect(result.stderr.toString()).toContain("native coding sessions are not qualified")
   expect(result.stdout.toString()).toBe("")
 })
+
+test("offline coding requires a valid fixture port before runtime resolution", () => {
+  const result = Bun.spawnSync(
+    [process.execPath, cli, "sandbox", "offline", "https://example.invalid"],
+    {
+      env: { ...process.env, BASHWINK_OPENCODE_BIN: "/missing" },
+    },
+  )
+  expect(result.exitCode).toBe(2)
+  expect(result.stderr.toString()).toContain("usage: bashwink sandbox offline <mock-port>")
+})

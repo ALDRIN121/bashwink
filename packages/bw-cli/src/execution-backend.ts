@@ -1,6 +1,11 @@
 import { accessSync, constants, statSync } from "node:fs"
 import { constants as osConstants } from "node:os"
-import { ReadinessError, startPrivateServer, type ReadinessRequest } from "./private-server.js"
+import {
+  ReadinessError,
+  startPrivateServer,
+  type ReadinessRequest,
+  type RuntimeLauncher,
+} from "./private-server.js"
 
 export interface BackendCapabilities {
   readonly mode: string
@@ -51,8 +56,11 @@ const localCapabilities: BackendCapabilities = {
   cancellation: "direct-child",
 }
 
-export const localBackend: ExecutionBackend = {
-  capabilities: localCapabilities,
+export const makeBackend = (
+  capabilities: BackendCapabilities,
+  launcher?: RuntimeLauncher,
+): ExecutionBackend => ({
+  capabilities,
   prepare(request) {
     if (!statSync(request.cwd).isDirectory())
       throw new Error("runtime workspace is not a directory")
@@ -99,6 +107,7 @@ export const localBackend: ExecutionBackend = {
             request.env,
             request.readiness,
             controller.signal,
+            launcher,
           )
           const endpoint = await server.ready(controller.signal)
           if (controller.signal.aborted)
@@ -117,7 +126,7 @@ export const localBackend: ExecutionBackend = {
             OPENCODE_PASSWORD: endpoint.password,
           }
         }
-        child = Bun.spawn([request.command, ...args], {
+        child = Bun.spawn(launcher?.client(request.command, args) ?? [request.command, ...args], {
           cwd: request.cwd,
           env,
           stdin: "inherit",
@@ -150,7 +159,9 @@ export const localBackend: ExecutionBackend = {
       },
     }
   },
-}
+})
+
+export const localBackend = makeBackend(localCapabilities)
 
 export function selectBackend(mode = "local"): ExecutionBackend {
   if (mode === "local") return localBackend

@@ -19,11 +19,11 @@ import { release } from "node:os"
 import path from "node:path"
 import { PINNED_RUNTIME_VERSION } from "./runtime.js"
 
-const SEATBELT = "/usr/bin/sandbox-exec"
+export const SEATBELT = "/usr/bin/sandbox-exec"
 
 // Bind canonical, host-created paths with Seatbelt parameters. The profile never grants
 // project-supplied allow rules, general network access or writes to the executable.
-const PROFILE = `(version 1)
+export const PROFILE = `(version 1)
 (deny default)
 (allow process-fork)
 (allow sysctl-read (sysctl-name-prefix "hw.") (sysctl-name "kern.osproductversion")
@@ -49,7 +49,7 @@ function digest(data: string | Buffer | Uint8Array): string {
   return createHash("sha256").update(data).digest("hex")
 }
 
-async function execute(argv: string[], cwd: string, env: Record<string, string>) {
+export async function execute(argv: string[], cwd: string, env: Record<string, string>) {
   const child = Bun.spawn(argv, { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" })
   const stop = setTimeout(() => child.kill("SIGKILL"), 4_000)
   try {

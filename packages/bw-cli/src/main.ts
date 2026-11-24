@@ -50,6 +50,7 @@ import {
   standaloneArguments,
 } from "./execution-policy.js"
 import { executionTimeout, runWithBackend, selectBackend } from "./execution-backend.js"
+import { OFFLINE_USAGE, runNativeOffline } from "./native-offline.js"
 import { probeNativeSandbox } from "./native-sandbox.js"
 
 /** Value of `--flag value` or `--flag=value`, or undefined. First occurrence wins. */
@@ -144,6 +145,22 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
   // forwards `--help` to the runtime where it means the runtime's help.
   switch (first) {
     case "sandbox": {
+      if (rest[0] === "offline") {
+        try {
+          if (rest.length !== 2) throw new Error(OFFLINE_USAGE)
+          const plugin = resolvePluginDirectory(
+            [path.join(MODULE_DIR, "evidence"), path.join(MODULE_DIR, "..", "..", "bw-evidence")],
+            {},
+          )
+          const result = await runNativeOffline(rest[1], plugin)
+          if (result.outcome !== "exited") err(result.detail ?? result.outcome)
+          return { exitCode: result.exitCode, handled: true }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "offline startup failed"
+          err(message)
+          return { exitCode: message === OFFLINE_USAGE ? 2 : 3, handled: true }
+        }
+      }
       if (rest.length !== 1 || rest[0] !== "probe") {
         err("usage: bashwink sandbox probe")
         return { exitCode: 2, handled: true }

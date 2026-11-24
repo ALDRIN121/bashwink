@@ -26,6 +26,7 @@ fixtures/*/
 !fixtures/contract/
 !fixtures/scope-fence/
 !fixtures/interactive-entry/
+!fixtures/native-offline/
 
 # macOS
 .DS_Store

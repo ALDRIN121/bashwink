@@ -57,6 +57,10 @@ SCENARIOS = {
         "command": "printf 'bw-mock-ok\\n' && printf 'shell ran\\n' > .bw-shell-canary",
         "final": "The shell permission probe is complete.",
     },
+    "native-offline": {
+        "command": "sh ./kernel-check.sh",
+        "final": "Offline fixture completed its file and shell checks.",
+    },
     "fail": {
         "command": "printf 'bw-mock-fail\\n'; exit 7",
         # Honest: the mock reports the failure it caused. A summary that lied about a
@@ -168,7 +172,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"object": "list", "data": [{"id": "mock-tool-model", "object": "model"}]})
             return
         if self.path.rstrip("/") in ("", "/healthz"):
-            self._json(200, {"ok": True})
+            self._json(200, {"ok": True, "service": "bashwink-offline-fixture-v1"})
             return
         self._json(404, {"error": {"message": f"no route {self.path}"}})
 
@@ -207,8 +211,17 @@ class Handler(BaseHTTPRequestHandler):
 
         # Phase 1: ask for a tool call, but only once. If the client already ran the
         # tool (a tool result is in the conversation), answer finally instead.
-        if not has_tool_result(messages) and not tool_arguments_present(messages):
-            chosen = choose_tool(tools)
+        count = sum(message.get("role") == "tool" for message in messages)
+        offered = {tool.get("function", {}).get("name") for tool in tools}
+        native_step = ACTIVE_SCENARIO == "native-offline" and count < 3
+        if native_step or (not has_tool_result(messages) and not tool_arguments_present(messages)):
+            if native_step and count < 2:
+                chosen = "write" if "write" in offered else None
+                filename = "task.txt" if count == 0 else "../protected-canary"
+                arguments = {"path": filename, "content": "Bashwink offline edit\n"}
+            else:
+                chosen = choose_tool(tools)
+                arguments = {"command": scenario()["command"]}
             if chosen is None:
                 log({"event": "respond_final_no_tools"})
                 sse(self, [base_chunk(model, {"role": "assistant", "content": ""}), base_chunk(model, {"content": "No eligible shell tool was offered."}), base_chunk(model, {}, "stop")])
@@ -226,7 +239,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "type": "function",
                                 "function": {
                                     "name": chosen,
-                                    "arguments": json.dumps({"command": scenario()["command"]}),
+                                    "arguments": json.dumps(arguments),
                                 },
                             }
                         ]
@@ -234,7 +247,7 @@ class Handler(BaseHTTPRequestHandler):
                 ),
                 base_chunk(model, {}, "tool_calls"),
             ]
-            log({"event": "respond_tool_call", "call_id": call_id, "tool": chosen, "command": scenario()["command"]})
+            log({"event": "respond_tool_call", "call_id": call_id, "tool": chosen, **arguments})
             sse(self, chunks)
             return
 

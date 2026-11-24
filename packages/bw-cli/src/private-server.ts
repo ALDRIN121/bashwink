@@ -20,6 +20,13 @@ interface Identity {
   readonly pid: number
 }
 
+/** Native launch policy for the same owned server and private client. */
+export interface RuntimeLauncher {
+  server(command: string): string[]
+  client(command: string, args: readonly string[]): string[]
+  readonly serverPort: number
+}
+
 export class ReadinessError extends Error {}
 
 export function matchesReadiness(value: unknown, expected: Identity): boolean {
@@ -139,6 +146,7 @@ export async function startPrivateServer(
   environment: Record<string, string>,
   request: ReadinessRequest,
   cancel: AbortSignal,
+  launcher?: RuntimeLauncher,
 ) {
   const database = await unattendedDatabase(environment, cancel)
   if (cancel.aborted) throw new ReadinessError("private runtime launch was cancelled")
@@ -153,7 +161,7 @@ export async function startPrivateServer(
 
   let child: Bun.Subprocess<"pipe", "pipe", "ignore">
   try {
-    child = Bun.spawn([command, "serve", "--stdio", "--port", "0"], {
+    child = Bun.spawn(launcher?.server(command) ?? [command, "serve", "--stdio", "--port", "0"], {
       cwd: request.workspace,
       stdin: "pipe",
       stdout: "pipe",
@@ -225,6 +233,8 @@ export async function startPrivateServer(
       try {
         if (signal.aborted) throw failed()
         const url = await Promise.race([endpoint.promise, interrupted.promise])
+        if (launcher !== undefined && new URL(url).port !== String(launcher.serverPort))
+          throw failed()
         const headers = {
           Authorization: authorization(password),
         }

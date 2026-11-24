@@ -53,6 +53,7 @@ USAGE
 COMMANDS
   backend                   print the selected execution backend capabilities
   sandbox probe             run disposable native OS controls without starting an agent
+  sandbox offline <port>    open a staged macOS TUI with the controlled local mock only
   doctor                    check preconditions and report what is missing
   init                      create Bashwink's config and data directories
   trust <dir>               trust a workspace so shell/write actions are permitted there

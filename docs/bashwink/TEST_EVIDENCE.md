@@ -1493,3 +1493,30 @@ both bash-4 syntax. Upstream files were **not** patched (BW-002 says document fi
   (BW-059), and there is no interactive edit/assumption-ledger UX (BW-056).
 - No claim is made that a green CI run on this repository proves the same on an untested
   platform or a different runtime version.
+
+
+## VM provider relay — synthetic milestone
+
+On macOS arm64 with pinned Bun 1.4.4 and OpenCode 2.3.2, the local package suite
+passed 427 tests with exit 0. Relay and guest negative tests passed with synthetic
+credentials. The disposable Apple VM fixture used the private virtual socket and a
+host-only synthetic upstream. The pinned OpenCode TUI completed a multi-file coding
+task, approved guest tests, resumed the session, rejected foreign or corrupt state,
+reviewed and applied changes, and ran protected tests. Guest state, PTY capture and
+host usage records did not contain the synthetic credential. This test uses the
+test-only launcher to inject a synthetic upstream into the same VM runner.
+
+The relay tests cover invalid capabilities, route and model denial, private DNS
+addresses, redirect refusal, request limits, hosted-tool denial and a credential
+reflected in a successful JSON response. They do not establish comprehensive
+credential non-disclosure against a malicious upstream. A real paid provider, live
+stream interruption, rate-limit and authentication failures, and an installed live
+coding session are BLOCKED or NOT_RUN. Authentication and rate-limit errors have synthetic status tests. Other upstream errors
+currently report a generic failure. Request limits are not a monetary ceiling. BW-031 and BW-032 remain partial.
+
+Reproduce the synthetic VM fixture with pinned input directories using
+`PYTHONPATH=<PySquashfsImage-dir> python3 fixtures/native-offline/vm-boundary.py
+<alpine-inputs> --opencode-inputs <runtime-inputs> --project-cli --relay-inputs
+<relay-inputs>`. The host requires Virtualization.framework entitlement and a
+disposable workspace. Existing workspace, baseline refresh and early-journal
+limitations remain open. No CI run was requested for this milestone.

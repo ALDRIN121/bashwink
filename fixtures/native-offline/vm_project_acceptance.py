@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import signal
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -20,7 +21,7 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def accept_project(root, runner, image, initramfs, protected):
+def accept_project(root, runner, image, initramfs, protected, relay=False):
     install = root / "bashwink"
     installed = install / "bin/bashwink"
     assets = install / "lib/offline-vm"
@@ -28,7 +29,8 @@ def accept_project(root, runner, image, initramfs, protected):
     for name, source in (("vm-owner", runner), ("Image", image), ("initramfs", initramfs)):
         source.rename(assets / name)
     (assets.parent / "offline-vm.json").write_text(json.dumps({
-        "version": 2, "sha256": {file.name: digest(file.read_bytes()) for file in assets.iterdir()},
+        "version": 2, **({"relay": True} if relay else {}),
+        "sha256": {file.name: digest(file.read_bytes()) for file in assets.iterdir()},
     }))
     project = root / "git-project"
     project.mkdir()
@@ -37,6 +39,24 @@ def accept_project(root, runner, image, initramfs, protected):
         "PATH": os.environ["PATH"], "HOME": str(root), "TERM": "xterm-256color",
         "BASHWINK_HOME": str(state), "BASHWINK_OPENCODE_BIN": "/missing-host-opencode",
     }
+    launch = [installed]
+    if relay:
+        key = "disposable-host-provider-canary-6G47"
+        bun = shutil.which("bun", path=environment["PATH"])
+        assert bun
+        fixture = Path(__file__).resolve().parent / "vm-provider-fixture.ts"
+        entry = assets.parent / "vm-provider-fixture.js"
+        subprocess.run([bun, "build", fixture, "--target=bun", "--outfile", entry], check=True)
+        environment.update(BW_SYNTHETIC_CREDENTIAL=key, BASHWINK_VM_PROVIDER="relaydemo",
+                           BASHWINK_VM_MAX_REQUESTS="10")
+        for args in (
+            ["auth", "add", "relaydemo", "--base-url", "https://api.openai.com/v1",
+             "--env", "BW_SYNTHETIC_CREDENTIAL", "--model", "fixture-model:openai"],
+            ["model", "use", "relaydemo/fixture-model"],
+        ):
+            subprocess.run([installed, *args], cwd=project, env=environment, check=True,
+                           stdout=subprocess.DEVNULL)
+        launch = [Path(bun), entry]
     originals = {
         "one.ts": b"export const one = 0\n",
         "two.ts": b"export const two = 0\n",
@@ -81,7 +101,7 @@ def accept_project(root, runner, image, initramfs, protected):
             counter = source.read(512).rstrip(b"\0")
         return int(counter.strip()) if re.fullmatch(rb"[0-9]+\n", counter) else 0
 
-    with terminal([installed], project, environment) as (_, master, contains, finish, capture):
+    with terminal(launch, project, environment) as (_, master, contains, finish, capture):
         seen(contains, "Ask anything", capture, 35)
         time.sleep(0.25)
         feed(master, "Fix the persistent project")
@@ -130,7 +150,7 @@ def accept_project(root, runner, image, initramfs, protected):
     print("PASS: installed PTY completed a multi-file edit and approved VM tests while the checkout stayed unchanged", flush=True)
 
     for label, arguments in (("continue", ["--continue"]), ("session", ["--session", identifier])):
-        with terminal([installed, *arguments], project, environment) as (_, master, contains, finish, capture):
+        with terminal([*launch, *arguments], project, environment) as (_, master, contains, finish, capture):
             try:
                 seen(contains, "Fix the persistent project", capture, 35)
                 time.sleep(0.25)
@@ -155,7 +175,7 @@ child = subprocess.Popen(sys.argv[1:])
 print(f"fixture launcher {child.pid}", flush=True)
 print(f"fixture exit {child.wait()}", flush=True)
 time.sleep(20)
-""", installed, "--continue"]
+""", *launch, "--continue"]
     with terminal(guardian, project, environment) as (_, _, contains, _, capture):
         seen(contains, "Fix the persistent project", capture, 35)
         with (directory / ".lifetime").open("rb") as held:
@@ -180,6 +200,16 @@ time.sleep(20)
             refused = subprocess.run([installed, "sandbox", "vm-review"], cwd=project, env=environment,
                                      capture_output=True, text=True, timeout=6)
             assert refused.returncode == 3 and "lifetime is still held" in refused.stderr
+            if relay:
+                raw = re.search(rb"Bashwink offline VM stage: (/private/tmp/bashwink-vm-[A-Za-z0-9]+)", capture)
+                assert raw
+                with socket.socket(socket.AF_UNIX) as probe:
+                    try:
+                        probe.connect(str(Path(os.fsdecode(raw[1])) / "relay.sock"))
+                    except (ConnectionRefusedError, FileNotFoundError):
+                        pass
+                    else:
+                        raise AssertionError("relay remained reachable after launcher death")
         finally:
             if process_identity(owner) == owner_identity:
                 os.kill(owner, signal.SIGCONT)
@@ -195,7 +225,7 @@ time.sleep(20)
             assert not contains("Ask anything")
     finally:
         saved_path.write_bytes(good_record)
-    with terminal([installed, "--continue"], project, environment) as (_, master, contains, finish, capture):
+    with terminal([*launch, "--continue"], project, environment) as (_, master, contains, finish, capture):
         seen(contains, "Fix the persistent project", capture, 35)
         os.write(master, b"\x04")
         finish(0)
@@ -298,3 +328,13 @@ time.sleep(20)
     assert report["sourceHashes"]["new.ts"] == digest((project / "new.ts").read_bytes())
     assert b"1 pass" in report["output"].encode()
     print("PASS: review cancellation, interrupted review, conflict refusal, apply, and protected test verification matched the exact host diff", flush=True)
+    if relay:
+        usages = [json.loads(file.read_bytes()) for file in directory.glob("provider-usage-*.json")]
+        assert any(report["inputTokens"] > 0 and report["outputTokens"] > 0 for report in usages)
+        assert any(report.get("requestedSession") == identifier and report["requests"] > 0 for report in usages)
+        assert all(report["requests"] <= report["maxRequests"] for report in usages)
+        assert all(record["model"] == "fixture-model" for report in usages for record in report["models"])
+        assert all(key.encode() not in transcript.read_bytes() for transcript in root.glob("*.pty"))
+        assert key not in json.dumps(usages)
+        assert all(key.encode() not in base64.b64decode(blob) for blob in checkpoint()[1]["state"].values())
+        print("PASS: real guest OpenCode streamed through the synthetic relay and host usage records, guest state and PTY held no provider credential", flush=True)

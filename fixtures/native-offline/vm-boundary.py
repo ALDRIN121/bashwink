@@ -36,6 +36,18 @@ OPENCODE_INPUTS = {
     "libstdc++.apk": "10d72e25f6fcc0f3d9fdd801c9bdaed81d6e836aa2b65b63f25d2d97f860a7d1",
     "ncurses-terminfo-base.apk": "6952a6b39abaf7bbc498cb085f0f59bf23619b53b3f7328b08fe50c0198a2bd4",
 }
+RELAY_INPUTS = {
+    "modloop-virt": "d41a3c90afb392b538ddb76eadbb26b168bd0c7400d5ff05b7c5e042d0ecd954",
+    "socat.apk": "e415cdf30d41bbf4053ab52eb71c55fb9f5c3b811cd53cf22182960888186cbf",
+    "readline.apk": "70d288a6c3d8daf19b10fb220120d2ebd6f154011c96ca5bc84923b658cb21f7",
+    "libncursesw.apk": "7fe332c8af8b97579e89df56466f83f4abda5040a18e1842c07d684320bbef4b",
+}
+VSOCK_DIR = "/modules/6.18.60-0-virt/kernel/net/vmw_vsock"
+VSOCK_MODULES = {
+    "vsock.ko": "07c2ad0baeffec03c653601cbd5eae0f925b1b1245e0072d8c5318fb65c0f945",
+    "vmw_vsock_virtio_transport_common.ko": "0e5f16787d6aff1e62c30ecf456e7a206d397150a2d186c4de35ed8584004fea",
+    "vmw_vsock_virtio_transport.ko": "a46ce5b1aa6b54d55dbc3406c6f4a38e30bce9c4b9d3ca3b21ccccd5fed8a19c",
+}
 
 
 def digest(path):
@@ -89,6 +101,34 @@ def prepare_opencode(root, guest, inputs):
     (opt / "project-heartbeat").chmod(0o755)
     (opt / "run-user").chmod(0o755)
     return (FILES / "vm-opencode-init.sh").read_text()
+
+
+def prepare_relay(guest, inputs):
+    for name, expected in RELAY_INPUTS.items():
+        if digest(inputs / name) != expected:
+            raise ValueError(f"unexpected guest relay input {name}")
+    # Keep SquashFS tooling out of the guest and unnecessary for the offline-only fixture.
+    try:
+        from PySquashfsImage import SquashFsImage
+    except ImportError as error:
+        raise RuntimeError("relay fixture requires PySquashfsImage==0.9.0") from error
+    extracted = guest / "opt" / "bw-vsock"
+    extracted.mkdir()
+    with SquashFsImage.from_file(inputs / "modloop-virt") as image:
+        for entry in image:
+            if entry.name not in VSOCK_MODULES or entry.path != f"{VSOCK_DIR}/{entry.name}":
+                continue
+            data = entry.read_bytes()
+            if hashlib.sha256(data).hexdigest() != VSOCK_MODULES[entry.name]:
+                raise ValueError(f"unexpected guest vsock module {entry.name}")
+            (extracted / entry.name).write_bytes(data)
+    if {module.name for module in extracted.iterdir()} != set(VSOCK_MODULES):
+        raise ValueError("incomplete guest vsock module set")
+    subprocess.run(["bsdtar", "-xf", inputs / "socat.apk", "-C", guest,
+                    "usr/bin/socat", "usr/bin/socat1"], check=True)
+    for name in ("readline.apk", "libncursesw.apk"):
+        subprocess.run(["bsdtar", "-xf", inputs / name, "-C", guest,
+                        "--exclude", ".SIGN.*", "--exclude", ".PKGINFO"], check=True)
 
 
 def read_fixture_stage(sector):
@@ -357,32 +397,11 @@ def _lock_available(disk):
             return False
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("alpine", type=Path, help="directory containing the three pinned inputs")
-    parser.add_argument("--opencode-inputs", type=Path, help="run the separate pinned OpenCode PTY fixture")
-    parser.add_argument("--installed-cli", action="store_true", help="exercise bare Bashwink from the built install")
-    parser.add_argument("--project-cli", action="store_true", help="exercise persistent multi-file project sessions")
-    args = parser.parse_args()
-    if (args.installed_cli or args.project_cli) and not args.opencode_inputs:
-        parser.error("installed and project modes require --opencode-inputs")
-    if args.installed_cli and args.project_cli:
-        parser.error("choose exactly one installed CLI profile")
-    alpine = args.alpine.resolve()
+def prepare_vm(root, alpine, opencode_inputs, protected, port, relay_inputs=None):
+    if relay_inputs is not None and opencode_inputs is None:
+        raise ValueError("relay VM requires pinned OpenCode inputs")
     for name, expected in CHECKSUMS.items():
         assert digest(alpine / name) == expected, f"unexpected test input {name}"
-    root = Path(tempfile.mkdtemp(prefix="bw-vm-boundary-")).resolve()
-    print(f"VM fixture output: {root}", flush=True)
-    protected = root / "protected.txt"
-    protected.write_text("Unrelated host fixture\n")
-    protected_hash = digest(protected)
-    localhost = socket.socket()
-    localhost.bind(("127.0.0.1", 0))
-    localhost.listen()
-    localhost.settimeout(0.2)
-    with socket.create_connection(localhost.getsockname()), localhost.accept()[0]:
-        pass
-
     guest = root / "guest"
     # Alpine's arm64 EFI wrapper embeds the raw Linux Image in a gzip member.
     wrapped = (alpine / "vmlinuz").read_bytes()
@@ -394,13 +413,16 @@ def main():
     (guest / "virtio_blk.ko").write_bytes(subprocess.check_output(
         ["bsdtar", "-xOf", alpine / "initramfs-official", MODULE]
     ))
-    init = (prepare_opencode(root, guest, args.opencode_inputs.resolve())
-            if args.opencode_inputs else (FILES / "vm-guest.sh").read_text())
+    init = (prepare_opencode(root, guest, opencode_inputs)
+            if opencode_inputs is not None else (FILES / "vm-guest.sh").read_text())
+    if relay_inputs is not None:
+        prepare_relay(guest, relay_inputs)
     init = init.replace("@CANARY@", str(protected))
-    init = init.replace("@PORT@", str(localhost.getsockname()[1]))
+    init = init.replace("@PORT@", str(port))
     (guest / "init").write_text(init)
     (guest / "init").chmod(0o755)
-    with (root / "initramfs").open("wb") as output:
+    initramfs = root / "initramfs"
+    with initramfs.open("wb") as output:
         names = b".\0" + b"".join(os.fsencode(str(p.relative_to(guest))) + b"\0"
                                     for p in guest.rglob("*"))
         subprocess.run(
@@ -416,12 +438,44 @@ def main():
                     "-o", runner], check=True)
     subprocess.run(["codesign", "--force", "--sign", "-", "--entitlements", entitlements,
                     runner], check=True)
+    return runner, image, initramfs
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("alpine", type=Path, help="directory containing the three pinned inputs")
+    parser.add_argument("--opencode-inputs", type=Path, help="run the separate pinned OpenCode PTY fixture")
+    parser.add_argument("--installed-cli", action="store_true", help="exercise bare Bashwink from the built install")
+    parser.add_argument("--project-cli", action="store_true", help="exercise persistent multi-file project sessions")
+    parser.add_argument("--relay-inputs", type=Path, help="exercise the synthetic provider relay with --project-cli")
+    args = parser.parse_args()
+    if (args.installed_cli or args.project_cli) and not args.opencode_inputs:
+        parser.error("installed and project modes require --opencode-inputs")
+    if args.installed_cli and args.project_cli:
+        parser.error("choose exactly one installed CLI profile")
+    if args.relay_inputs and not args.project_cli:
+        parser.error("relay mode requires --project-cli")
+    root = Path(tempfile.mkdtemp(prefix="bw-vm-boundary-")).resolve()
+    print(f"VM fixture output: {root}", flush=True)
+    protected = root / "protected.txt"
+    protected.write_text("Unrelated host fixture\n")
+    protected_hash = digest(protected)
+    localhost = socket.socket()
+    localhost.bind(("127.0.0.1", 0))
+    localhost.listen()
+    localhost.settimeout(0.2)
+    with socket.create_connection(localhost.getsockname()), localhost.accept()[0]:
+        pass
+    runner, image, initramfs = prepare_vm(root, args.alpine.resolve(),
+                                         args.opencode_inputs.resolve() if args.opencode_inputs else None,
+                                         protected, localhost.getsockname()[1],
+                                         args.relay_inputs.resolve() if args.relay_inputs else None)
     if args.project_cli:
-        accept_project(root, runner, image, root / "initramfs", protected)
+        accept_project(root, runner, image, initramfs, protected, relay=args.relay_inputs is not None)
         localhost.close()
         return
     if args.installed_cli:
-        prove_installed_cli(root, runner, image, root / "initramfs", protected)
+        prove_installed_cli(root, runner, image, initramfs, protected)
         localhost.close()
         return
     disk = root / "stage.raw"
@@ -430,7 +484,7 @@ def main():
     disk_id = (disk.stat().st_dev, disk.stat().st_ino)
     lock = disk.with_suffix(".raw.lock")
     lock.touch(mode=0o600, exist_ok=False)
-    arguments = [runner, image, root / "initramfs", disk]
+    arguments = [runner, image, initramfs, disk]
     if args.opencode_inputs:
         exercise_opencode(root, arguments, disk)
         assert protected_hash == digest(protected)
@@ -469,7 +523,7 @@ def main():
                     assert f"APPROVED previous={previous}".encode() in log.read_bytes()
                     assert b"HOST_WRITE_DENIED" in log.read_bytes()
                     assert b"NETWORK_DENIED" in log.read_bytes()
-                    second = subprocess.run([runner, image, root / "initramfs", disk], timeout=10)
+                    second = subprocess.run([runner, image, initramfs, disk], timeout=10)
                     assert second.returncode == 8, "another VM could open the live fixture disk"
                     print(f"Guest detached-writer control ready after {time.monotonic() - started:.2f}s")
                     if stop_signal is not None:

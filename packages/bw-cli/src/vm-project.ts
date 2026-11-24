@@ -53,8 +53,15 @@ interface ProjectRecord {
   identity: string
   revision: string
   profile: string
+  relayBinding?: string
   base: Record<string, VmProjectBaseFile>
   snapshot?: VmProjectSnapshot
+}
+
+export function bindVmProjectProvider(record: ProjectRecord, binding?: string) {
+  if (record.snapshot && record.relayBinding !== binding)
+    throw new Error("saved VM sessions require the same configured provider and model allowlist")
+  if (binding !== undefined) record.relayBinding = binding
 }
 
 export function vmProjectFile(name: string) {

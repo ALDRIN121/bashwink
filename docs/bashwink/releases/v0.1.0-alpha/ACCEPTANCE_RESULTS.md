@@ -7,7 +7,7 @@ verified engineering fixtures remain in the central test evidence.
 | --- | --- | --- |
 | Install exact archive, version, doctor, PATH, and uninstall | NOT RUN | Clean Apple Silicon host without Docker and checksum-matched archive |
 | Plain interactive coding and reviewed host edits | BLOCKED | Installed VM backend, stage import and reviewed transfer |
-| Real provider and host credentials | BLOCKED | Qualified relay, authorized account and one reproducible coding task |
+| Real provider and host credentials | BLOCKED | Synthetic relay PTY passed. Qualified provider error handling, authorized account and real coding task remain open |
 | OS isolation and workload retirement | BLOCKED | Full installed-runtime BW-032 evidence for the selected macOS build |
 | Session recovery and evidence after exit | BLOCKED | Same archive, same guest workspace and verified resume |
 | Exact candidate CI | NOT RUN | Successful verify workflow and each required job for the candidate SHA |

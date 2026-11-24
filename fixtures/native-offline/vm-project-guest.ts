@@ -20,6 +20,12 @@ const FILE_COUNT = 128
 const PROJECT_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,78}\.(ts|js|txt)$/
 const TEST_FILE = /(?:\.test\.|\.spec\.|^test[-_.])/i
 const SESSION_ID = /^ses_[A-Za-z0-9_-]{1,100}$/
+const RELAY_URL = "http://127.0.0.1:8118/relay"
+const RELAY_PACKAGES = {
+  "openai-chat": "@opencode/ai/providers/openai/chat",
+  "openai-responses": "@opencode/ai/providers/openai/responses",
+  "anthropic-messages": "@opencode/ai/providers/anthropic",
+} as const
 const SESSION_DB = "bashwink/opencode/opencode.db"
 const TASK_DB = "bashwink/data/bashwink.sqlite"
 const STATE = [
@@ -49,6 +55,75 @@ function record(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     throw new Error("invalid guest project object")
   return value as Record<string, unknown>
+}
+
+function restoreRelay(value: unknown, state: string) {
+  const relay = record(value)
+  const { capability, defaultModel, routes } = relay
+  if (
+    Object.keys(relay).length !== 3 ||
+    typeof capability !== "string" ||
+    !/^[A-Za-z0-9_-]{43,128}$/.test(capability) ||
+    typeof defaultModel !== "string" ||
+    !Array.isArray(routes) ||
+    routes.length === 0 ||
+    routes.length > 8
+  )
+    throw new Error("invalid guest model relay")
+
+  const providers: Record<
+    string,
+    { settings: { baseURL: string; apiKey: string }; models: Record<string, object> }
+  > = Object.create(null)
+  const ids = new Set<string>()
+  const modelRefs = new Set<string>()
+  for (const value of routes) {
+    const route = record(value)
+    const { id, provider, model, protocol, context, output } = route
+    if (
+      Object.keys(route).length !== 6 ||
+      typeof id !== "string" ||
+      !/^[A-Za-z0-9_-]{1,64}$/.test(id) ||
+      ids.has(id) ||
+      typeof provider !== "string" ||
+      !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(provider) ||
+      typeof model !== "string" ||
+      !/^[A-Za-z0-9._:/-]{1,200}$/.test(model) ||
+      modelRefs.has(`${provider}/${model}`) ||
+      typeof protocol !== "string" ||
+      !Object.hasOwn(RELAY_PACKAGES, protocol) ||
+      typeof context !== "number" ||
+      !Number.isSafeInteger(context) ||
+      context <= 0 ||
+      typeof output !== "number" ||
+      !Number.isSafeInteger(output) ||
+      output <= 0
+    )
+      throw new Error("invalid guest model relay route")
+
+    ids.add(id)
+    modelRefs.add(`${provider}/${model}`)
+    const definition = (providers[provider] ??= {
+      // Any inherited catalogue model lacking a mapped route reaches a path the relay denies.
+      settings: { baseURL: `${RELAY_URL}/unconfigured`, apiKey: capability },
+      models: Object.create(null),
+    })
+    definition.models[model] = {
+      modelID: model,
+      package: RELAY_PACKAGES[protocol as keyof typeof RELAY_PACKAGES],
+      settings: { baseURL: `${RELAY_URL}/${id}` },
+      limit: { context, output },
+    }
+  }
+  if (!modelRefs.has(defaultModel)) throw new Error("unavailable guest default relay model")
+  writeFileSync(
+    path.join(state, "bw-relay.json"),
+    JSON.stringify({ model: defaultModel, providers }),
+    {
+      flag: "wx",
+      mode: 0o600,
+    },
+  )
 }
 
 function restoreFiles(
@@ -169,6 +244,7 @@ function verificationFiles(request: Record<string, unknown>): string[] {
     new Set(names).size !== names.length ||
     request.state !== undefined ||
     request.resume !== undefined ||
+    request.relay !== undefined ||
     !names.every(
       (name) =>
         typeof name === "string" &&
@@ -198,6 +274,10 @@ if (typeof request.token !== "string" || !/^[A-Za-z0-9_-]{16,128}$/.test(request
   throw new Error("invalid guest project identity")
 
 if (mode === "restore") {
+  if (request.relay !== undefined) {
+    if (request.verify !== undefined) throw new Error("relay unavailable for guest verification")
+    restoreRelay(request.relay, state)
+  }
   restoreFiles(workspace, record(request.files), (name) => PROJECT_FILE.test(name), FILE_LIMIT)
   restoreFiles(state, record(request.state ?? {}), stateFile, LIMIT)
   if (request.verify !== undefined) {

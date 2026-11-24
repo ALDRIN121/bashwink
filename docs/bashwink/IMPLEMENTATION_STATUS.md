@@ -32,6 +32,16 @@ it. `--check` fails if it drifts from the register.
 
 <!-- END GENERATED:status -->
 
+## VM provider relay milestone — PARTIAL
+
+The host relay accepts a per-run capability over a private VM socket, selects a fixed
+provider route and configured model, and supplies the provider credential only on the
+host. An isolated OpenCode PTY completed a scripted synthetic-provider coding task,
+resume, reviewed export and protected tests. This fixture does not qualify a paid
+provider. Live authentication, provider errors, cancellation, rate limiting and a real
+coding task remain unverified. Authentication and rate-limit statuses have synthetic controls. Other upstream failures
+currently become a generic relay failure. External alpha remains blocked. See [test evidence](TEST_EVIDENCE.md).
+
 ## Permission and backend foundation
 
 **BW-018 and BW-030 remain In progress.** Hosted macOS runtime checks and both CLI jobs passed.

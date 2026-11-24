@@ -4,6 +4,14 @@
 target for this candidate. Support requires complete qualification on a named macOS
 build and successful CI at the exact candidate revision.
 
+## Current VM provider milestone
+
+**PARTIAL.** An isolated VM and pinned OpenCode completed a scripted synthetic-provider
+PTY coding task through the host relay, then resumed and applied reviewed changes. A live
+provider and paid-account coding task remain blocked. Other upstream provider errors currently
+collapse to a generic failure. The clean installation, complete qualification and exact-SHA
+CI requirements remain open.
+
 ## Freeze baseline
 
 Preparation is on `codex/v0.1.0-alpha-preparation`, based on

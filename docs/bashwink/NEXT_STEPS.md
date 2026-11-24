@@ -7,8 +7,7 @@ alpha remains conditional, and external alpha remains blocked. [Current test evi
 The locally provisioned VM now has installed session resume and reviewed project
 application for bounded top-level Git files. Resolve wider workspace support,
 baseline refresh for subsequent reviewed batches, and the quarantined early journal
-window before treating the workflow as release-qualified. A real provider relay,
-clean macOS qualification, and candidate CI remain open. Ubuntu regression coverage
+window before treating the workflow as release-qualified. The synthetic-tested provider relay needs accurate upstream error handling, expanded negative controls, an authorized live-provider coding run, clean macOS qualification, and candidate CI. Ubuntu regression coverage
 remains active for the macOS-only alpha scope.
 [Release readiness](releases/v0.1.0-alpha/RELEASE_READINESS.md)
 
@@ -20,7 +19,7 @@ remains active for the macOS-only alpha scope.
    launcher-to-owner lifetime and stage retirement are independently verified. For
    file-only Seatbelt, qualify the inherited-lock and export recovery design on each
    supported macOS release. Keep ambiguous stage state quarantined.
-3. Add the narrow host provider channel, then run BW-032 using clean Docker-free installs
+3. Qualify the host provider channel against an authorized real account, then run BW-032 using clean Docker-free installs
    on each advertised platform. Hold external alpha until the real runtime, provider and
    OS-level negative controls pass. Optional Docker has a separate qualification path.
    [BW-031 plan](BW-031_IMPLEMENTATION_PLAN.md) · [BW-032 requirements](BW-032_PLATFORM_QUALIFICATION.md).

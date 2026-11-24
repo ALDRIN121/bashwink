@@ -10,17 +10,25 @@ cd /workspace
 mkdir -m 700 "$TMPDIR"
 session=''
 if test -f /run/bw-project-session; then
-    export BW_VM_PROJECT=1 OPENCODE_CONFIG=/opt/opencode-fixture.json
+    export BW_VM_PROJECT=1
     export PATH="/opt:$PATH"
     IFS= read -r session < /run/bw-project-session
+    if test -f /state/bw-relay.json; then
+        export OPENCODE_CONFIG=/state/bw-relay.json OPENCODE_CONFIG_PROJECT_DISABLE=1
+        export BASHWINK_TIMEOUT_MS=100000
+    else
+        export OPENCODE_CONFIG=/opt/opencode-fixture.json
+    fi
 fi
 /opt/opencode --version
-/opt/bun /opt/mock.ts &
-trap 'kill "$!" 2>/dev/null || true' EXIT
-for attempt in 1 2 3 4 5; do
-    wget -q -O /dev/null http://127.0.0.1:8117/healthz && break
-    sleep 1
-done
+if test ! -f /state/bw-relay.json; then
+    /opt/bun /opt/mock.ts &
+    trap 'kill "$!" 2>/dev/null || true' EXIT
+    for attempt in 1 2 3 4 5; do
+        wget -q -O /dev/null http://127.0.0.1:8117/healthz && break
+        sleep 1
+    done
+fi
 /opt/bun /opt/bashwink/bashwink.js trust /workspace --by fixture
 if test -n "$session"; then
     /opt/bun /opt/bashwink/bashwink.js --session "$session"

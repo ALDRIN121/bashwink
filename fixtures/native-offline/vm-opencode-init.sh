@@ -39,12 +39,29 @@ project_guest() {
         < /run/bw-project-input
 }
 
+start_relay() {
+    insmod /opt/bw-vsock/vsock.ko &&
+        insmod /opt/bw-vsock/vmw_vsock_virtio_transport_common.ko &&
+        insmod /opt/bw-vsock/vmw_vsock_virtio_transport.ko || return 1
+    # Probe the VM-local hypervisor endpoint without issuing an HTTP request.
+    timeout 3 su -s /bin/sh -c 'exec /usr/bin/socat -u /dev/null VSOCK-CONNECT:2:8118' nobody || return 1
+    su -s /bin/sh -c 'exec /usr/bin/socat -T100 TCP4-LISTEN:8118,bind=127.0.0.1,reuseaddr,fork,max-children=8 VSOCK-CONNECT:2:8118,connect-timeout=3' nobody </dev/null &
+    relay_pid=$!
+    for attempt in 1 2 3 4 5; do
+        kill -0 "$relay_pid" 2>/dev/null || return 1
+        # 0100007F:1FB6 is 127.0.0.1:8118 in /proc/net/tcp and 0A is LISTEN.
+        awk '$2 == "0100007F:1FB6" && $4 == "0A" { ready=1 } END { exit !ready }' /proc/net/tcp && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
 if test "$(cat /sys/class/block/vda/size)" = 81920; then
     limit=33554432
     chmod 600 /dev/vda
     project_size "$(dd if=/dev/vda bs=512 count=1 2>/dev/null | tr -d '\000')"
-    dd if=/dev/vda bs=4096 skip=1 count="$(((size + 4095) / 4096))" 2>/dev/null \
-        | head -c "$size" > /run/bw-project-input
+    (umask 077; dd if=/dev/vda bs=4096 skip=1 count="$(((size + 4095) / 4096))" 2>/dev/null \
+        | head -c "$size" > /run/bw-project-input)
     test "$(wc -c < /run/bw-project-input)" -eq "$size"
     # Invalidate the input header before running any workspace code. Publish only after the
     # new payload reaches the disk, with the status sector written by the exit trap.
@@ -54,6 +71,10 @@ if test "$(cat /sys/class/block/vda/size)" = 81920; then
     if test "$selection" = verify; then
         operation=verify
     else
+        if test -f /state/bw-relay.json && ! start_relay; then
+            echo "Bashwink guest model relay unavailable" >&2
+            exit 1
+        fi
         printf '%s\n' "$selection" > /run/bw-project-session
         setsid sh -c 'exec </dev/hvc0 >/dev/hvc0 2>&1; exec su -s /bin/sh -c /opt/run-user nobody'
         operation=snapshot

@@ -1,0 +1,43 @@
+# idempotent resume fixture (pinned runtime)
+# command: ./fixtures/idempotent-resume/run.sh
+# started: 2026-11-24T17:45:31Z
+=== 1. create a plan and move its first task to in_progress ===
+
+=== 2. SIGKILL a process holding an unfinished attempt ===
+PASS  child was SIGKILLed while holding an attempt open
+
+=== 3. the interrupted work is visible and NOT verified ===
+      interrupted tasks: inspect(in_progress)
+      unfinished attempts: 1
+      runs without exit code: 0
+      - 1 task(s) were in flight when the process stopped; their outcome is unknown, not passed
+      - 1 write attempt(s) were started and never finished; resume will re-check the file before writing
+PASS  the unfinished attempt survived the kill and is reported
+PASS  the interrupted task is reported as in_progress, not verified
+
+=== 4. resume reopens the task but never verifies it ===
+      reopened: inspect -> in_progress
+      abandoned attempts: 1
+      closed interrupted runs: 0
+      
+      These tasks are NOT verified. Re-run their checks before verifying:
+        bashwink plan task inspect verified  # after re-running checks
+PASS  resume reopened the task into in_progress
+PASS  resume did NOT claim the abandoned task passed
+PASS  resume states the work is unverified and lists what to re-run
+
+=== 5. an abandoned attempt is not treated as applied ===
+      alreadyApplied=no
+PASS  an abandoned attempt is not counted as applied, so resume re-checks the file
+
+=== 6. the same write happens exactly once across two attempts ===
+      writes=1 first=applied second=skipped_already_applied
+PASS  the identical write was applied exactly once
+PASS  the second attempt was skipped by fingerprint, not by luck
+
+=== 7. the killed task still cannot be verified ===
+      illegal transition 'in_progress' -> 'verified'; allowed: implemented, failed, interrupted, skipped
+PASS  verification refused: the state machine forbids it from here
+
+passed: 10  failed: 0
+# exit: 0

@@ -1,0 +1,27 @@
+# release: first-run, install, approval, TUI, uninstall (PTY)
+# command: python3 fixtures/release/release_first_run.py build/release --out <scratch>/verify2/first-run.json
+# started: 2026-11-24T17:49:32Z
+work directory: <tmp>/bw-first-run-tp5di3x3
+PASS     verify archive checksum — bashwink-0.1.0-alpha.1-macos-arm64.tar.gz: OK
+PASS     tampered archive fails checksum
+PASS     install — exit 0, 5.7s
+PASS     installed --version — bashwink 0.1.0-alpha.1
+PASS     installer refuses a damaged archive directory — exit 1
+PASS     tampered installed VM asset refuses launch and doctor fails — launch exit 3, doctor exit 1
+PASS     bare launch with no provider stops cleanly — exit 3
+PASS     bashwink auth add — added provider 'commandcode' to <tmp>/bw-first-run-tp5di3x3/home/.config/bashwink/opencode.json
+  base URL: h
+PASS     bashwink model use — default model is now commandcode/claude-sonnet-5 (<tmp>/bw-first-run-tp5di3x3/home/.config/bashwink/opencode.
+PASS     bashwink auth check — commandcode: key file <tmp>/bw-first-run-tp5di3x3/bogus.key (36 bytes, mode 600)
+PASS     doctor after configuration — 12 checks, 4 warning(s), 0 failures
+PASS     workspace approval: shown, then declined
+PASS     declined approval started no VM and made no request
+PASS     approve and reach TUI (cold VM) — bogus key
+PASS     execution mode shown before the TUI
+PASS     execution mode shown inside the TUI (guest toast)
+PASS     no stage directory left in /private/tmp after a committed session
+PASS     host project unchanged until review
+PASS     repeat launches reach the TUI — [5.36, 4.25, 4.38]
+PASS     uninstall removes the install and keeps state — 713992249 bytes removed
+PASS     uninstall --purge-state removes state
+# exit: 0

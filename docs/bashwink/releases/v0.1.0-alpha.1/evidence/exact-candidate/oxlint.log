@@ -1,0 +1,5 @@
+# oxlint
+# command: bun run lint
+# started: 2026-11-24T17:45:11Z
+$ oxlint --deny-warnings packages
+# exit: 0

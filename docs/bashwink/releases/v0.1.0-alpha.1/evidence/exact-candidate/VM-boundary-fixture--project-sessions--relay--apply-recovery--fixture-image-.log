@@ -1,0 +1,26 @@
+# VM boundary fixture: project sessions, relay, apply recovery (fixture image)
+# command: <scratch>/venv/bin/python fixtures/native-offline/vm-boundary.py <tmp>/tmp.adTbKRnZVr/fixture-inputs --project-cli --opencode-inputs <tmp>/tmp.adTbKRnZVr/fixture-inputs --relay-inputs <tmp>/tmp.adTbKRnZVr/fixture-inputs
+# started: 2026-11-24T17:48:04Z
+VM fixture output: <tmp>/bw-vm-boundary-iftc3etb
+==> building bashwink 0.1.0-alpha.1 (e5ce9f2) into <tmp>/bw-vm-boundary-iftc3etb/bashwink
+==> done
+    <tmp>/bw-vm-boundary-iftc3etb/bashwink/bin/bashwink
+
+    add to PATH:  export PATH="<tmp>/bw-vm-boundary-iftc3etb/bashwink/bin:$PATH"
+    check it:     bashwink --version && bashwink doctor
+705815 blocks
+<tmp>/bw-vm-boundary-iftc3etb/vm-boundary: replacing existing signature
+Bundled 326 modules in 96ms
+
+  vm-provider-fixture.js  0.42 MB  (entry point)
+
+PASS: installed PTY completed a multi-file edit and approved VM tests while the checkout stayed unchanged
+PASS: --continue and --session ses_df153412bffebO1nH6z7g4Ls4n preserved conversation, task plan, project files, and evidence
+PASS: reopened the last sealed checkpoint after launcher death, and refused corrupt or foreign session state
+PASS: SIGKILL before staging identity preserved host files and quarantined the unidentified directory
+PASS: session resumed after the first reviewed application
+PASS: refreshed baseline excludes the previously applied file from the next review
+PASS: PTY approvals survived SIGKILL before and during application, and recovery preserved the already applied inode
+PASS: review cancellation, interrupted review, conflict refusal, apply, and protected test verification matched the exact host diff
+PASS: real guest OpenCode streamed through the synthetic relay and host usage records, guest state and PTY held no provider credential
+# exit: 0

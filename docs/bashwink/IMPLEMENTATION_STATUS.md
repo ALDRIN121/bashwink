@@ -32,6 +32,19 @@ it. `--check` fails if it drifts from the register.
 
 <!-- END GENERATED:status -->
 
+## v0.1.0-alpha.1 release candidate RC1 — gate evaluated, external alpha FAIL
+
+Feature work is frozen. The candidate (`13f003d`) adds a release build whose default is the
+isolated VM with no host fallback, a separate acknowledged unrestricted mode, pinned VM asset and
+host checks, first-run workspace approval, a self-contained archive with installer and
+uninstaller, and release harnesses. It does **not** complete BW-031 or BW-032 (both `In progress`).
+The macOS-only scope is a narrowing of what the candidate advertises, recorded in ADR-013.
+Verified on an engineering host: 493 unit and integration tests, installed PTY flows, release-image
+acceptance and egress probe. **Not** verified: clean host, live coding, hosted CI, licensing
+sign-off. [Gate report](releases/v0.1.0-alpha.1/RELEASE_GATE_REPORT.md) ·
+[qualification](releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md) ·
+[performance](releases/v0.1.0-alpha.1/PERFORMANCE.md).
+
 ## VM provider relay milestone — PARTIAL
 
 The host relay accepts a per-run capability over a private VM socket, selects a fixed

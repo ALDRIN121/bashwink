@@ -1,0 +1,11 @@
+# license scope
+# command: python3 scripts/check_license_scope.py --inventory docs/bashwink/DEPENDENCY_LICENSES.json
+# started: 2026-11-24T17:45:11Z
+packages inventoried: 1643
+requiring a decision: 48
+decisions recorded:   48
+in shipped path:      @opentui/core-darwin-arm64
+open + release-blocking: (none)
+
+OK: every copyleft or unresolved dependency has a recorded decision
+# exit: 0

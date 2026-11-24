@@ -1,0 +1,9 @@
+# alpha gate tests
+# command: python3 scripts/test_alpha_release_gate.py
+# started: 2026-11-24T17:45:11Z
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.033s
+
+OK
+# exit: 0

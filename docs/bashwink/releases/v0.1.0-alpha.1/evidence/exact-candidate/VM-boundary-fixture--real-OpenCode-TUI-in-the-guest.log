@@ -1,0 +1,24 @@
+# VM boundary fixture: real OpenCode TUI in the guest
+# command: <scratch>/venv/bin/python fixtures/native-offline/vm-boundary.py <tmp>/tmp.adTbKRnZVr/fixture-inputs --opencode-inputs <tmp>/tmp.adTbKRnZVr/fixture-inputs
+# started: 2026-11-24T17:46:48Z
+VM fixture output: <tmp>/bw-vm-boundary-0m2zmvoj
+==> building bashwink 0.1.0-alpha.1 (e5ce9f2) into <tmp>/bw-vm-boundary-0m2zmvoj/bashwink
+==> done
+    <tmp>/bw-vm-boundary-0m2zmvoj/bashwink/bin/bashwink
+
+    add to PATH:  export PATH="<tmp>/bw-vm-boundary-0m2zmvoj/bashwink/bin:$PATH"
+    check it:     bashwink --version && bashwink doctor
+703184 blocks
+<tmp>/bw-vm-boundary-0m2zmvoj/vm-boundary: replacing existing signature
+Traceback (most recent call last):
+  File "<home>/Developer/bashwink/fixtures/native-offline/vm-boundary.py", line 564, in <module>
+    main()
+  File "<home>/Developer/bashwink/fixtures/native-offline/vm-boundary.py", line 489, in main
+    exercise_opencode(root, arguments, disk)
+  File "<home>/Developer/bashwink/fixtures/native-offline/vm-boundary.py", line 195, in exercise_opencode
+    wait_for(completed, vm)
+  File "<home>/Developer/bashwink/fixtures/native-offline/vm-boundary.py", line 63, in wait_for
+    assert vm.poll() is None, f"VM owner exited with {vm.returncode}"
+           ^^^^^^^^^^^^^^^^^
+AssertionError: VM owner exited with 0
+# exit: 1

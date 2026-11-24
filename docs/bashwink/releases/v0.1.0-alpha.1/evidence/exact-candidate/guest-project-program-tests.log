@@ -1,0 +1,10 @@
+# guest project program tests
+# command: bun test fixtures/native-offline/vm-project-guest.test.ts
+# started: 2026-11-24T17:45:07Z
+bun test v1.4.4 (38afee6c8)
+
+ 3 pass
+ 0 fail
+ 22 expect() calls
+Ran 3 tests across 1 file. [92.00ms]
+# exit: 0

@@ -73,3 +73,14 @@ The installed synthetic VM fixture tested early SIGKILL, reviewed batches, resum
 after application, protected tests and host canaries. The release matrix, clean
 Docker-free installation, supported OS range, and exact-candidate hosted CI remain
 open. Linux remains unqualified. [Evidence](TEST_EVIDENCE.md).
+
+
+## Milestone 6: release candidate RC1 on the engineering host
+
+The exact archive was installed in a fresh home with a scrubbed environment and exercised through
+real PTYs; the release image passed project acceptance and an in-guest egress probe, and a live
+invalid-key request was rejected with 401. **No row is PASS**: no clean Docker-free host, no
+credential for live coding, no hosted CI. One legacy guest-TUI fixture fails intermittently with an
+unresolved cause. The macOS-only scope narrows the candidate; it does not complete this task or
+remove its Ubuntu and clean-host requirements. Per-row results, tiers and the scope decision:
+[v0.1.0-alpha.1 qualification results](releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md).

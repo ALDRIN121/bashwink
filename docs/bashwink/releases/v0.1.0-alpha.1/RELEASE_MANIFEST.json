@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "version": "v0.1.0-alpha.1",
+  "candidate": "13f003de321977d13bfac3839b8b721a01a95cef",
+  "target": "macos-arm64",
+  "supported": [],
+  "artifact": {
+    "path": "bashwink-0.1.0-alpha.1-macos-arm64.tar.gz",
+    "sha256": "f55db1940f917a7c41c91d12e9a2d1478ea91200a0c1bbee1fd65537cde486b2",
+    "note": "build output; not committed"
+  },
+  "ci": null,
+  "checks": [
+    {
+      "id": "interactive-coding",
+      "verdict": "BLOCKED",
+      "reason": "Release-image workflow passed with a synthetic provider and the first-run reached the TUI; live coding on the candidate was not run (no credential) and no clean host was available."
+    },
+    {
+      "id": "real-provider",
+      "verdict": "BLOCKED",
+      "reason": "Only an invalid-key request (401) was run live. Live coding, model switching, cancellation and interruption were not run."
+    },
+    {
+      "id": "clean-install",
+      "verdict": "BLOCKED",
+      "reason": "Install from the exact archive passed in a fresh HOME with a scrubbed environment on the engineering host. No clean Docker-free host."
+    },
+    {
+      "id": "supported-platform",
+      "verdict": "BLOCKED",
+      "reason": "One macOS build (27.0.1, 26A434) is listed, as an engineering host. It is not qualified on a clean host."
+    },
+    {
+      "id": "shell-containment",
+      "verdict": "BLOCKED",
+      "reason": "Egress probe and detached-writer controls passed on the engineering host; clean-host qualification is outstanding."
+    },
+    {
+      "id": "host-access-denial",
+      "verdict": "BLOCKED",
+      "reason": "Guest network, host path and raw-disk denial observed from inside the release guest on the engineering host; clean-host run outstanding."
+    },
+    {
+      "id": "credential-protection",
+      "verdict": "BLOCKED",
+      "reason": "Synthetic credential absent from guest state and transcripts; a real key was not available."
+    },
+    {
+      "id": "session-recovery",
+      "verdict": "BLOCKED",
+      "reason": "Passed on the engineering host with a synthetic provider; power loss and clean-host runs outstanding."
+    },
+    {
+      "id": "reviewed-edits",
+      "verdict": "BLOCKED",
+      "reason": "Reviewed multi-file apply, recovery and protected-test verification passed on the engineering host; clean-host run outstanding."
+    },
+    {
+      "id": "critical-security-review",
+      "verdict": "BLOCKED",
+      "reason": "No independent security review of the release path has been done, and the LGPL FFmpeg distribution question needs the owner's sign-off."
+    },
+    {
+      "id": "regression",
+      "verdict": "BLOCKED",
+      "reason": "The exact-candidate local run passed 22 of 23 steps. One legacy VM boundary fixture failed intermittently and its cause is unresolved."
+    },
+    {
+      "id": "required-ci",
+      "verdict": "NOT_RUN",
+      "reason": "Hosted CI was not run for the candidate: pushing was not authorized."
+    },
+    {
+      "id": "release-archive",
+      "verdict": "BLOCKED",
+      "reason": "A local archive was built from the candidate commit and its checksum recorded. It has not been installed on a clean host."
+    },
+    {
+      "id": "documentation",
+      "verdict": "BLOCKED",
+      "reason": "Tester documents are in the archive. They cannot be accepted until the live-provider, clean-host and licence items are resolved."
+    },
+    {
+      "id": "feedback-channel",
+      "verdict": "BLOCKED",
+      "reason": "Reporting instructions exist in the tester guide and SECURITY.md. The repository's private vulnerability reporting setting was not verified."
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "model": "synthetic local upstream",
+  "ttft": "NOT_MEASURED (synthetic upstream)",
+  "first_launch_to_tui_seconds": 4.76,
+  "scripted_five_step_turn_seconds": 26.29,
+  "workload_peak_rss_kib": 722736,
+  "workload_peak_footprint_mib": 930.4,
+  "workload_peak_cpu_percent_of_one_core": 52.1,
+  "workload_processes": [
+    "bun",
+    "com.apple.Virtualization.VirtualMachine",
+    "vm-owner"
+  ],
+  "sampler_error": null,
+  "session_recovery_continue_to_tui_seconds": [
+    4.41,
+    4.46,
+    4.4
+  ],
+  "review_preview_seconds": 0.19,
+  "apply_four_files_seconds": 0.15,
+  "protected_verification_seconds": 2.05
+}

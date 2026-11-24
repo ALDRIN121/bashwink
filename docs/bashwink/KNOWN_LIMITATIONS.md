@@ -1,6 +1,6 @@
 # Bashwink — Known Limitations
 
-**Applies to:** the current local development build. External v0.1.0-alpha is blocked.
+**Applies to:** the current local development build. For the v0.1.0-alpha.1 release candidate use [release/docs/KNOWN_LIMITATIONS.md](../../release/docs/KNOWN_LIMITATIONS.md), which describes the isolated-VM build. External alpha is blocked.
 [Release readiness](releases/v0.1.0-alpha/RELEASE_READINESS.md).
 **Read this before trusting any claim Bashwink makes about itself.**
 

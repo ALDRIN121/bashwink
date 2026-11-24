@@ -169,3 +169,11 @@ Internal alpha remains conditional. External alpha and public release remain FAI
 The local build lacks VM assets, the clean install and release archive are not
 qualified, and mandatory platform, lifecycle, provider, and CI evidence remains
 incomplete. See [current evidence](TEST_EVIDENCE.md).
+
+
+## Milestone 6 release decision (v0.1.0-alpha.1 RC1)
+
+Personal use CONDITIONAL, internal alpha CONDITIONAL, external alpha FAIL, public release FAIL.
+A local archive exists and the secure default is evidenced on an engineering host. Clean-host
+qualification, live-provider qualification, hosted CI and the licensing sign-off are outstanding.
+[Gate report](releases/v0.1.0-alpha.1/RELEASE_GATE_REPORT.md).

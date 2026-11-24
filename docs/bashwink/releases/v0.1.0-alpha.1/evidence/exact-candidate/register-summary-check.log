@@ -1,0 +1,5 @@
+# register summary check
+# command: python3 scripts/generate_status_summary.py --check
+# started: 2026-11-24T17:45:11Z
+OK: status block matches the task register
+# exit: 0

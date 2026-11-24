@@ -1,0 +1,25 @@
+step	exit	log
+unit and integration tests (bun test packages)	0	unit-and-integration-tests--bun-test-packages-.log
+guest project program tests	0	guest-project-program-tests.log
+typecheck	0	typecheck.log
+oxlint	0	oxlint.log
+format check	0	format-check.log
+lint negative controls	0	lint-negative-controls.log
+documentation audit	0	documentation-audit.log
+register summary check	0	register-summary-check.log
+license scope	0	license-scope.log
+native gate tests	0	native-gate-tests.log
+alpha gate tests	0	alpha-gate-tests.log
+runtime health fixture (pinned runtime)	0	runtime-health-fixture--pinned-runtime-.log
+tool lifecycle fixture (pinned runtime)	0	tool-lifecycle-fixture--pinned-runtime-.log
+contract fixture (pinned runtime)	0	contract-fixture--pinned-runtime-.log
+idempotent resume fixture (pinned runtime)	0	idempotent-resume-fixture--pinned-runtime-.log
+development-build interactive entry PTY	0	development-build-interactive-entry-PTY.log
+VM boundary fixture: forced stop, owner SIGKILL, launcher SIGKILL, SIGINT, timer	0	VM-boundary-fixture--forced-stop--owner-SIGKILL--launcher-SIGKILL--SIGINT--timer.log
+VM boundary fixture: real OpenCode TUI in the guest	1	VM-boundary-fixture--real-OpenCode-TUI-in-the-guest.log
+VM boundary fixture: project sessions, relay, apply recovery (fixture image)	0	VM-boundary-fixture--project-sessions--relay--apply-recovery--fixture-image-.log
+release: first-run, install, approval, TUI, uninstall (PTY)	0	release--first-run--install--approval--TUI--uninstall--PTY-.log
+release: unrestricted mode (PTY)	0	release--unrestricted-mode--PTY-.log
+release image: project acceptance with SIGKILL, recovery, apply, verify (PTY)	0	release-image--project-acceptance-with-SIGKILL--recovery--apply--verify--PTY-.log
+release image: in-guest egress probe	0	release-image--in-guest-egress-probe.log
+release gate validator (expected to refuse)	1	release-gate-validator--expected-to-refuse-.log

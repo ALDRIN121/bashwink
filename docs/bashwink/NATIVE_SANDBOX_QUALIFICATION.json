@@ -804,128 +804,132 @@
   ],
   "alphaQualification": {
     "schema": 1,
-    "advertised": [],
+    "advertised": [
+      "macos-arm64"
+    ],
     "qualification": [
       {
         "id": "clean-install",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": null,
+        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
-        "verdict": "NOT_RUN",
-        "reason": "No exact release archive and no clean qualification host without Docker."
+        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
+        "verdict": "BLOCKED",
+        "reason": "Fresh-HOME, scrubbed-environment install from the exact archive passed on the engineering host, which has Docker and earlier Bashwink state. A clean Docker-free Apple Silicon host was not available."
       },
       {
         "id": "interactive-mock",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": null,
+        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "Installed VM project coding passed in a lab fixture. Exact release artifact and clean-host acceptance remain unqualified."
+        "reason": "Release-image project acceptance with a synthetic provider passed on the engineering host (9 controls). Clean-host acceptance was not run."
       },
       {
         "id": "interactive-live-provider",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": null,
+        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "Live CommandCode coding and model switching passed in a lab VM. The release artifact and complete provider qualification remain open."
+        "reason": "A live invalid-key request was rejected with 401 (1 request, 0 tokens). Live coding, model switching and cancellation were not run on this candidate: no credential was available."
       },
       {
         "id": "file-and-link-policy",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": null,
+        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "Lab host canaries and staged-export controls passed. Complete clean-host file and link qualification remains open."
+        "reason": "Unit and acceptance controls passed on the engineering host. Clean-host qualification was not run."
       },
       {
         "id": "subprocess-and-detached-cleanup",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": null,
+        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "The VM lab passed detached-writer, owner death and launcher death controls. Complete installed-runtime qualification remains open."
+        "reason": "Detached guest writer stopped at VM retirement in the release-image acceptance and boundary fixture. Cleanup after a live cancellation was not observed, and no clean host was available."
       },
       {
         "id": "network-and-provider-transport",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": null,
+        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "A NIC-free VM and host relay passed lab controls. Complete adversarial network qualification remains open."
+        "reason": "In-guest egress probe and synthetic relay tests passed on the engineering host. Live transport beyond the 401 path and clean-host runs were not performed."
       },
       {
         "id": "secret-isolation",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": null,
+        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "The provider key was absent from inspected live guest state. Complete secret-isolation qualification remains open."
+        "reason": "A synthetic credential was absent from transcripts, guest state and usage records. A real key was not available; clean-host run not performed."
       },
       {
         "id": "approval-and-alternate-dispatch",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": null,
+        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "Lab PTY approvals passed. Installed workload admission and alternate-entry negative controls are open."
+        "reason": "Release default, refusal and unrestricted-mode controls passed on the engineering host. Clean-host run not performed."
       },
       {
         "id": "session-recovery-and-export",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": null,
+        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "VM session recovery, reviewed application and fault controls passed in lab fixtures. Complete release qualification remains open."
+        "reason": "SIGKILL, repeated recovery, consecutive batches and receipt controls passed on the engineering host. Power loss was not tested; clean-host run not performed."
       },
       {
         "id": "unsupported-host-and-no-fallback",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": null,
+        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "Explicit VM selection fails closed without required assets. Unsupported-host and clean-install qualification remains open."
+        "reason": "Host verdict logic and asset refusal paths passed in tests and one real tampered-asset launch. A real unqualified macOS build was not available."
       },
       {
         "id": "resource-limits",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": null,
+        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
         "verdict": "BLOCKED",
-        "reason": "Lab VM deadlines and provider request limits were exercised. Full resource and timeout qualification remains open."
+        "reason": "Whole-workload resources were measured and the owner timer fired in the boundary fixture. The 30-minute deadline and full request-budget exhaustion were not run end to end; no clean host."
       },
       {
         "id": "ci-or-reviewed-equivalent",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": null,
+        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
         "verdict": "NOT_RUN",
-        "reason": "Required verify workflow has not run for an exact release candidate."
+        "reason": "Hosted CI was not run for the candidate: pushing was not authorized. Local equivalent verification is recorded but is not hosted CI."
       }
-    ]
+    ],
+    "candidate": "13f003de321977d13bfac3839b8b721a01a95cef",
+    "hostNote": "Engineering host only (macOS 27.0.1 build 26A434, arm64, Docker installed). No clean Docker-free host was available; no row is PASS."
   }
 }

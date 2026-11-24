@@ -1,0 +1,33 @@
+# release image: in-guest egress probe
+# command: python3 fixtures/release/vm_egress_probe.py <tmp>/tmp.adTbKRnZVr/bashwink-0.1.0-alpha.1-macos-arm64
+# started: 2026-11-24T17:51:44Z
+## links
+ lo
+## routes
+routes-exit=0
+## public
+wget: can't connect to remote host (1.1.1.1): Network unreachable
+public-exit=0
+## gateway
+wget: can't connect to remote host (192.168.64.1): Network unreachable
+gateway-exit=0
+## dns
+nslookup: write to '127.0.0.1': Connection refused
+;; connection timed out; no servers could be reached
+
+
+## host paths
+ls: /Users: No such file or directory
+ls: /private: No such file or directory
+ls: /Volumes: No such file or directory
+## user
+uid=65534(nobody) gid=65534(nobody) groups=65534(nobody)
+## disk
+/bin/sh: can't create /dev/vda: Permission denied
+head: /dev/vda: Permission denied
+## mounts
+rootfs rootfs;proc proc;sysfs sysfs;devtmpfs devtmpfs;devpts devpts;
+## end
+
+EGRESS PROBE: PASS
+# exit: 0

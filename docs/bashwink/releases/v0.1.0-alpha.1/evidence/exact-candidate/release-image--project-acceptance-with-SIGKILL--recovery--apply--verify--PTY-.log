@@ -1,0 +1,22 @@
+# release image: project acceptance with SIGKILL, recovery, apply, verify (PTY)
+# command: python3 fixtures/release/vm-acceptance.py <tmp>/tmp.adTbKRnZVr/bashwink-0.1.0-alpha.1-macos-arm64
+# started: 2026-11-24T17:50:59Z
+acceptance output: <tmp>/bw-release-vm-acceptance-fb7fcw_i
+release asset vm-owner sha256 ca5eb6fe50eb94721ffae102d7ee2307dce9e85925a9bb55aa2a1f919a0cb973
+release asset Image sha256 acb635444e1e736363865c903225e739010ad79e1db51caa17b8f6aa363124a6
+release asset initramfs sha256 bdd1b37087288428ae53854d08e941f1d0eb8a879c261b54f9b93d708c31db4a
+Bundled 326 modules in 34ms
+
+  vm-provider-fixture.js  0.42 MB  (entry point)
+
+PASS: installed PTY completed a multi-file edit and approved VM tests while the checkout stayed unchanged
+PASS: --continue and --session ses_df1513723ffeU1xuNXYv6A52ZK preserved conversation, task plan, project files, and evidence
+PASS: reopened the last sealed checkpoint after launcher death, and refused corrupt or foreign session state
+PASS: SIGKILL before staging identity preserved host files and quarantined the unidentified directory
+PASS: session resumed after the first reviewed application
+PASS: refreshed baseline excludes the previously applied file from the next review
+PASS: PTY approvals survived SIGKILL before and during application, and recovery preserved the already applied inode
+PASS: review cancellation, interrupted review, conflict refusal, apply, and protected test verification matched the exact host diff
+PASS: real guest OpenCode streamed through the synthetic relay and host usage records, guest state and PTY held no provider credential
+RELEASE VM ACCEPTANCE: PASS
+# exit: 0

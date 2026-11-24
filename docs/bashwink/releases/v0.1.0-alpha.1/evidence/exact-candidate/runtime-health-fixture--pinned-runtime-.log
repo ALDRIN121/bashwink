@@ -1,0 +1,16 @@
+# runtime health fixture (pinned runtime)
+# command: ./fixtures/runtime-health/run.sh
+# started: 2026-11-24T17:45:12Z
+PASS  positive control dispatched a real shell through the owned server; unrelated managed server stayed registered
+PASS  a saved session in another workspace received no prompt or tool call
+PASS  missing refused with exit 3 and no provider request or tool dispatch despite prior boot evidence
+PASS  import-error refused with exit 3 and no provider request or tool dispatch despite prior boot evidence
+PASS  wrong-export refused with exit 3 and no provider request or tool dispatch despite prior boot evidence
+PASS  setup-error refused with exit 3 and no provider request or tool dispatch despite prior boot evidence
+PASS  readiness cannot be disabled
+PASS  cancellation during readiness launched no client and cleaned up the lease
+PASS  delayed activation admitted no provider request until the hooks registered
+PASS  server crash after admission closed the client without dispatching a tool
+{"ok":true,"entries":12,"head":"5cd6c3b29ff68ee067f12f379df46e4babc68524124b7cc2b1983c1ca1f3c663"}
+PASS  evidence chain verifies across readiness failures
+# exit: 0

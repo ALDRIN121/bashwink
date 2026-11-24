@@ -1,5 +1,42 @@
 # Bashwink — Test Evidence Register
 
+## v0.1.0-alpha.1 release candidate RC1 (2026-11-24 to 25)
+
+Candidate commit `13f003de321977d13bfac3839b8b721a01a95cef`; archive
+`bashwink-0.1.0-alpha.1-macos-arm64.tar.gz`, SHA-256
+`f55db1940f917a7c41c91d12e9a2d1478ea91200a0c1bbee1fd65537cde486b2`. macOS 27.0.1 (26A434) arm64,
+Apple M1, 8 GB, Bun 1.4.4, OpenCode 2.3.2. Run with `scripts/verify_candidate.sh` (local, **not**
+hosted CI) on an engineering host that has Docker installed. Full results, tiers and
+logs: [qualification results](releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md) and
+`releases/v0.1.0-alpha.1/evidence/`.
+
+| Command or control | Exit | Observed result |
+| --- | ---: | --- |
+| `bun test packages` | 0 | 493 passed, 0 failed, 1,555 assertions, 30 files (448 baseline plus 45 new: release default 2, release mode 28, project structures 15) |
+| Typecheck, Oxlint, `bun fmt --check`, `lint:gate` | 0 each | 78 files formatted; 6 lint negative controls passed |
+| Documentation audit, register summary, licence scope, native and alpha gate tests | 0 each | `Audit: PASS`; 4 and 5 gate tests |
+| Runtime health, tool lifecycle, contract, idempotent resume | 0 each | 11, 19, 14 and 10 checks, using the OpenCode binary from the archive |
+| Development-build interactive entry PTY | 0 | git, non-git and nested directories |
+| `vm-boundary.py` basic | 0 | forced stop, owner SIGKILL, launcher SIGKILL, SIGINT and timer (124); detached writer stopped each time |
+| `vm-boundary.py --opencode-inputs` (legacy guest TUI) | **1** | **FAIL**, intermittent: the fixture did not observe the second permission dialog's options and the guest deadline ended the session. 5/6 and 9/10 passed on rerun; toast ruled out; cause unresolved |
+| `vm-boundary.py --project-cli --relay-inputs` (fixture image) | 0 | project sessions, relay, apply recovery |
+| `fixtures/release/release_first_run.py` | 0 | 21 stages PASS: checksum, tampered archive, install 5.7 s, damaged-directory refusal, tampered-asset refusal, no-provider refusal, auth setup, approval decline and accept, TUI with mode shown before and inside, stage removed, repeat launches, uninstall, purge |
+| `fixtures/release/release_unrestricted.py` | 0 | 13 checks PASS: three wrong acknowledgments refused, typed phrase starts host mode, labelled, run record `unrestricted-host`, untrusted shell denied, trusted shell asks, decline and approve |
+| `fixtures/release/vm-acceptance.py` (release image) | 0 | 9 controls: edit, approved tests, resume, launcher SIGKILL, corrupt and foreign state, SIGKILL during apply, review/conflict/apply, protected tests, no credential in guest |
+| `fixtures/release/vm_egress_probe.py` (release image) | 0 | only `lo`, no route, outbound fetches unreachable, DNS fails, no host paths, user `nobody`, raw disk denied, no shared mounts |
+| `fixtures/release/release_first_run.py` with an invalid key | 0 | live endpoint answered 401 `provider.auth`; 1 request, 0 tokens; read from the saved session |
+| `fixtures/release/vm_perf.py` | 0 | see [performance](releases/v0.1.0-alpha.1/PERFORMANCE.md) |
+| `python3 scripts/verify_alpha_release.py --revision <candidate>` | 1 | refuses: every clean-host, live-provider and CI row is BLOCKED or NOT_RUN (`evidence/gate-validator-output.txt`) |
+
+Not run: hosted CI, a clean Apple Silicon host, live coding, model switching, live cancellation,
+live rate limit (deliberately not provoked), power loss, a real unqualified macOS build, the
+30-minute session deadline end to end, and a dependency vulnerability audit.
+
+Two defects found and fixed while building the candidate: the shipped uninstaller returned exit 1
+after a successful purge when the last cleanup glob matched nothing, and release sessions left a
+copy of the project in `/private/tmp/bashwink-vm-*`. A harness defect (cleanup only on success)
+filled the disk once; harnesses now clean up on every exit path.
+
 ## Persistent VM project sessions and reviewed apply (2026-11-24)
 
 Source `34a78e42b1052ed4c6a12ea00b00a179d47266dc`. macOS arm64 27.0.1 (26A434),

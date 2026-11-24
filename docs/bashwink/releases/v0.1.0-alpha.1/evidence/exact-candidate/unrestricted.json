@@ -1,0 +1,67 @@
+[
+  {
+    "check": "wrong acknowledgment b'yes\\r' starts nothing",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "wrong acknowledgment b'\\r' starts nothing",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "wrong acknowledgment b'i accept host access\\r' starts nothing",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "typed acknowledgment starts host mode and the TUI",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "mode is labelled before the TUI",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "mode is shown inside the TUI",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "untrusted workspace: shell is denied and nothing ran on the host",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "run record names the execution mode",
+    "verdict": "PASS",
+    "detail": "unrestricted-host"
+  },
+  {
+    "check": "evidence booted in host mode",
+    "verdict": "PASS",
+    "detail": "recorded"
+  },
+  {
+    "check": "trusted workspace (decline): shell asks for approval first",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "trusted workspace (decline): host command did not run only as decided",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "trusted workspace (approve): shell asks for approval first",
+    "verdict": "PASS",
+    "detail": ""
+  },
+  {
+    "check": "trusted workspace (approve): host command ran only as decided",
+    "verdict": "PASS",
+    "detail": ""
+  }
+]

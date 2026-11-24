@@ -1,0 +1,148 @@
+{
+  "stages": [
+    {
+      "stage": "verify archive checksum",
+      "verdict": "PASS",
+      "detail": "bashwink-0.1.0-alpha.1-macos-arm64.tar.gz: OK"
+    },
+    {
+      "stage": "tampered archive fails checksum",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "stage": "install",
+      "verdict": "PASS",
+      "detail": "exit 0, 6.3s"
+    },
+    {
+      "stage": "installed --version",
+      "verdict": "PASS",
+      "detail": "bashwink 0.1.0-alpha.1"
+    },
+    {
+      "stage": "installer refuses a damaged archive directory",
+      "verdict": "PASS",
+      "detail": "exit 1"
+    },
+    {
+      "stage": "tampered installed VM asset refuses launch and doctor fails",
+      "verdict": "PASS",
+      "detail": "launch exit 3, doctor exit 1"
+    },
+    {
+      "stage": "bare launch with no provider stops cleanly",
+      "verdict": "PASS",
+      "detail": "exit 3"
+    },
+    {
+      "stage": "bashwink auth add",
+      "verdict": "PASS",
+      "detail": "added provider 'commandcode' to <tmp>/bw-first-run-ya6haww1/home/.config/bashwink/opencode.json\n  base URL: h"
+    },
+    {
+      "stage": "bashwink model use",
+      "verdict": "PASS",
+      "detail": "default model is now commandcode/claude-sonnet-5 (<tmp>/bw-first-run-ya6haww1/home/.config/bashwink/opencode."
+    },
+    {
+      "stage": "bashwink auth check",
+      "verdict": "PASS",
+      "detail": "commandcode: key file <tmp>/bw-first-run-ya6haww1/bogus.key (36 bytes, mode 600)"
+    },
+    {
+      "stage": "doctor after configuration",
+      "verdict": "PASS",
+      "detail": "12 checks, 4 warning(s), 0 failures"
+    },
+    {
+      "stage": "workspace approval: shown, then declined",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "stage": "declined approval started no VM and made no request",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "stage": "approve and reach TUI (cold VM)",
+      "verdict": "PASS",
+      "detail": "bogus key"
+    },
+    {
+      "stage": "execution mode shown before the TUI",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "stage": "execution mode shown inside the TUI (guest toast)",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "stage": "live endpoint rejects an invalid key (read from the saved session)",
+      "verdict": "PASS",
+      "detail": "errors=[('provider.auth', 401, 'provider authentication or access denied'), ('provider.auth', 401, 'provider authentication or access denied')] requests_sent=1 tokens=0"
+    },
+    {
+      "stage": "no stage directory left in /private/tmp after a committed session",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "stage": "host project unchanged until review",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "stage": "repeat launches reach the TUI",
+      "verdict": "PASS",
+      "detail": "[4.53, 4.52, 4.48]"
+    },
+    {
+      "stage": "uninstall removes the install and keeps state",
+      "verdict": "PASS",
+      "detail": "713992249 bytes removed"
+    },
+    {
+      "stage": "uninstall --purge-state removes state",
+      "verdict": "NOT_RUN",
+      "detail": "18 pre-existing /private/tmp/bashwink-vm-* directories would also be deleted; not touched"
+    }
+  ],
+  "measurements": {
+    "test_environment": {
+      "clean_environment_simulation": true,
+      "clean_host": false,
+      "note": "fresh HOME and scrubbed environment on the engineering machine; Docker is installed here",
+      "macos": "27.0.1",
+      "build": "26A434",
+      "chip": "Apple M1",
+      "memory_bytes": 8589934592
+    },
+    "extract_seconds": 2.99,
+    "install_seconds": 6.3,
+    "installed_bytes": 713992249,
+    "archive_bytes": 333567141,
+    "launch_to_approval_prompt_seconds": 0.41,
+    "cold_start_approval_to_tui_seconds": 4.81,
+    "idle_footprint_mib": 868.3,
+    "usage_line": "VM provider usage: 1/8 requests",
+    "provider_requests_used": 1,
+    "provider_request_limit": 8,
+    "peak_workload_rss_kib": 659040,
+    "peak_workload_cpu_percent_of_one_core": 29.5,
+    "peak_workload_footprint_mib": 868.3,
+    "workload_processes": [
+      "bun",
+      "com.apple.Virtualization.VirtualMachine",
+      "vm-owner"
+    ],
+    "warm_launch_to_tui_seconds": [
+      4.53,
+      4.52,
+      4.48
+    ]
+  }
+}

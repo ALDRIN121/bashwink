@@ -1,0 +1,6 @@
+# release gate validator (expected to refuse)
+# command: python3 scripts/verify_alpha_release.py --revision 13f003de321977d13bfac3839b8b721a01a95cef
+# started: 2026-11-24T17:52:08Z
+External v0.1.0-alpha.1 release FAIL
+- [Errno 2] No such file or directory: '<home>/Developer/bashwink/docs/bashwink/releases/v0.1.0-alpha.1/RELEASE_MANIFEST.json'
+# exit: 1

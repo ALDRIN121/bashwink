@@ -1,5 +1,36 @@
 # Bashwink next steps
 
+## v0.1.0-alpha.1 release candidate RC1 — stopped at the gate (2026-11-25)
+
+A self-contained macOS Apple Silicon archive exists locally (candidate
+`13f003de321977d13bfac3839b8b721a01a95cef`). Verdicts: personal use **CONDITIONAL**, internal alpha
+**CONDITIONAL**, external alpha **FAIL**, public release **FAIL**. See the
+[gate report](releases/v0.1.0-alpha.1/RELEASE_GATE_REPORT.md). Nothing was published or pushed.
+
+Scope decision ([ADR-013](DECISIONS.md)): this candidate advertises macOS Apple Silicon only, on the
+builds in `release/qualified-hosts.json`. BW-031 and BW-032 are **not** complete and keep every
+original requirement; both stay `In progress`.
+
+Next eligible actions, in order, each with the evidence that closes it (full table in the gate
+report, section L):
+
+1. **Owner:** provide an authorized CommandCode key as a mode-600 file (e.g.
+   `~/.config/bashwink-qual/commandcode.key`), then run the live stages
+   (`fixtures/release/release_first_run.py <archive-dir> --out r.json --live --key-file <file>`),
+   a cancellation observation and a connection-drop observation.
+2. **Owner:** make a clean Docker-free Apple Silicon host available (macOS 27.0.1 build 26A434)
+   and run the four release harnesses there. Until then every clean-host row stays `BLOCKED`.
+3. **Owner:** authorize pushing the branch so the `verify` workflow can run at the candidate SHA.
+4. **Owner:** decide the LGPL FFmpeg question for the shipped OpenCode binaries (ADR-009).
+5. Find the cause of the intermittent legacy guest-TUI fixture failure (about 1 in 6 to 10 runs).
+6. Exercise the 30-minute deadline, a real unsupported macOS build and the remaining controls in
+   the gate report. Linux (Ubuntu) rows of BW-032 remain open and outside this candidate.
+
+Any code change after the candidate commit needs the affected verification repeated and a new
+archive and checksum.
+
+## Previous status
+
 The local macOS VM fixture has live CommandCode coding, model switching, reviewed
 application, and session recovery evidence. Early apply recovery quarantines an
 unidentified directory and records the abandoned transaction. Committed receipts

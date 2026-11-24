@@ -382,7 +382,12 @@ describe("release bundle process behavior", () => {
   test("a bundle with no qualified hosts cannot start the VM, says why, and records it", () => {
     const result = run([])
     expect(result.exitCode).toBe(3)
-    expect(result.stderr.toString()).toContain("no qualified macOS builds")
+    // On macOS arm64 the empty list is the reason; elsewhere the platform itself is.
+    expect(result.stderr.toString()).toContain(
+      process.platform === "darwin" && process.arch === "arm64"
+        ? "no qualified macOS builds"
+        : "macOS on Apple Silicon only",
+    )
     expect(result.stderr.toString()).toContain(
       "No model request was made and no tool was dispatched.",
     )

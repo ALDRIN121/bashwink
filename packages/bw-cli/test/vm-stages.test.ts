@@ -287,7 +287,8 @@ describe("purge removes only what this installation recorded and can prove is it
 // The shipped command and the shipped uninstaller, against decoys in the real stage root.
 // ---------------------------------------------------------------------------------------
 
-describe("the installed command and uninstall.sh", () => {
+// These use the real /private/tmp stage root and the macOS process tools, so they run on macOS CI.
+describe.skipIf(process.platform !== "darwin")("the installed command and uninstall.sh", () => {
   const decoys: string[] = []
   const cli = path.join(import.meta.dir, "../src/bin.ts")
   const uninstall = path.join(import.meta.dir, "../../../release/uninstall.sh")

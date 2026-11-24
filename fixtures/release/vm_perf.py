@@ -25,7 +25,7 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO / "fixtures/native-offline"))
 sys.path.insert(0, str(HERE))
 from recovery import terminal  # noqa: E402
-from run import wait_for  # noqa: E402
+from run import wait_for, purge_stages_under  # noqa: E402
 from release_first_run import Sampler  # noqa: E402
 
 
@@ -139,6 +139,7 @@ def main():
         args.out.write_text(json.dumps(result, indent=2) + "\n")
         print(json.dumps(result, indent=2))
     finally:
+        purge_stages_under(root, root / "bashwink/bin/bashwink")
         shutil.rmtree(root, ignore_errors=True)
 
 

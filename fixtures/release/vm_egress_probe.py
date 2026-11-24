@@ -25,7 +25,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO / "fixtures/native-offline"))
 from recovery import terminal  # noqa: E402
-from run import wait_for  # noqa: E402
+from run import wait_for, purge_stages_under  # noqa: E402
 
 PROBE = r"""
 s=$(printf '\057'); u="${s}Users"; pv="${s}private"; vo="${s}Volumes"; dev="${s}dev${s}vda"; mt="${s}proc${s}mounts"
@@ -134,6 +134,7 @@ def main():
         return 1 if problems else 0
     finally:
         generated.unlink(missing_ok=True)
+        purge_stages_under(root, root / "bashwink/bin/bashwink")
         shutil.rmtree(root, ignore_errors=True)
 
 

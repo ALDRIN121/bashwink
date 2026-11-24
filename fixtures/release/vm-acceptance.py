@@ -20,6 +20,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "native-offline"))
 from vm_project_acceptance import accept_project  # noqa: E402
+from run import purge_stages_under  # noqa: E402
 
 
 def main():
@@ -49,6 +50,7 @@ def main():
         accept_project(root, assets["vm-owner"], assets["Image"], assets["initramfs"], protected, relay=True)
         print("RELEASE VM ACCEPTANCE: PASS", flush=True)
     finally:
+        purge_stages_under(root, root / "bashwink/bin/bashwink")
         if not args.keep:
             shutil.rmtree(root, ignore_errors=True)
 

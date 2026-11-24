@@ -18,7 +18,7 @@ import termios
 import time
 import zlib
 from recovery import terminal
-from run import DialogApprover, process_identity, wait_for as wait_until
+from run import DialogApprover, process_identity, purge_stages_under, wait_for as wait_until
 from vm_project_acceptance import accept_project
 
 
@@ -445,6 +445,9 @@ def prepare_vm(root, alpine, opencode_inputs, protected, port, relay_inputs=None
     return runner, image, initramfs
 
 
+ROOT = None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("alpine", type=Path, help="directory containing the three pinned inputs")
@@ -465,7 +468,8 @@ def main():
         parser.error("choose exactly one installed CLI profile")
     if args.relay_inputs and not args.project_cli:
         parser.error("relay mode requires --project-cli")
-    root = Path(tempfile.mkdtemp(prefix="bw-vm-boundary-")).resolve()
+    global ROOT
+    root = ROOT = Path(tempfile.mkdtemp(prefix="bw-vm-boundary-")).resolve()
     print(f"VM fixture output: {root}", flush=True)
     protected = root / "protected.txt"
     protected.write_text("Unrelated host fixture\n")
@@ -587,5 +591,26 @@ def main():
     localhost.close()
 
 
+def cleanup(succeeded):
+    """Remove this run's own resources: its recorded stages always, its work directory on success.
+
+    A failing run keeps its work directory (guest console log, disks) for analysis and says where.
+    """
+    if ROOT is None:
+        return
+    install = ROOT / "bashwink/bin/bashwink"
+    if install.exists():
+        purge_stages_under(ROOT, install)
+    if succeeded:
+        shutil.rmtree(ROOT, ignore_errors=True)
+    else:
+        print(f"kept for analysis: {ROOT}", flush=True)
+
+
 if __name__ == "__main__":
-    main()
+    succeeded = False
+    try:
+        main()
+        succeeded = True
+    finally:
+        cleanup(succeeded)

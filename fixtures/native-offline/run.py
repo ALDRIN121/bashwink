@@ -70,6 +70,23 @@ class DialogApprover:
         return self.sent
 
 
+def purge_stages_under(root, bashwink):
+    """Remove the VM stage directories that a fixture's OWN installations recorded.
+
+    A fixture runs the development CLI with its own BASHWINK_HOME somewhere under `root`; each one
+    keeps a registry of the stages it created. This asks each installation to purge exactly those
+    (idle, provably its own). It never matches names in /private/tmp, so another installation's or
+    another tool's directories are never touched.
+    """
+    removed = 0
+    for registry in sorted(Path(root).glob("**/data/vm-stages")):
+        home = registry.parent.parent
+        result = subprocess.run([str(bashwink), "sandbox", "stages", "--purge"], capture_output=True, text=True,
+                                env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(root), "BASHWINK_HOME": str(home)})
+        removed += result.stdout.count("removed  ")
+    return removed
+
+
 def process_identity(pid):
     result = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "lstart=,command="],
                             capture_output=True, text=True, check=False)

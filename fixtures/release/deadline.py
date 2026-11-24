@@ -30,7 +30,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO / "fixtures/native-offline"))
 from recovery import terminal  # noqa: E402
-from run import DialogApprover, wait_for  # noqa: E402
+from run import DialogApprover, wait_for, purge_stages_under  # noqa: E402
 
 GUEST_MS = 1_740_000
 HOST_MS = 1_800_000
@@ -140,6 +140,7 @@ def main():
         check("no VM owner or helper process remains", not left, str(left))
         args.out.write_text(json.dumps(report, indent=2) + "\n")
     finally:
+        purge_stages_under(root, root / "bashwink/bin/bashwink")
         shutil.rmtree(root, ignore_errors=True)
     return 0 if all(c["verdict"] == "PASS" for c in report["checks"]) else 1
 

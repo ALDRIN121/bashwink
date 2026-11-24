@@ -27,6 +27,19 @@ test("TUI prompt and session options preserve the attested working directory", (
   expect(() => standaloneArguments(["--", ".."])).toThrow("intended workspace")
 })
 
+test("interactive model options preserve workspace and private-server admission", () => {
+  for (const args of [
+    ["--model", "fixture/model"],
+    ["-m", "fixture/model"],
+  ])
+    expect(standaloneArguments(args)).toEqual(["--standalone", ...args])
+  expect(() => standaloneArguments(["--model", "fixture/model", ".."])).toThrow(
+    "intended workspace",
+  )
+  expect(() => standaloneArguments(["-m", "fixture/model", "serve"])).toThrow("service command")
+  expect(() => standaloneArguments(["--model", "--", ".."])).toThrow("missing value")
+})
+
 async function withRuntime(
   check: (
     run: (

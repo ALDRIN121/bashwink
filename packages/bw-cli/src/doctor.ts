@@ -28,6 +28,7 @@ import {
 import { recentRuns, runtimeLogHint } from "./run-health.js"
 import { canonicalWorkspace, isTrusted, readTrust } from "./trust.js"
 import { credentialSummary, runAuthCommand, runModelCommand } from "./providers-cli.js"
+import { selectBackend } from "./execution-backend.js"
 
 export type CheckStatus = "ok" | "warn" | "fail"
 
@@ -385,14 +386,30 @@ export function diagnose(options: DoctorOptions = {}): DoctorReport {
     })
   }
 
-  // --- docker (optional) -------------------------------------------------
+  // --- execution boundary ----------------------------------------------
+  try {
+    const backend = selectBackend(env["BASHWINK_BACKEND"])
+    checks.push({
+      id: "execution-backend",
+      title: "Execution boundary",
+      status: "warn",
+      detail: `${backend.capabilities.mode}: approved commands run with host access`,
+    })
+  } catch (error) {
+    checks.push({
+      id: "execution-backend",
+      title: "Execution boundary",
+      status: "fail",
+      detail: error instanceof Error ? error.message : "requested execution backend unavailable",
+    })
+  }
+
   const docker = which("docker")
   checks.push({
     id: "docker",
     title: "Docker (optional)",
     status: docker ? "ok" : "warn",
-    detail: docker ? `found ${docker}` : "not installed; sandboxed execution will be unavailable",
-    ...(docker ? {} : { fix: "optional — install Docker Desktop only if you need sandboxing" }),
+    detail: docker ? `found ${docker}` : "Docker is absent. Bashwink does not require it.",
   })
 
   const failed = checks.filter((check) => check.status === "fail")

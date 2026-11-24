@@ -27,6 +27,13 @@ function firstPosition(argv: readonly string[]): string | undefined {
       const directory = argv[index + 1]
       return directory === undefined ? undefined : path.resolve(directory)
     }
+    if (arg === "--model" || arg === "-m") {
+      const model = argv[index + 1]
+      if (model === undefined || model === "" || model.startsWith("-"))
+        throw new Error(`missing value for ${arg}`)
+      index++
+      continue
+    }
     if (arg === "--session" || arg === "-s" || arg === "--prompt") {
       index++
       continue

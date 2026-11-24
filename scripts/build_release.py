@@ -181,15 +181,42 @@ def build_guest(work: Path, inputs: dict[str, Path], bundle_dir: Path, runtime_d
         (opt / executable).chmod(0o755)
     (guest / "init").chmod(0o755)
 
-    # Deterministic cpio: sorted names, fixed owner and times.
-    for path in [guest, *guest.rglob("*")]:
-        os.utime(path, (SOURCE_DATE, SOURCE_DATE), follow_symlinks=False)
+    # Deterministic cpio: sorted names, sequential inodes, root-owned, fixed times.
     initramfs = work / "initramfs"
-    names = [".", *sorted(str(p.relative_to(guest)) for p in guest.rglob("*"))]
-    with initramfs.open("wb") as output:
-        run(["/usr/bin/cpio", "-0", "-o", "-H", "newc", "--owner", "0:0"], cwd=guest,
-            input=("\0".join(names) + "\0").encode(), stdout=output)
+    write_newc(guest, initramfs)
     return image, initramfs
+
+
+def write_newc(root: Path, destination: Path) -> None:
+    """Deterministic cpio "newc" archive of `root`: sorted names, sequential inodes, root-owned, fixed times.
+
+    The system cpio records the build directory's inode numbers, so two builds of the same tree
+    differ. Nothing here depends on the filesystem except names, modes, sizes and contents.
+    """
+    def field(value: int) -> bytes:
+        return b"%08X" % value
+
+    def pad(length: int) -> bytes:
+        return b"\0" * (-length % 4)
+
+    entries = [root] + sorted(root.rglob("*"), key=lambda p: str(p.relative_to(root)))
+    with destination.open("wb") as out:
+        for inode, path in enumerate(entries, start=1):
+            name = b"." if path == root else str(path.relative_to(root)).encode()
+            status = path.lstat()
+            if path.is_symlink():
+                data = os.readlink(path).encode()
+            elif path.is_file():
+                data = path.read_bytes()
+            else:
+                data = b""
+            mode = status.st_mode & 0o170777
+            header = (b"070701" + field(inode) + field(mode) + field(0) + field(0) + field(1) + field(SOURCE_DATE)
+                      + field(len(data)) + field(0) + field(0) + field(0) + field(0) + field(len(name) + 1) + field(0))
+            out.write(header + name + b"\0" + pad(110 + len(name) + 1) + data + pad(len(data)))
+        trailer = b"TRAILER!!!"
+        out.write(b"070701" + field(0) * 4 + field(1) + field(0) * 8 + field(len(trailer) + 1) + field(0)
+                  + trailer + b"\0" + pad(110 + len(trailer) + 1))
 
 
 def build_cli_bundle(out_file: Path, defines: dict[str, str], bun: str) -> None:
@@ -256,6 +283,10 @@ def main() -> int:
         shutil.rmtree(out)
     out.mkdir(parents=True)
     started = datetime.datetime.now(datetime.timezone.utc)
+    # The manifest inside the archive carries the commit's time, not the wall clock, so that the same
+    # commit and inputs produce the same archive.
+    committed = datetime.datetime.fromtimestamp(
+        int(capture(["git", "show", "-s", "--format=%ct", "HEAD"], cwd=ROOT)), datetime.timezone.utc)
 
     inputs = fetch_inputs(args.cache)
     work = Path(tempfile.mkdtemp(prefix="bw-release-build-"))
@@ -343,7 +374,7 @@ def main() -> int:
             "version": version,
             "candidate_commit": commit,
             "target": "macos-arm64",
-            "built_at": started.isoformat(),
+            "built_at": committed.isoformat(),
             "build_host": {
                 "macos": capture(["sw_vers", "-productVersion"]),
                 "build": capture(["sysctl", "-n", "kern.osversion"]),

@@ -1,5 +1,40 @@
 # Bashwink — Test Evidence Register
 
+## Persistent VM project sessions and reviewed apply (2026-11-24)
+
+Source `34a78e42b1052ed4c6a12ea00b00a179d47266dc`. macOS arm64 27.0.1 (26A434),
+Bun 1.4.4, OpenCode 2.3.2. The installed project fixture used a disposable top-level
+TypeScript Git project and the guest-only mock.
+
+| Command or control | Exit | Observed result |
+| --- | ---: | --- |
+| `python3 fixtures/native-offline/vm-boundary.py <Alpine inputs> --opencode-inputs <runtime inputs> --project-cli` | 0 | Real installed PTY modified two files, added one, deleted one and ran an approved guest test. The original host checkout remained unchanged through coding and both restarts. Both `--continue` and `--session` restored the same OpenCode conversation, task plan, staged files, and evidence prefix. |
+| Launcher SIGKILL and state refusal in the project fixture | harness 0 | A stopped orphan VM owner retained the project lock and refused review after launcher SIGKILL. After owner shutdown the last sealed checkpoint reopened. Corrupt state and a session ID from a different Git checkout were refused. The independently sampled detached guest heartbeat stopped when the VM retired. |
+| Installed review and apply | harness 0 | Full preview distinguished added, modified and deleted files. Decline and SIGKILL at preview left the checkout unchanged. An occupied new-file path blocked apply. An explicitly selected one-file apply left the other candidate paths unchanged. |
+| Approved apply interruption and recovery | harness 0 | Test subprocesses were SIGKILLed after approval before mutation and after the first file mutation. Installed `sandbox vm-recover` reconciled the approved batches. Retry kept the already installed inode. Three durable receipts identified the four exact resulting file states, including the deletion. Focused tests also exercised corrupt journals, interruption after durable completion, symlinks, hardlinks, and a concurrent change at the replacement boundary. |
+| Installed `sandbox vm-verify` | refusal 3, clean run 0 | A modified protected host test was refused. A fresh VM ran `accept.test.ts` against the independently read final host source bytes and reported one pass. The checkout diff and unapproved file canaries matched the fixture expectations. |
+| Bun test, typecheck, Oxlint, formatting and lint gate | 0 each | 418 passed across 25 files and 1,233 assertions. Six lint gate checks passed. The ten focused journal tests passed. |
+| Pinned readiness, lifecycle, TaskContract and recovery fixtures | 0 each | 11, 19, 14 and 10 checks. Installed ordinary PTY, original installed VM, independent VM lifetime, and Seatbelt session, lifecycle and export fixtures also passed. |
+| `bun run verify:evidence <saved-project-evidence>` | 0 | Independent check verified 19 chain entries and four distinct boot identities. |
+| Release validator unit controls and external-alpha gate | 0 and 1 | Four native and five alpha controls passed. The gate refused external release. No hosted rerun was started. |
+
+The verification record binds the test to fixture Git base
+`abcda1336e3cdf2e46da7229b38ad7da43cd155a` and original protected
+`accept.test.ts` SHA-256
+`6cba73eb11236f633095f5815801a22e5783913adf4253453fb2c97e172dbe9c`.
+Final source SHA-256 values were `15eca2fb141b255da42c6cd4c7d5b72c85374a803d748731950ed80ef3498be6`
+for `one.ts`, `7888e8f34a30cf434ad16075eafbda22550fb37579688f212e6502197946134e`
+for `two.ts`, and `8d5e665ef7e98461c1846569605c7a96a6b70737e0b5822e6040ed3b1c81c7b9`
+for `new.ts`. `obsolete.ts` was absent. The protected acceptance test ran in its
+own VM with the originally captured test bytes and no model session.
+
+The profile covers bounded tracked top-level text files and compatible fresh VM
+instances. Interrupted sessions retain the last sealed checkpoint. Multi-file
+apply is visible one file at a time. An early crash before publishing the apply
+staging directory identity remains quarantined before source mutations. Automated
+baseline refresh after apply, broader workspace support, and power-loss behavior
+remain unverified. BW-031 and BW-032 remain In progress.
+
 ## v0.1.0-alpha freeze, VM runtime and installed entry (2026-11-24)
 
 Freeze source `f69266bd32c63e7820fd58585fb36cb981588d74`. CLI fixes

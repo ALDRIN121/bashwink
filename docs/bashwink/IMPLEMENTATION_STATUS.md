@@ -45,11 +45,13 @@ remains open. The ordinary local backend still runs commands with the user's hos
 **BW-031 and BW-032 remain In progress (PARTIAL).** The experimental macOS file-only
 offline profile has tested Seatbelt confinement and stage protection through launcher
 SIGKILL. Shell-capable startup is disabled after the detached-writer failure.
-File-only single-file export now has interruption reconciliation. A disposable
-Virtualization.framework guest demonstrated detached-writer teardown and then ran
-the pinned OpenCode TUI with a real file edit and an approved shell call against a
-guest mock. Packaged shell admission, persistent VM stages, and qualification remain
-open. [Mac-only alpha scope](releases/v0.1.0-alpha/RELEASE_READINESS.md)
+File-only Seatbelt export has interruption reconciliation. The locally provisioned
+Apple Silicon VM profile persists bounded Git project files and OpenCode sessions
+after clean shutdown. Host review supports selected additions, edits and deletions.
+The per-file journal and receipts support interrupted apply, and protected tests
+run in a fresh VM against bytes independently captured from the host. The wider
+release workspace workflow and platform qualification remain open.
+[Mac-only alpha scope](releases/v0.1.0-alpha/RELEASE_READINESS.md)
 Ubuntu qualification, live provider connectivity, and external alpha remain blocked.
 [Qualification results](BW-032_QUALIFICATION_RESULTS.md).
 

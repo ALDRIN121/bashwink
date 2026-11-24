@@ -124,6 +124,22 @@ release-tier overlay in the native matrix and requires all existing macOS and
 Ubuntu regression CI jobs at the candidate SHA. The broader BW-032 matrix retains
 its original platform requirements. [Release checklist](ALPHA_RELEASE_CHECKLIST.md)
 
+## Persistent VM project checkpoints and apply
+
+The offline project profile keeps the last stopped, verified VM checkpoint under
+the checkout identity and exact asset profile. Each restart seeds a fresh NIC-free
+guest disk. The VM owner inherits the host project lock so review stays unavailable
+through launcher death until the workload has stopped. Corrupt checkpoints and
+foreign session IDs are refused.
+
+Approval binds a selected text diff to per-file identities and hashes. Host
+application uses directory-relative filesystem operations, a durable progress
+journal, and committed receipts. Visibility is per file. Recovery resumes only
+an approved batch whose observed filesystem state matches its journal. Independent
+test verification copies the current host sources and original protected test
+bytes into a fresh VM. It records the test and source hashes, Git revision and
+actual exit. [Test evidence](TEST_EVIDENCE.md)
+
 ## Decision template
 
 ### ADR-XXX — Decision title

@@ -94,3 +94,32 @@ test("an expired deadline terminates and reaps a real managed child", async () =
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
+test("bounded cancellation reaps an owned process that handles and ignores TERM", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "bw-process-term-"))
+  try {
+    const result = await runWithBackend(
+      localBackend,
+      {
+        ...request,
+        cwd: directory,
+        args: [
+          "-e",
+          `
+          const fs = require("node:fs");
+          process.on("SIGTERM", () => fs.writeFileSync("term", "ignored"));
+          fs.writeFileSync("pid", String(process.pid));
+          setInterval(() => {}, 100);
+        `,
+        ],
+      },
+      { timeoutMs: 700 },
+    )
+    expect(result).toMatchObject({ outcome: "timed-out", exitCode: 124 })
+    expect(readFileSync(path.join(directory, "term"), "utf8")).toBe("ignored")
+    const pid = Number(readFileSync(path.join(directory, "pid"), "utf8"))
+    expect(() => process.kill(pid, 0)).toThrow()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})

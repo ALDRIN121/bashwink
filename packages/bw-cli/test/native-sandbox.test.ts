@@ -72,3 +72,21 @@ test("staged export requires a recognized stage before reading any destination",
   expect(result.exitCode).toBe(3)
   expect(result.stderr.toString()).toContain("offline stage is missing or unrecognized")
 })
+
+test("shell-capable offline stages fail closed without starting the mock or runtime", () => {
+  const result = Bun.spawnSync([process.execPath, cli, "sandbox", "offline", "12345"])
+  expect(result.exitCode).toBe(3)
+  expect(result.stderr.toString()).toContain("shell-capable native stages are disabled")
+})
+
+test("stale-stage retirement refuses unregistered paths", () => {
+  const result = Bun.spawnSync([
+    process.execPath,
+    cli,
+    "sandbox",
+    "recover",
+    "/private/tmp/bashwink-offline-missing",
+  ])
+  expect(result.exitCode).toBe(3)
+  expect(result.stderr.toString()).toContain("offline stage is missing or unrecognized")
+})

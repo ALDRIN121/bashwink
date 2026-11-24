@@ -26,6 +26,11 @@ export interface RuntimeLauncher {
   server(command: string): string[]
   client(command: string, args: readonly string[]): string[]
   readonly serverPort: number
+  readonly lifetime?: {
+    readonly fd: number
+    verify(pid: number): void
+    attached(): void
+  }
 }
 
 export class ReadinessError extends Error {}
@@ -168,14 +173,21 @@ export async function startPrivateServer(
   const authorization = (value: string) =>
     `Basic ${Buffer.from(`opencode:${value}`).toString("base64")}`
   let admission: ReturnType<typeof startAdmission> | undefined
+  let accepting = true
+  const gate = Promise.withResolvers<boolean>()
+  if (launcher?.lifetime === undefined) gate.resolve(true)
+  let admissionStop: ReturnType<NonNullable<typeof admission>["stop"]> | undefined
+  const closeAdmission = async () => {
+    accepting = false
+    gate.resolve(false)
+    if (admission !== undefined) await (admissionStop ??= admission.stop(true))
+  }
 
   let child: Bun.Subprocess<"pipe", "pipe", "ignore">
   try {
     child = Bun.spawn(launcher?.server(command) ?? [command, "serve", "--stdio", "--port", "0"], {
       cwd: request.workspace,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "ignore",
+      stdio: ["pipe", "pipe", "ignore", ...(launcher?.lifetime ? [launcher.lifetime.fd] : [])],
       env: {
         ...environment,
         OPENCODE_PASSWORD: password,
@@ -207,7 +219,7 @@ export async function startPrivateServer(
 
   const stopping = async () => {
     try {
-      await admission?.stop(true)
+      await closeAdmission()
       // Intentional lease closure permits orderly plugin teardown.
       writeFileSync(retiring, "", { mode: 0o600 })
     } finally {
@@ -230,6 +242,11 @@ export async function startPrivateServer(
   let stopPromise: Promise<void> | undefined
   return {
     exited: child.exited,
+    closeAdmission,
+    openAdmission() {
+      if (!accepting) throw new ReadinessError("offline admission has already closed")
+      gate.resolve(true)
+    },
     async ready(cancel: AbortSignal) {
       const signal = AbortSignal.any([cancel, AbortSignal.timeout(12_000)])
       let stage = "waiting for the owned server endpoint"
@@ -326,6 +343,8 @@ export async function startPrivateServer(
                 )
                   throw failed()
               }
+              stage = "validating server lifetime ownership"
+              launcher?.lifetime?.verify(child.pid)
               stage = "opening the local session endpoint"
               if (signal.aborted || child.exitCode !== null || child.signalCode !== null)
                 throw failed()
@@ -335,6 +354,7 @@ export async function startPrivateServer(
                 headers.Authorization,
                 authorization(clientPassword),
                 request.workspace,
+                async () => (await gate.promise) && accepting,
               )
               return { url: admission.url.origin, password: clientPassword }
             }

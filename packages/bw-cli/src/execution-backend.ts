@@ -90,11 +90,13 @@ export const makeBackend = (
     }
     const cancel = async () => {
       controller.abort()
+      let results: PromiseSettledResult<void | undefined>[]
       try {
-        await stopClient()
+        await server?.closeAdmission()
       } finally {
-        await server?.stop()
+        results = await Promise.allSettled([stopClient(), server?.stop()])
       }
+      for (const stopped of results) if (stopped.status === "rejected") throw stopped.reason
     }
     return {
       async execute() {
@@ -129,10 +131,26 @@ export const makeBackend = (
         child = Bun.spawn(launcher?.client(request.command, args) ?? [request.command, ...args], {
           cwd: request.cwd,
           env,
-          stdin: "inherit",
-          stdout: "inherit",
-          stderr: "inherit",
+          stdio: [
+            "inherit",
+            "inherit",
+            "inherit",
+            ...(launcher?.lifetime ? [launcher.lifetime.fd] : []),
+          ],
         })
+        if (launcher?.lifetime !== undefined) {
+          try {
+            launcher.lifetime.verify(child.pid)
+            if (child.exitCode !== null || child.signalCode !== null)
+              throw new Error("owned client already exited")
+            launcher.lifetime.attached()
+            server?.openAdmission()
+          } catch {
+            throw new ReadinessError(
+              "could not certify both owned native processes before admission",
+            )
+          }
+        }
         const exited = child.exited
         const code = await (server === undefined
           ? exited

@@ -39,6 +39,12 @@ def process_identity(pid):
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+def process_relationship(pid):
+    result = subprocess.check_output(["/bin/ps", "-p", str(pid), "-o", "ppid=,pgid=,uid="], text=True)
+    parent, group, uid = map(int, result.split())
+    return {"pid": pid, "parent": parent, "group": group, "session": os.getsid(pid), "uid": uid}
+
+
 def run(installed, runtime, output, lifecycle, stage_file=False):
     output.mkdir(parents=True, exist_ok=True)
     log_path = output / "mock.jsonl"
@@ -125,7 +131,7 @@ def run(installed, runtime, output, lifecycle, stage_file=False):
                 (stage / "work/detached.sh").write_text(
                     "exec 9<> ./detached.fifo\n"
                     "set -m\n"
-                    "(exec -a BashwinkDetachedFixture /bin/bash -c 'read -r -t 15 token <&9') "
+                    "(exec -a BashwinkDetachedFixture /bin/bash -c 'read -r -t 15 token <&9 && printf alive > detached-write') "
                     "</dev/null >/dev/null 2>&1 &\n"
                     "child=$!\n"
                     "disown \"$child\"\n"
@@ -243,6 +249,8 @@ def run(installed, runtime, output, lifecycle, stage_file=False):
                 detached_identity = process_identity(detached_pid)
                 assert detached_identity and "BashwinkDetachedFixture" in detached_identity, detached_identity
                 detached = (detached_pid, detached_identity)
+                print("Observed before shutdown", process_relationship(pid),
+                      process_relationship(server_pid), process_relationship(detached_pid))
             os.write(master, b"\x04")
 
             result = wait_for(finished, 8)
@@ -265,10 +273,14 @@ def run(installed, runtime, output, lifecycle, stage_file=False):
                 survived = process_identity(detached_pid) == detached_identity
                 print(f"OBSERVED: detached fixture survived owned TUI and server shutdown: {survived}")
                 if survived:
+                    print("Observed after shutdown", process_relationship(detached_pid))
                     # End only our bounded fixture via its private FIFO, never by a saved PID.
                     with os.fdopen(os.open(detached_fifo, os.O_WRONLY | os.O_NONBLOCK), "w") as fifo:
                         fifo.write("done\n")
                     assert wait_for(lambda: process_identity(detached_pid) != detached_identity, 5)
+                    assert (stage / "work/detached-write").read_text() == "alive"
+                    assert hashlib.sha256(canary.read_bytes()).hexdigest() == fingerprint
+                    print("OBSERVED: the surviving child wrote inside the disposable stage after shutdown")
             return stage
         finally:
             if master is not None:
@@ -312,6 +324,13 @@ if __name__ == "__main__":
     parser.add_argument("runtime", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--lifecycle", choices=["coding", "startup", "ctrl-c", "server-crash", "abrupt", "timeout", "detached"], default="coding")
+    parser.add_argument("--baseline-shell", action="store_true", help="historical build only: reproduce the removed shell-capable fixture")
     args = parser.parse_args()
     directory = args.output or Path(tempfile.mkdtemp(prefix="bw-offline-pty-"))
-    run(args.installed.resolve(), args.runtime.resolve(), directory.resolve(), args.lifecycle)
+    if args.lifecycle == "detached" and not args.baseline_shell:
+        parser.error("detached reproduction requires --baseline-shell and the historical build")
+    if not args.baseline_shell:
+        directory.mkdir(parents=True, exist_ok=True)
+        with (directory / "task.txt").open("x") as task:
+            task.write("Disposable file-only lifecycle input\n")
+    run(args.installed.resolve(), args.runtime.resolve(), directory.resolve(), args.lifecycle, stage_file=not args.baseline_shell)

@@ -1,4 +1,10 @@
 import {
+  acquireNativeLifetime,
+  recordNativeLifetime,
+  retireNativeActivation,
+  verifyNativeHolder,
+} from "./native-lifetime.js"
+import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -70,7 +76,10 @@ export async function runNativeOffline(options: ReturnType<typeof parseOffline>,
   const { stage, requested, mockPort, stageFile } = options
   if (stage !== undefined && readStage(stage).destination === undefined)
     throw new Error("shell-capable fixture stages cannot be reopened")
-  const recoveryRules = stageFile || stage !== undefined ? RECOVERY_RULES : ""
+  if (stage === undefined && !stageFile)
+    throw new Error(
+      "shell-capable native stages are disabled: use --stage-file for the no-fork profile",
+    )
   if (process.platform !== "darwin") throw new Error("offline coding requires macOS Seatbelt")
   if (!process.stdin.isTTY || !process.stdout.isTTY)
     throw new Error("offline coding requires an interactive terminal")
@@ -105,16 +114,18 @@ export async function runNativeOffline(options: ReturnType<typeof parseOffline>,
       process.arch,
       PROFILE,
       OFFLINE_RULES,
-      recoveryRules,
+      RECOVERY_RULES,
       sha256(runtimeBytes),
       pluginHashes,
     ]),
   )
   const approved = stageFile ? snapshotDestination() : undefined
   const root = stage ?? realpathSync(mkdtempSync("/private/tmp/bashwink-offline-"))
-  const unlock = lockStage(root)
-  let release = true
+  const lifetime = acquireNativeLifetime(root, true)
+  let release = false
   try {
+    lockStage(root)
+    release = true
     const workspace = path.join(root, "work")
     const scratch = path.join(root, "scratch")
     const runtime = path.join(root, "opencode")
@@ -128,7 +139,7 @@ export async function runNativeOffline(options: ReturnType<typeof parseOffline>,
       readPaths: [workspace],
       allowedPaths: [workspace],
       forbiddenPaths: [scratch],
-      allowShell: recoveryRules === "",
+      allowShell: false,
     })
     if (stage === undefined) {
       for (const directory of [
@@ -203,7 +214,7 @@ export async function runNativeOffline(options: ReturnType<typeof parseOffline>,
           "websearch",
           "subagent",
           "automation",
-          ...(recoveryRules ? ["shell"] : []),
+          "shell",
         ].map((action) => ({ action, resource: "*", effect: "deny" })),
       }),
       BASHWINK_SCOPE_FILE: policy,
@@ -242,7 +253,7 @@ export async function runNativeOffline(options: ReturnType<typeof parseOffline>,
       "-D",
       `TTY=${tty}`,
       "-p",
-      PROFILE + OFFLINE_RULES + recoveryRules + rules,
+      PROFILE + OFFLINE_RULES + RECOVERY_RULES + rules,
       executable,
       ...argv,
     ]
@@ -251,7 +262,7 @@ export async function runNativeOffline(options: ReturnType<typeof parseOffline>,
       rmSync(runtime, { force: true })
       throw new Error("the confined runtime did not report the pinned OpenCode version")
     }
-    if (recoveryRules) {
+    {
       const shell = await execute(wrap("", ["-c", "exit 0"], "/bin/sh"), workspace, env)
       if (shell.exitCode === 0 || !/Operation not permitted|Permission denied/.test(shell.stderr)) {
         rmSync(runtime, { force: true })
@@ -269,6 +280,11 @@ export async function runNativeOffline(options: ReturnType<typeof parseOffline>,
       },
       {
         serverPort,
+        lifetime: {
+          fd: lifetime.fd,
+          verify: (pid) => verifyNativeHolder(lifetime, pid),
+          attached: () => recordNativeLifetime(root, lifetime, runId, profile),
+        },
         server() {
           return wrap(
             `
@@ -328,6 +344,10 @@ export async function runNativeOffline(options: ReturnType<typeof parseOffline>,
       rmSync(runtime, { force: true })
     }
   } finally {
-    if (release) unlock()
+    try {
+      if (release) retireNativeActivation(root)
+    } finally {
+      lifetime.close()
+    }
   }
 }

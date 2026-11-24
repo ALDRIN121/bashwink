@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import path from "node:path"
+import { acquireNativeLifetime } from "./native-lifetime.js"
 import { createInterface } from "node:readline/promises"
 import {
   directoryIdentity,
@@ -73,8 +74,10 @@ export async function exportNativeStage(root: string) {
   if (process.platform !== "darwin") throw new Error("staged export requires macOS")
   if (!process.stdin.isTTY || !process.stdout.isTTY)
     throw new Error("staged export requires explicit approval in an interactive terminal")
-  const unlock = lockStage(root)
+  const lifetime = acquireNativeLifetime(root, true)
+  let unlock: (() => void) | undefined
   try {
+    unlock = lockStage(root)
     const { destination } = readStage(root)
     if (destination === undefined) throw new Error("this stage has no approved host destination")
     const base = unchanged(destination)
@@ -181,6 +184,10 @@ export async function exportNativeStage(root: string) {
     }
     process.stdout.write("Applied staged task.txt.\n")
   } finally {
-    unlock()
+    try {
+      unlock?.()
+    } finally {
+      lifetime.close()
+    }
   }
 }

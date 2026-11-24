@@ -43,6 +43,7 @@ export function startAdmission(
   upstreamAuth: string,
   clientAuth: string,
   workspace: string,
+  admitted: () => Promise<boolean> = async () => true,
 ) {
   const refused = () =>
     Response.json(
@@ -74,6 +75,7 @@ export function startAdmission(
       const url = new URL(request.url)
       try {
         if (
+          !(await admitted()) ||
           request.headers.has("upgrade") ||
           !url.pathname.startsWith("/api/") ||
           !acceptedLocation(url, request, workspace)
@@ -113,6 +115,7 @@ export function startAdmission(
             return new Response(null, { status: 404 })
         } else return refused()
 
+        if (!(await admitted())) return refused()
         const headers = new Headers(request.headers)
         for (const header of ["host", "connection", "content-length", "accept-encoding"])
           headers.delete(header)

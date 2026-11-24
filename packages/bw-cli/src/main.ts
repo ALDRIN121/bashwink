@@ -51,6 +51,7 @@ import {
 } from "./execution-policy.js"
 import { executionTimeout, runWithBackend, selectBackend } from "./execution-backend.js"
 import { OFFLINE_USAGE, parseOffline, runNativeOffline } from "./native-offline.js"
+import { recoverClosedNativeStage } from "./native-lifetime.js"
 import { exportNativeStage } from "./native-export.js"
 import { probeNativeSandbox } from "./native-sandbox.js"
 
@@ -160,6 +161,19 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
           const message = error instanceof Error ? error.message : "offline startup failed"
           err(message)
           return { exitCode: message === OFFLINE_USAGE ? 2 : 3, handled: true }
+        }
+      }
+      if (rest[0] === "recover" && rest.length === 2) {
+        try {
+          out(
+            recoverClosedNativeStage(rest[1]!)
+              ? "Retired the closed native activation."
+              : "No native activation to retire.",
+          )
+          return { exitCode: 0, handled: true }
+        } catch (error) {
+          err(error instanceof Error ? error.message : "native stage recovery failed")
+          return { exitCode: 3, handled: true }
         }
       }
       if (rest[0] === "export" && rest.length === 2) {

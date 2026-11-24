@@ -54,6 +54,7 @@ import { OFFLINE_USAGE, parseOffline, runNativeOffline } from "./native-offline.
 import { recoverClosedNativeStage } from "./native-lifetime.js"
 import { exportNativeStage, recoverNativeExport } from "./native-export.js"
 import { probeNativeSandbox } from "./native-sandbox.js"
+import { offlineVmCapabilities, offlineVmSelected, runOfflineVm } from "./offline-vm.js"
 
 /** Value of `--flag value` or `--flag=value`, or undefined. First occurrence wins. */
 function flagOf(argv: readonly string[], flag: string): string | undefined {
@@ -108,6 +109,7 @@ function err(text: string): void {
  */
 export async function main(argv: readonly string[]): Promise<MainResult> {
   const [first, ...rest] = argv
+  const offlineVm = offlineVmSelected(MODULE_DIR)
 
   if (first === "--version" || first === "-v") {
     out(`bashwink ${VERSION}`)
@@ -126,6 +128,14 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
   // error. `stdout.isTTY` is the discriminator, and the message says how to force either
   // behaviour, so nobody has to guess which branch they hit.
   if (first === undefined) {
+    if (offlineVm) {
+      try {
+        return { exitCode: await runOfflineVm(MODULE_DIR), handled: true }
+      } catch (error) {
+        err(`offline VM: ${error instanceof Error ? error.message : String(error)}`)
+        return { exitCode: 3, handled: true }
+      }
+    }
     // Either stream being a terminal is enough: `bashwink < /dev/null` from a real terminal
     // should still start the TUI, and the runtime handles EOF on stdin itself. Requiring both
     // would refuse a legitimate interactive invocation.
@@ -207,7 +217,7 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
       return { exitCode: result.exitCode, handled: true }
     }
     case "doctor": {
-      const report = diagnose()
+      const report = diagnose({ offlineVm })
       out(renderDoctor(report))
       return { exitCode: report.exitCode, handled: true }
     }
@@ -270,6 +280,14 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
   }
 
   let runtimeArgs
+  if (offlineVm) {
+    if (first === "backend") {
+      out(JSON.stringify(offlineVmCapabilities, null, 2))
+      return { exitCode: 0, handled: true }
+    }
+    err("the offline VM currently supports bare interactive bashwink only")
+    return { exitCode: 3, handled: true }
+  }
   let backend
   let timeoutMs
   try {

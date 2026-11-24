@@ -14,8 +14,11 @@ import socket
 import subprocess
 import sys
 import tempfile
+import termios
 import time
 import zlib
+from recovery import terminal
+from run import process_identity, wait_for as wait_until
 
 
 FILES = Path(__file__).resolve().parent
@@ -149,7 +152,6 @@ def exercise_opencode(root, arguments, disk):
                 assert 1 in approved, "the shell request did not get an interactive approval"
                 send(b"\x04")
                 wait_for(lambda: observed(b"BW_VM_OPENCODE_PASS"), vm)
-                vm.send_signal(signal.SIGUSR1)
                 assert vm.wait(timeout=10) == 0
             finally:
                 if vm.poll() is None:
@@ -179,11 +181,186 @@ def exercise_opencode(root, arguments, disk):
     print("PASS: host inspected the exact result on the retired disk without mounting it")
 
 
+def prove_installed_cli(root, runner, image, initramfs, protected):
+    install = root / "bashwink"
+    library = install / "lib"
+    assets = library / "offline-vm"
+    assets.mkdir()
+    for name, source in (("vm-owner", runner), ("Image", image), ("initramfs", initramfs)):
+        source.rename(assets / name)
+    manifest = library / "offline-vm.json"
+
+    def write_manifest():
+        manifest.write_text(json.dumps({"version": 1, "sha256": {
+            name: digest(assets / name) for name in ("vm-owner", "Image", "initramfs")
+        }}))
+
+    write_manifest()
+    installed = install / "bin/bashwink"
+    child_sentinel = root / "host-runtime"
+    child_sentinel.write_text("#!/bin/sh\ntouch \"$HOME/host-runtime-ran\"\n")
+    child_sentinel.chmod(0o700)
+    environment = {
+        "PATH": os.environ["PATH"], "HOME": str(root), "TERM": "xterm-256color",
+        "BASHWINK_OPENCODE_BIN": str(child_sentinel),
+    }
+    project = root / "disposable-project"
+    project.mkdir()
+    task = project / "task.txt"
+    task.write_text("Fixture imported from the real host working directory\n")
+    initial = digest(task)
+    outside = digest(protected)
+    backend = subprocess.check_output([installed, "backend"], cwd=project, env=environment)
+    assert json.loads(backend)["mode"] == "apple-virtualization-offline"
+
+    def wait_for_output(contains, marker, timeout=30):
+        assert wait_until(lambda: contains(marker), timeout), f"missing PTY observation: {marker}"
+
+    def stage_of(capture):
+        match = re.search(rb"Bashwink offline VM stage: (/private/tmp/bashwink-vm-[A-Za-z0-9]+)", capture)
+        assert match, "installed CLI did not report a private stage"
+        return Path(os.fsdecode(match[1])) / "stage.raw"
+
+    def tick(disk):
+        with disk.open("rb") as source:
+            source.seek(1024)
+            marker = source.read(512).rstrip(b"\0")
+        return int(marker.strip()) if re.fullmatch(rb"[0-9]+\n", marker) else 0
+
+    def feed(master, text):
+        os.write(master, text.encode())
+        time.sleep(0.15)
+        os.write(master, b"\r")
+
+    def do_coding(master, contains, capture, label):
+        assert wait_until(lambda: contains("Ask anything"), 30), bytes(capture[-2500:])
+        assert contains(f"BW_VM_INPUT {initial}")
+        time.sleep(0.25)
+        feed(master, "Fix the disposable VM task")
+        approved = set()
+
+        def completed():
+            done = contains("VM fixture tool sequence completed")
+            for step in (0, 1):
+                marker = f"BW_VM_TOOL_{step}".encode()
+                if step not in approved and marker in capture:
+                    if b"Allow once" in bytes(capture).rsplit(marker, 1)[1]:
+                        os.write(master, b"\r")
+                        approved.add(step)
+            return done
+
+        try:
+            assert wait_until(completed, 22), f"PTY coding timed out after approvals {approved}"
+        finally:
+            (root / f"{label}.pty").write_bytes(capture)
+        assert 1 in approved, "host did not approve the actual shell request"
+        disk = stage_of(capture)
+        assert wait_until(lambda: tick(disk) >= 2, 5), "detached guest did not write"
+        return disk
+
+    def assert_retired(disk):
+        with disk.with_suffix(".raw.lock").open("rb") as lease:
+            fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            closed = tick(disk)
+            assert closed >= 2
+            time.sleep(0.8)
+            assert tick(disk) == closed, "detached guest was still writing"
+        assert digest(task) == initial and digest(protected) == outside
+        assert not (root / "host-runtime-ran").exists()
+
+    with terminal([installed], project, environment) as (_, master, contains, finish, capture):
+        terminal_before = termios.tcgetattr(master)
+        disk = do_coding(master, contains, capture, "normal")
+        os.write(master, b"\x04")
+        finish(0)
+        assert contains("HOST_VM_STOPPED")
+        assert termios.tcgetattr(master) == terminal_before
+    assert_retired(disk)
+    with disk.open("rb") as source:
+        assert read_fixture_stage(source.read(512)) == {
+            "task.txt": b"VM fixture edit\n", "shell-result.txt": b"VM shell ran\n",
+        }
+    print("PASS: bare installed Bashwink completed a real PTY edit and approved VM shell, then stopped its detached writer", flush=True)
+
+    with terminal([installed], project, environment) as (_, master, contains, finish, capture):
+        wait_for_output(contains, "Ask anything")
+        disk = stage_of(capture)
+        time.sleep(0.25)
+        feed(master, "Crash the disposable VM runtime")
+        try:
+            finish(3)
+        finally:
+            (root / "server-crash.pty").write_bytes(capture)
+        assert contains("BW_VM_GUEST_SERVER_KILLED")
+        assert contains("offline VM guest exited with status 3")
+        assert contains("HOST_VM_STOPPED")
+    assert _lock_available(disk)
+    assert digest(task) == initial and digest(protected) == outside
+    print("PASS: real guest OpenCode server crash stopped the VM and propagated exit 3", flush=True)
+
+    guardian = [sys.executable, "-u", "-c", """
+import subprocess, sys, time
+launcher = subprocess.Popen(sys.argv[1:])
+print(f"fixture launcher {launcher.pid}", flush=True)
+print(f"fixture exit {launcher.wait()}", flush=True)
+time.sleep(20)
+""", installed]
+    with terminal(guardian, project, environment) as (_, master, contains, _, capture):
+        disk = do_coding(master, contains, capture, "launcher-death")
+        match = re.search(rb"fixture launcher (\d+)", capture)
+        assert match
+        launcher = int(match[1])
+        identity = process_identity(launcher)
+        assert identity and process_identity(launcher) == identity
+        os.kill(launcher, signal.SIGKILL)
+        wait_for_output(contains, "fixture exit -9", 6)
+        wait_for_output(contains, "HOST_VM_STOPPED", 10)
+        assert wait_until(lambda: _lock_available(disk), 5)
+    assert_retired(disk)
+    print("PASS: installed launcher SIGKILL closed the owner lease and stopped the active detached writer", flush=True)
+
+    # A malformed runtime artifact passes the manifest hash check and exercises VZ startup.
+    kernel = assets / "Image"
+    valid_kernel = root / "valid-Image"
+    valid_manifest = manifest.read_bytes()
+    kernel.rename(valid_kernel)
+    try:
+        kernel.write_bytes(b"invalid VM kernel")
+        write_manifest()
+        with terminal([installed], project, environment) as (_, _, contains, finish, _):
+            finish(3)
+            assert contains("offline VM: VM owner exited with status")
+            assert not contains("Ask anything")
+        assert not (root / "host-runtime-ran").exists()
+        print("PASS: real VM initialization failure refused before tool dispatch without starting the host runtime", flush=True)
+        manifest.unlink()
+        with terminal([installed], project, environment) as (_, _, contains, finish, _):
+            finish(3)
+            assert contains("offline VM:") and not contains("Ask anything")
+        assert not (root / "host-runtime-ran").exists()
+        print("PASS: removing the VM manifest still refused instead of launching host OpenCode", flush=True)
+    finally:
+        valid_kernel.replace(kernel)
+        manifest.write_bytes(valid_manifest)
+
+
+def _lock_available(disk):
+    with disk.with_suffix(".raw.lock").open("rb") as lease:
+        try:
+            fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            return False
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("alpine", type=Path, help="directory containing the three pinned inputs")
     parser.add_argument("--opencode-inputs", type=Path, help="run the separate pinned OpenCode PTY fixture")
+    parser.add_argument("--installed-cli", action="store_true", help="exercise bare Bashwink from the built install")
     args = parser.parse_args()
+    if args.installed_cli and not args.opencode_inputs:
+        parser.error("--installed-cli requires --opencode-inputs")
     alpine = args.alpine.resolve()
     for name, expected in CHECKSUMS.items():
         assert digest(alpine / name) == expected, f"unexpected test input {name}"
@@ -228,9 +405,14 @@ def main():
     entitlements.write_text('''<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict><key>com.apple.security.virtualization</key><true/></dict></plist>''')
     subprocess.run(["swiftc", "-module-cache-path", root / "swift-cache",
-                    FILES / "vm-boundary.swift", "-o", runner], check=True)
+                    FILES.parents[1] / "packages/bw-cli/native/macos-vm-owner.swift",
+                    "-o", runner], check=True)
     subprocess.run(["codesign", "--force", "--sign", "-", "--entitlements", entitlements,
                     runner], check=True)
+    if args.installed_cli:
+        prove_installed_cli(root, runner, image, root / "initramfs", protected)
+        localhost.close()
+        return
     disk = root / "stage.raw"
     with disk.open("wb") as output:
         output.truncate(8 * 1024 * 1024)

@@ -6,6 +6,19 @@ import { fileURLToPath } from "node:url"
 
 const cli = fileURLToPath(new URL("../src/bin.ts", import.meta.url))
 
+test("an explicitly selected offline VM cannot fall through to host OpenCode", () => {
+  const result = Bun.spawnSync([process.execPath, cli], {
+    env: {
+      ...process.env,
+      BASHWINK_BACKEND: "vm",
+      BASHWINK_OPENCODE_BIN: "/missing-host-runtime",
+    },
+  })
+  expect(result.exitCode).toBe(3)
+  expect(result.stderr.toString()).toContain("offline VM")
+  expect(result.stderr.toString()).not.toContain("missing-host-runtime")
+})
+
 test("the sandbox probe rejects extra arguments and never executes a project launcher", () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "bw-native-"))
   try {

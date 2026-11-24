@@ -11,6 +11,21 @@ Bun.serve({
     if (route !== "/v1/chat/completions" || request.method !== "POST")
       return new Response(null, { status: 404 })
     const body = (await request.json()) as { messages: Message[]; tools: Tool[]; model: string }
+    if (JSON.stringify(body.messages).includes("Crash the disposable VM runtime")) {
+      const proofs = [
+        ...new Bun.Glob(".readiness-*/ready.json").scanSync("/state/bashwink/data/scopes"),
+      ]
+      if (proofs.length !== 1) throw new Error("expected one guest runtime proof")
+      const proof = await Bun.file(`/state/bashwink/data/scopes/${proofs[0]}`).json()
+      const pid = Number(proof.pid)
+      if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error("invalid runtime proof PID")
+      const command = (await Bun.file(`/proc/${pid}/cmdline`).text()).split("\0")
+      if (command[0] !== "/opt/opencode" || !command.includes("serve"))
+        throw new Error("runtime proof did not identify the guest server")
+      process.kill(pid, "SIGKILL")
+      console.log("BW_VM_GUEST_SERVER_KILLED")
+      return new Response(null, { status: 503 })
+    }
     const step = body.messages.filter((message) => message.role === "tool").length
     const tool = step === 0 ? "write" : "shell"
     const args =

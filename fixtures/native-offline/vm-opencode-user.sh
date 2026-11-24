@@ -17,6 +17,8 @@ for attempt in 1 2 3 4 5; do
 done
 /opt/bun /opt/bashwink/bashwink.js trust /workspace --by fixture
 /opt/bun /opt/bashwink/bashwink.js
-grep -q '"phase":"boot"' "$BASHWINK_HOME/data/evidence/evidence.jsonl"
-grep '"phase":"after"' "$BASHWINK_HOME/data/evidence/evidence.jsonl" | grep -q '"tool":"write"'
-grep '"phase":"after"' "$BASHWINK_HOME/data/evidence/evidence.jsonl" | grep -q '"tool":"shell"'
+if test -f shell-result.txt; then
+    grep -q '"phase":"boot"' "$BASHWINK_HOME/data/evidence/evidence.jsonl"
+    grep '"phase":"after"' "$BASHWINK_HOME/data/evidence/evidence.jsonl" | grep -q '"tool":"write"'
+    grep '"phase":"after"' "$BASHWINK_HOME/data/evidence/evidence.jsonl" | grep -q '"tool":"shell"'
+fi

@@ -103,6 +103,7 @@ export interface DoctorOptions {
   readonly env?: NodeJS.ProcessEnv
   /** Injected so the doctor itself is testable without a real repo. */
   readonly resolvedPaths?: Paths
+  readonly offlineVm?: boolean
 }
 
 /**
@@ -118,24 +119,32 @@ export function diagnose(options: DoctorOptions = {}): DoctorReport {
   const checks: Check[] = []
 
   // --- runtime -----------------------------------------------------------
-  try {
-    const runtime = resolveRuntime({ cwd })
+  if (options.offlineVm) {
     checks.push({
       id: "runtime",
       title: "OpenCode runtime",
-      status: "ok",
-      detail: `found ${runtime.command} (pinned ${PINNED_RUNTIME_VERSION}, via ${runtime.source})`,
+      status: "warn",
+      detail: `offline guest runtime is checked at startup (pinned ${PINNED_RUNTIME_VERSION})`,
     })
-  } catch (error) {
-    const message = error instanceof RuntimeNotFoundError ? error.message : String(error)
-    checks.push({
-      id: "runtime",
-      title: "OpenCode runtime",
-      status: "fail",
-      detail: message.split("\n")[0] ?? message,
-      fix: `bun add @opencode/cli@${PINNED_RUNTIME_VERSION}`,
-    })
-  }
+  } else
+    try {
+      const runtime = resolveRuntime({ cwd })
+      checks.push({
+        id: "runtime",
+        title: "OpenCode runtime",
+        status: "ok",
+        detail: `found ${runtime.command} (pinned ${PINNED_RUNTIME_VERSION}, via ${runtime.source})`,
+      })
+    } catch (error) {
+      const message = error instanceof RuntimeNotFoundError ? error.message : String(error)
+      checks.push({
+        id: "runtime",
+        title: "OpenCode runtime",
+        status: "fail",
+        detail: message.split("\n")[0] ?? message,
+        fix: `bun add @opencode/cli@${PINNED_RUNTIME_VERSION}`,
+      })
+    }
 
   // --- bun / node --------------------------------------------------------
   checks.push({
@@ -387,22 +396,30 @@ export function diagnose(options: DoctorOptions = {}): DoctorReport {
   }
 
   // --- execution boundary ----------------------------------------------
-  try {
-    const backend = selectBackend(env["BASHWINK_BACKEND"])
+  if (options.offlineVm) {
     checks.push({
       id: "execution-backend",
       title: "Execution boundary",
       status: "warn",
-      detail: `${backend.capabilities.mode}: approved commands run with host access`,
+      detail: "offline VM selected for bare interactive launches; assets are checked at startup",
     })
-  } catch (error) {
-    checks.push({
-      id: "execution-backend",
-      title: "Execution boundary",
-      status: "fail",
-      detail: error instanceof Error ? error.message : "requested execution backend unavailable",
-    })
-  }
+  } else
+    try {
+      const backend = selectBackend(env["BASHWINK_BACKEND"])
+      checks.push({
+        id: "execution-backend",
+        title: "Execution boundary",
+        status: "warn",
+        detail: `${backend.capabilities.mode}: approved commands run with host access`,
+      })
+    } catch (error) {
+      checks.push({
+        id: "execution-backend",
+        title: "Execution boundary",
+        status: "fail",
+        detail: error instanceof Error ? error.message : "requested execution backend unavailable",
+      })
+    }
 
   const docker = which("docker")
   checks.push({

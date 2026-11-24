@@ -48,6 +48,7 @@ function post(
 async function fixture(
   dependencies: ProviderRelayDependencies,
   check: (socket: string, relay: Awaited<ReturnType<typeof startProviderRelay>>) => Promise<void>,
+  timeoutMs = 120_000,
 ) {
   const directory = mkdtempSync(join(tmpdir(), "bw-pr-"))
   const socketPath = join(directory, "r.sock")
@@ -83,6 +84,7 @@ async function fixture(
           },
         ],
         maxRequests: 2,
+        timeoutMs,
       },
       dependencies,
     )
@@ -156,8 +158,162 @@ test("validates requests before selecting the pinned host and applying the host 
       expect(dispatched[0]?.body.toString()).not.toContain(capability)
       expect(JSON.parse(dispatched[0]!.body.toString()).max_tokens).toBe(20)
       expect(relay.usage.models.filter((entry) => entry.requests > 0)).toEqual([
-        { routeId: "chat", model: "allowed-model", requests: 1, inputTokens: 3, outputTokens: 2 },
+        {
+          routeId: "chat",
+          model: "allowed-model",
+          requests: 1,
+          inputTokens: 3,
+          outputTokens: 2,
+          cacheReadInputTokens: 0,
+          cacheWriteInputTokens: 0,
+        },
       ])
+    },
+  )
+})
+
+test("refuses oversized requests before dispatch", async () => {
+  await fixture(
+    {
+      resolve: resolvePublic,
+      async request() {
+        throw new Error("unexpected dispatch")
+      },
+    },
+    async (socket) => {
+      const result = await post(socket, {
+        body: { ...valid, messages: [{ role: "user", content: "x".repeat(4 * 1024 * 1024) }] },
+      })
+      expect(result.status).toBe(413)
+    },
+  )
+})
+
+test("refuses oversized provider responses", async () => {
+  await fixture(
+    {
+      resolve: resolvePublic,
+      async request() {
+        return {
+          status: 200,
+          contentType: "application/json",
+          body: text("x".repeat(16 * 1024 * 1024 + 1)),
+          cancel() {},
+        }
+      },
+    },
+    async (socket) => {
+      expect((await post(socket)).status).toBe(502)
+    },
+  )
+})
+
+test("aborts a stalled provider request at the configured deadline", async () => {
+  let aborted = false
+  await fixture(
+    {
+      resolve: resolvePublic,
+      async request(input) {
+        return await new Promise((_, reject) =>
+          input.signal.addEventListener(
+            "abort",
+            () => {
+              aborted = true
+              reject(new Error("cancelled"))
+            },
+            { once: true },
+          ),
+        )
+      },
+    },
+    async (socket) => {
+      expect((await post(socket)).status).toBe(504)
+      expect(aborted).toBe(true)
+    },
+    100,
+  )
+})
+
+test("cancels the upstream when a streaming client disconnects", async () => {
+  let aborted = false
+  let cancelled = false
+  await fixture(
+    {
+      resolve: resolvePublic,
+      async request(input) {
+        input.signal.addEventListener(
+          "abort",
+          () => {
+            aborted = true
+          },
+          { once: true },
+        )
+        return {
+          status: 200,
+          contentType: "text/event-stream",
+          body: (async function* () {
+            yield Buffer.from('data: {"choices":[]}\n\n')
+            await new Promise<void>((resolve) =>
+              input.signal.addEventListener("abort", () => resolve(), { once: true }),
+            )
+          })(),
+          cancel() {
+            cancelled = true
+          },
+        }
+      },
+    },
+    async (socket) => {
+      const body = JSON.stringify({ ...valid, stream: true })
+      await new Promise<void>((resolve, reject) => {
+        const outgoing = request(
+          {
+            socketPath: socket,
+            path: guestPath,
+            method: "POST",
+            headers: {
+              host: "127.0.0.1:8118",
+              authorization: `Bearer ${capability}`,
+              "content-type": "application/json",
+              "content-length": String(Buffer.byteLength(body)),
+            },
+          },
+          (response) =>
+            response.once("data", () => {
+              response.destroy()
+              resolve()
+            }),
+        )
+        outgoing.on("error", reject)
+        outgoing.end(body)
+      })
+      for (let attempt = 0; attempt < 20 && !cancelled; attempt++) await Bun.sleep(10)
+      expect(aborted).toBe(true)
+      expect(cancelled).toBe(true)
+    },
+  )
+})
+
+test("reports malformed and upstream server responses without exposing their bodies", async () => {
+  let count = 0
+  await fixture(
+    {
+      resolve: resolvePublic,
+      async request() {
+        return {
+          status: ++count === 1 ? 200 : 503,
+          contentType: "application/json",
+          body: text(credential),
+          cancel() {},
+        }
+      },
+    },
+    async (socket) => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await post(socket)
+        expect(result.status).toBe(502)
+        expect(result.body).not.toContain(credential)
+      }
     },
   )
 })
@@ -246,6 +402,39 @@ test("passes split stream chunks through and counts numeric final usage only onc
       expect(result.body).toContain("data: [DONE]")
       expect(relay.usage.inputTokens).toBe(5)
       expect(relay.usage.outputTokens).toBe(7)
+    },
+  )
+})
+
+test("attributes Anthropic cache input usage separately across stream events", async () => {
+  await fixture(
+    {
+      resolve: resolvePublic,
+      async request() {
+        return {
+          status: 200,
+          contentType: "text/event-stream",
+          body: text(
+            'data: {"type":"message_start","message":{"usage":{"input_tokens":2,"cache_read_input_tokens":80,"cache_creation_input_tokens":9}}}\n\ndata: {"type":"message_delta","usage":{"output_tokens":7}}\n\n',
+          ),
+          cancel() {},
+        }
+      },
+    },
+    async (socket, relay) => {
+      const result = await post(socket, {
+        path: "/relay/messages/messages",
+        body: {
+          model: "allowed-model",
+          messages: [{ role: "user", content: "hello" }],
+          stream: true,
+        },
+      })
+      expect(result.status).toBe(200)
+      expect(relay.usage.inputTokens).toBe(2)
+      expect(relay.usage.outputTokens).toBe(7)
+      expect(relay.usage.cacheReadInputTokens).toBe(80)
+      expect(relay.usage.cacheWriteInputTokens).toBe(9)
     },
   )
 })

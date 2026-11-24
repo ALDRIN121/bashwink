@@ -75,7 +75,7 @@ function restoreRelay(value: unknown, state: string) {
     string,
     { settings: { baseURL: string; apiKey: string }; models: Record<string, object> }
   > = Object.create(null)
-  const ids = new Set<string>()
+  const ids = new Map<string, string>()
   const modelRefs = new Set<string>()
   for (const value of routes) {
     const route = record(value)
@@ -84,7 +84,7 @@ function restoreRelay(value: unknown, state: string) {
       Object.keys(route).length !== 6 ||
       typeof id !== "string" ||
       !/^[A-Za-z0-9_-]{1,64}$/.test(id) ||
-      ids.has(id) ||
+      (ids.has(id) && ids.get(id) !== `${provider}:${protocol}`) ||
       typeof provider !== "string" ||
       !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(provider) ||
       typeof model !== "string" ||
@@ -101,7 +101,7 @@ function restoreRelay(value: unknown, state: string) {
     )
       throw new Error("invalid guest model relay route")
 
-    ids.add(id)
+    ids.set(id, `${provider}:${protocol}`)
     modelRefs.add(`${provider}/${model}`)
     const definition = (providers[provider] ??= {
       // Any inherited catalogue model lacking a mapped route reaches a path the relay denies.

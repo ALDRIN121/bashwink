@@ -102,6 +102,7 @@ test("relay restore rejects malformed routes before launching a runtime", () => 
   for (const relay of [
     { capability, defaultModel: "fixture/unlisted", routes },
     { capability, defaultModel: "fixture/chat", routes: [...routes, { ...routes[0], id: "99" }] },
+    { capability, defaultModel: "fixture/chat", routes: [routes[0], { ...routes[1], id: "0" }] },
     {
       capability,
       defaultModel: "fixture/chat",
@@ -115,4 +116,18 @@ test("relay restore rejects malformed routes before launching a runtime", () => 
       expect(existsSync(config)).toBe(false)
     })
   }
+})
+
+test("relay restore permits two models on the same provider route", () => {
+  withGuest((runGuest, config) => {
+    const shared = [{ ...routes[0] }, { ...routes[0], model: "another-chat" }]
+    const restored = runGuest("restore", {
+      relay: { capability, defaultModel: "fixture/chat", routes: shared },
+    })
+    expect(restored.exitCode).toBe(0)
+    const runtime = JSON.parse(readFileSync(config, "utf8"))
+    expect(runtime.providers.fixture.models["another-chat"].settings.baseURL).toBe(
+      "http://127.0.0.1:8118/relay/0",
+    )
+  })
 })

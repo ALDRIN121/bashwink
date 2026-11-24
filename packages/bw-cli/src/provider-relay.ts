@@ -437,6 +437,8 @@ interface Counter {
   requests: number
   inputTokens: number
   outputTokens: number
+  cacheReadInputTokens: number
+  cacheWriteInputTokens: number
 }
 
 function countUsage(record: Payload, usage: Counter): void {
@@ -450,6 +452,12 @@ function countUsage(record: Payload, usage: Counter): void {
     usage.inputTokens = Math.max(usage.inputTokens, input)
   if (integer(output, 0, Number.MAX_SAFE_INTEGER))
     usage.outputTokens = Math.max(usage.outputTokens, output)
+  const cacheRead = counts["cache_read_input_tokens"]
+  const cacheWrite = counts["cache_creation_input_tokens"]
+  if (integer(cacheRead, 0, Number.MAX_SAFE_INTEGER))
+    usage.cacheReadInputTokens = Math.max(usage.cacheReadInputTokens, cacheRead)
+  if (integer(cacheWrite, 0, Number.MAX_SAFE_INTEGER))
+    usage.cacheWriteInputTokens = Math.max(usage.cacheWriteInputTokens, cacheWrite)
 }
 
 function addCounts(target: Counter, current: Counter) {
@@ -457,6 +465,14 @@ function addCounts(target: Counter, current: Counter) {
   target.outputTokens = Math.min(
     Number.MAX_SAFE_INTEGER,
     target.outputTokens + current.outputTokens,
+  )
+  target.cacheReadInputTokens = Math.min(
+    Number.MAX_SAFE_INTEGER,
+    target.cacheReadInputTokens + current.cacheReadInputTokens,
+  )
+  target.cacheWriteInputTokens = Math.min(
+    Number.MAX_SAFE_INTEGER,
+    target.cacheWriteInputTokens + current.cacheWriteInputTokens,
   )
 }
 
@@ -664,12 +680,27 @@ export async function startProviderRelay(
     routes.set(requestPath, {
       route: { ...configured, endpoint },
       counters: new Map(
-        configured.models.map((model) => [model, { requests: 0, inputTokens: 0, outputTokens: 0 }]),
+        configured.models.map((model) => [
+          model,
+          {
+            requests: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadInputTokens: 0,
+            cacheWriteInputTokens: 0,
+          },
+        ]),
       ),
     })
   }
 
-  const total: Counter = { requests: 0, inputTokens: 0, outputTokens: 0 }
+  const total: Counter = {
+    requests: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheWriteInputTokens: 0,
+  }
   const lifetime = new AbortController()
   let concurrent = 0
   const server = createServer(
@@ -764,7 +795,13 @@ export async function startProviderRelay(
           safeError(response, 429, "provider rate limit reached")
           return
         }
-        const usage: Counter = { requests: 0, inputTokens: 0, outputTokens: 0 }
+        const usage: Counter = {
+          requests: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheWriteInputTokens: 0,
+        }
         try {
           await untilAborted(
             copyResponse(
@@ -829,6 +866,12 @@ export async function startProviderRelay(
       },
       get outputTokens() {
         return total.outputTokens
+      },
+      get cacheReadInputTokens() {
+        return total.cacheReadInputTokens
+      },
+      get cacheWriteInputTokens() {
+        return total.cacheWriteInputTokens
       },
       get models() {
         return [...routes.values()].flatMap(({ route, counters }) =>

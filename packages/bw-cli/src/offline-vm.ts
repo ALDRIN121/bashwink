@@ -281,7 +281,7 @@ async function launchOfflineVm(
     )
     syncDirectory(relay.projectRoot)
     process.stdout.write(
-      `VM provider usage: ${usage.requests}/${relay.provider.maxRequests} requests, ${usage.inputTokens} reported input tokens, ${usage.outputTokens} reported output tokens\n`,
+      `VM provider usage: ${usage.requests}/${relay.provider.maxRequests} requests, ${usage.inputTokens} reported input tokens, ${usage.cacheReadInputTokens} Anthropic cache-read input tokens, ${usage.cacheWriteInputTokens} Anthropic cache-write input tokens, ${usage.outputTokens} output tokens\n`,
     )
   }
 }

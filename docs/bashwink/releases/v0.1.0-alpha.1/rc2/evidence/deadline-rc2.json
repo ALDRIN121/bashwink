@@ -1,0 +1,48 @@
+{
+  "guest_deadline_ms": 1740000,
+  "host_timer_ms": 1800000,
+  "checks": [
+    {
+      "check": "the turn completed and edited files before the deadline",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "the session ended by itself with exit 0 (not the host timer's 124)",
+      "verdict": "PASS",
+      "detail": "status 0 after 1746s"
+    },
+    {
+      "check": "it ended near the guest deadline (29 minutes), not near the host timer (30)",
+      "verdict": "PASS",
+      "detail": "1746s; guest 1740s, host 1800s"
+    },
+    {
+      "check": "the user was told the limit was reached and the work saved",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "the saved checkpoint holds the files the turn edited",
+      "verdict": "PASS",
+      "detail": "['accept.test.ts', 'new.ts', 'one.ts', 'two.ts']"
+    },
+    {
+      "check": "the evidence log was saved and contains the turn's tool calls",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "the host project is unchanged until review",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "no VM owner or helper process remains",
+      "verdict": "PASS",
+      "detail": "{}"
+    }
+  ],
+  "elapsed_seconds": 1746.2,
+  "exit_status": 0
+}

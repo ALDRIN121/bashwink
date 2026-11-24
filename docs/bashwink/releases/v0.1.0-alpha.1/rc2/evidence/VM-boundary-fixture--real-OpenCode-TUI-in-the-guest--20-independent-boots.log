@@ -1,0 +1,74 @@
+# VM boundary fixture: real OpenCode TUI in the guest, 20 independent boots
+# command: <scratch>/venv/bin/python fixtures/native-offline/vm-boundary.py <tmp>/tmp.m40c5F7eL2/fixture-inputs --opencode-inputs <tmp>/tmp.m40c5F7eL2/fixture-inputs --repeat 20
+# started: 2026-11-24T19:45:22Z
+VM fixture output: <tmp>/bw-vm-boundary-5daaj5gi
+==> building bashwink 0.1.0-alpha.1 (20c8473) into <tmp>/bw-vm-boundary-5daaj5gi/bashwink
+==> done
+    <tmp>/bw-vm-boundary-5daaj5gi/bashwink/bin/bashwink
+
+    add to PATH:  export PATH="<tmp>/bw-vm-boundary-5daaj5gi/bashwink/bin:$PATH"
+    check it:     bashwink --version && bashwink doctor
+752100 blocks
+<tmp>/bw-vm-boundary-5daaj5gi/vm-boundary: replacing existing signature
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 1/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 2/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 3/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 4/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 5/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 6/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 7/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 8/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 9/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 10/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 11/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 12/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 13/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 14/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 15/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 16/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 17/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 18/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 19/20: pass
+PASS: pinned OpenCode rendered, streamed, edited and ran an approved shell tool in the NIC-free VM
+PASS: host inspected the exact result on the retired disk without mounting it
+REPEAT 20/20: pass
+REPEAT SUMMARY: 20 passed, 0 failed of 20
+# exit: 0

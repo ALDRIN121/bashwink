@@ -1,0 +1,46 @@
+--- normal
+PASS  normal exit: TUI reached, exit 0
+PASS  normal exit: no VM process left — {}
+PASS  normal exit: no stage directory left — set()
+--- ctrl-c
+PASS  Ctrl+C in the TUI ends the session — exited on Ctrl+C
+PASS  Ctrl+C: no VM process left — {}
+--- sigint
+PASS  SIGINT: launcher ends with an expected status — True
+PASS  SIGINT: the VM and its helper stop — {}
+PASS  SIGINT: an interrupted session keeps its stage for recovery, registered — {'bashwink-vm-HJa8jE'}
+PASS  SIGINT: `sandbox stages` lists it as removable (its session is gone) — would remove  /private/tmp/bashwink-vm-HJa8jE
+PASS  SIGINT: `sandbox stages --purge` removes exactly that stage — removed  /private/tmp/bashwink-vm-HJa8jE
+PASS  SIGINT: a new session starts afterwards
+--- sigterm
+PASS  SIGTERM: launcher ends with an expected status — True
+PASS  SIGTERM: the VM and its helper stop — {}
+PASS  SIGTERM: an interrupted session keeps its stage for recovery, registered — {'bashwink-vm-LsA28R'}
+PASS  SIGTERM: `sandbox stages` lists it as removable (its session is gone) — would remove  /private/tmp/bashwink-vm-LsA28R
+PASS  SIGTERM: `sandbox stages --purge` removes exactly that stage — removed  /private/tmp/bashwink-vm-LsA28R
+PASS  SIGTERM: a new session starts afterwards
+--- sigkill
+PASS  SIGKILL: launcher ends with an expected status — True
+PASS  SIGKILL: the VM and its helper stop — {}
+PASS  SIGKILL: an interrupted session keeps its stage for recovery, registered — {'bashwink-vm-XyB3kg'}
+PASS  SIGKILL: `sandbox stages` lists it as removable (its session is gone) — would remove  /private/tmp/bashwink-vm-XyB3kg
+PASS  SIGKILL: `sandbox stages --purge` removes exactly that stage — removed  /private/tmp/bashwink-vm-XyB3kg
+PASS  SIGKILL: a new session starts afterwards
+--- repeat
+PASS  10 consecutive sessions each reach the TUI and exit 0 — [4.42, 4.65, 4.5, 4.46, 4.47, 5.16, 5.77, 4.79, 4.4, 4.43]
+PASS  10 sessions: no VM process accumulates — {}
+PASS  10 sessions: no stage directory accumulates — set()
+PASS  10 sessions: no Bashwink launcher process remains — []
+--- no-space
+PASS  full state volume: the volume really is full — 0 bytes free
+PASS  full state volume: the launch refuses (exit 3) and never reaches the TUI — exit 3, volume free 0 bytes
+PASS  full state volume: the message names the real cause (no space) — isolated VM: ENOSPC: no space left on device, mkdir '/Volumes/bwfull/bw/data' (the failure could not be written to the startup log)
+PASS  full state volume: the launch stopped before any model request
+PASS  full state volume: no VM process or stage directory was created
+--- owner-fails
+PASS  a VM owner that fails to start: a clear status is shown — (3, 1, b'Execution mode: ISOLATED VM \xe2\x80\x94 the agent 
+PASS  a VM owner that fails to start: no relay request was possible and none is recorded
+PASS  a VM owner that fails to start: the stage is retained and registered — {'bashwink-vm-RyZQAk'}
+PASS  a VM owner that fails to start: its stage is purged through the registry
+PASS  a VM owner that fails to start: no VM process remains
+PASS  whole run: no new VM process survives — {}

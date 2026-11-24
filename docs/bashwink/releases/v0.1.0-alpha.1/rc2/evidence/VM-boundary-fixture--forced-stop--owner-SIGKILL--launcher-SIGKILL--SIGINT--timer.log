@@ -1,0 +1,21 @@
+# VM boundary fixture: forced stop, owner SIGKILL, launcher SIGKILL, SIGINT, timer
+# command: <scratch>/venv/bin/python fixtures/native-offline/vm-boundary.py <tmp>/tmp.m40c5F7eL2/fixture-inputs
+# started: 2026-11-24T19:44:18Z
+VM fixture output: <tmp>/bw-vm-boundary-a6r19kgp
+17126 blocks
+<tmp>/bw-vm-boundary-a6r19kgp/vm-boundary: replacing existing signature
+Guest detached-writer control ready after 1.50s
+PASS: forced-stop exit 0, detached writer stopped at 3
+Guest detached-writer control ready after 0.97s
+PASS: owner-kill exit -9, detached writer stopped at 6
+Guest detached-writer control ready after 0.97s
+PASS: reopened-after-kill exit 0, detached writer stopped at 9
+Guest detached-writer control ready after 0.97s
+PASS: launcher-kill exit -9, detached writer stopped at 12
+Guest detached-writer control ready after 0.97s
+PASS: reopened-after-launcher-kill exit 0, detached writer stopped at 15
+Guest detached-writer control ready after 0.97s
+PASS: interrupt exit 130, detached writer stopped at 18
+Guest detached-writer control ready after 0.97s
+PASS: timeout exit 124, detached writer stopped at 31
+# exit: 0

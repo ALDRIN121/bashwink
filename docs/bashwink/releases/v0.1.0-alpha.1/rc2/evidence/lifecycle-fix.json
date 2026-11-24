@@ -1,0 +1,131 @@
+{
+  "results": [
+    {
+      "check": "full state volume: the volume really is full",
+      "verdict": "PASS",
+      "detail": "0 bytes free"
+    },
+    {
+      "check": "full state volume: the launch refuses (exit 3) and never reaches the TUI",
+      "verdict": "PASS",
+      "detail": "exit 3, volume free 0 bytes"
+    },
+    {
+      "check": "full state volume: the message names the real cause (no space)",
+      "verdict": "PASS",
+      "detail": "isolated VM: ENOSPC: no space left on device, mkdir '/Volumes/bwfull/bw/data' (the failure could not be written to the startup log)"
+    },
+    {
+      "check": "full state volume: the launch stopped before any model request",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "full state volume: no VM process or stage directory was created",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "a VM owner that fails to start: a clear status is shown",
+      "verdict": "PASS",
+      "detail": "(3, 1, b'Execution mode: ISOLATED VM \\xe2\\x80\\x94 the agent "
+    },
+    {
+      "check": "a VM owner that fails to start: no relay request was possible and none is recorded",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "a VM owner that fails to start: the stage is retained and registered",
+      "verdict": "PASS",
+      "detail": "{'bashwink-vm-qZMpCA'}"
+    },
+    {
+      "check": "a VM owner that fails to start: its stage is purged through the registry",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "a VM owner that fails to start: no VM process remains",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "whole run: no new VM process survives",
+      "verdict": "PASS",
+      "detail": "{}"
+    }
+  ],
+  "start": {
+    "vm_processes": {
+      "34117": "/System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.a",
+      "34113": "<tmp>/bw-deadline-6e0j1zb0/ba"
+    },
+    "stages": [
+      "bashwink-vm-05scD0",
+      "bashwink-vm-4pPNai",
+      "bashwink-vm-76vLzL",
+      "bashwink-vm-7Wb6wY",
+      "bashwink-vm-9sPjec",
+      "bashwink-vm-Aff4dn",
+      "bashwink-vm-CE2lBJ",
+      "bashwink-vm-ChDW0j",
+      "bashwink-vm-DK0au9",
+      "bashwink-vm-HBiawX",
+      "bashwink-vm-KgFTkl",
+      "bashwink-vm-ONixnl",
+      "bashwink-vm-QvibV3",
+      "bashwink-vm-Rbznws",
+      "bashwink-vm-StOoWw",
+      "bashwink-vm-StOqNs",
+      "bashwink-vm-Tct2rn",
+      "bashwink-vm-UHYeYV",
+      "bashwink-vm-VWiKnj",
+      "bashwink-vm-aPfDIj",
+      "bashwink-vm-erytxo",
+      "bashwink-vm-gAJpyx",
+      "bashwink-vm-mgr7sZ",
+      "bashwink-vm-oJZ03L",
+      "bashwink-vm-oj51wb",
+      "bashwink-vm-rC3EqB",
+      "bashwink-vm-ts0Kz9",
+      "bashwink-vm-yff76j"
+    ]
+  },
+  "end": {
+    "vm_processes": {
+      "34117": "/System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.a",
+      "34113": "<tmp>/bw-deadline-6e0j1zb0/ba"
+    },
+    "stages": [
+      "bashwink-vm-05scD0",
+      "bashwink-vm-4pPNai",
+      "bashwink-vm-76vLzL",
+      "bashwink-vm-7Wb6wY",
+      "bashwink-vm-9sPjec",
+      "bashwink-vm-Aff4dn",
+      "bashwink-vm-CE2lBJ",
+      "bashwink-vm-ChDW0j",
+      "bashwink-vm-DK0au9",
+      "bashwink-vm-HBiawX",
+      "bashwink-vm-KgFTkl",
+      "bashwink-vm-ONixnl",
+      "bashwink-vm-QvibV3",
+      "bashwink-vm-Rbznws",
+      "bashwink-vm-StOoWw",
+      "bashwink-vm-StOqNs",
+      "bashwink-vm-Tct2rn",
+      "bashwink-vm-UHYeYV",
+      "bashwink-vm-VWiKnj",
+      "bashwink-vm-aPfDIj",
+      "bashwink-vm-erytxo",
+      "bashwink-vm-gAJpyx",
+      "bashwink-vm-mgr7sZ",
+      "bashwink-vm-oJZ03L",
+      "bashwink-vm-oj51wb",
+      "bashwink-vm-rC3EqB",
+      "bashwink-vm-ts0Kz9",
+      "bashwink-vm-yff76j"
+    ]
+  }
+}

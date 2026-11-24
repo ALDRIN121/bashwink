@@ -1,5 +1,32 @@
 # Bashwink — Test Evidence Register
 
+## v0.1.0-alpha.1 RC2 (2026-11-25)
+
+Candidate `20c8473b9a2b3bbff8f413a7e85acad5d7016007`, archive SHA-256
+`8acedf7f7ed1461cb9f6a065c06c096ce890e478879b5bc5950b1d40680c68be` (byte-identical across two builds). macOS 27.0.1
+(26A434), Apple M1, Docker present (not a clean host). Local runs, **not** hosted CI. Logs:
+`releases/v0.1.0-alpha.1/rc2/evidence/`; narrative: [RC2 report](releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md).
+
+| Command or control | Exit | Result |
+| --- | ---: | --- |
+| `bun test packages` | 0 | 515 pass, 0 fail (493 at RC1 plus stage registry 19, tui-mode 2, real-host refusal 1) |
+| Typecheck, Oxlint, format, lint negative controls, docs audit, register check, licence scope, gate tests | 0 each | pass |
+| `test_permission_dialogs.py` | 0 | 5 tests, from the real failing event sequence |
+| Runtime health, tool lifecycle, contract, idempotent resume, TUI entry (archive's FFmpeg-free macOS runtime) | 0 each | 11, 19, 14, 10; TUI renders |
+| `vm-boundary.py` basic, `--repeat 20` guest TUI, project sessions + relay | 0 each | pass; 20/20 boots |
+| Guest TUI fixture, 40 boots (fix) / 40 boots (old logic as control) | 0 / 1 | **40 pass** / **2 fail, 38 pass** |
+| `release_first_run.py` (quiet machine) | 0 | 25 stages pass incl. purge leaving 28 pre-existing stage directories untouched |
+| `release_unrestricted.py` | 0 | 15 checks incl. persistent indicator in home and session view |
+| `vm-acceptance.py`, `vm_egress_probe.py` on the RC2 image | 0 each | 9 controls; egress denied |
+| `lifecycle.py` | 0 | 38 checks (signals, stage recovery, 10 repeats, full HFS+ volume, failing VM owner) |
+| `deadline.py` (real 30-minute deadline) | 0 | session saved by the guest at 1,746 s, exit 0 |
+| Archive FFmpeg scan, reproducibility (`cmp` of two builds) | 0 each | no markers; byte-identical |
+| Strict manifest check | see below | refreshed with `scripts/refresh_docs_manifest.py --write` after intentional doc edits |
+| `verify_alpha_release.py` | 1 | refuses; every clean-host, live and CI row is BLOCKED/NOT_RUN |
+
+Not run: hosted CI, a clean host, live coding with a real key, a real unqualified macOS build, exhaustion at
+checkpoint-commit time, power loss, dependency vulnerability audit.
+
 ## v0.1.0-alpha.1 release candidate RC1 (2026-11-24 to 25)
 
 Candidate commit `13f003de321977d13bfac3839b8b721a01a95cef`; archive

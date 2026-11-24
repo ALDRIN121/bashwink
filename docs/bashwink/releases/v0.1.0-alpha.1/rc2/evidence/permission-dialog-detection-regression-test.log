@@ -1,0 +1,9 @@
+# permission-dialog detection regression test
+# command: python3 fixtures/native-offline/test_permission_dialogs.py
+# started: 2026-11-24T19:43:46Z
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.607s
+
+OK
+# exit: 0

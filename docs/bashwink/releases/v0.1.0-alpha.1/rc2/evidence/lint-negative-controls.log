@@ -1,0 +1,15 @@
+# lint negative controls
+# command: bun run lint:gate
+# started: 2026-11-24T19:43:46Z
+$ ./scripts/check_lint_gate.sh
+=== positive control: the tree lints clean ===
+PASS  tree lints clean (exit 0)
+PASS  lint scope 'packages' actually contained 78 file(s)
+=== negative control: a genuine violation is rejected ===
+PASS  fixture rejected with exit 1
+PASS  fixture rejected for no-unused-vars (a semantic rule actually fired)
+PASS  fixture rejected for no-debugger (a second independent rule fired)
+PASS  failure came from lint diagnostics, not from a broken invocation
+
+passed: 6  failed: 0
+# exit: 0

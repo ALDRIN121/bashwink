@@ -1,0 +1,9 @@
+PASS  the turn completed and edited files before the deadline
+   turn done at +26s; idling until the guest deadline ...
+PASS  the session ended by itself with exit 0 (not the host timer's 124) — status 0 after 1746s
+PASS  it ended near the guest deadline (29 minutes), not near the host timer (30) — 1746s; guest 1740s, host 1800s
+PASS  the user was told the limit was reached and the work saved
+PASS  the saved checkpoint holds the files the turn edited — ['accept.test.ts', 'new.ts', 'one.ts', 'two.ts']
+PASS  the evidence log was saved and contains the turn's tool calls
+PASS  the host project is unchanged until review
+PASS  no VM owner or helper process remains — {}

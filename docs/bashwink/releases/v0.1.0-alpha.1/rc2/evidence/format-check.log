@@ -1,0 +1,6 @@
+# format check
+# command: bun run format
+# started: 2026-11-24T19:43:46Z
+$ bun fmt --check packages
+All 82 files are formatted.
+# exit: 0

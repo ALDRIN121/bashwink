@@ -32,6 +32,12 @@ it. `--check` fails if it drifts from the register.
 
 <!-- END GENERATED:status -->
 
+## Direction change (2026-11-25)
+
+Standard native mode is now the default product and the VM is the optional sandbox ([ADR-015](DECISIONS.md)). RC2 (`20c8473b`) is the
+optional-sandbox macOS artifact: qualified on the engineering host, not on a clean host. Progress and next actions:
+[ALPHA_RELEASE_PROGRESS.md](ALPHA_RELEASE_PROGRESS.md). Task register unchanged (22 Done, 4 In progress, 65 Not started).
+
 ## v0.1.0-alpha.1 release candidate RC1 — gate evaluated, external alpha FAIL
 
 Feature work is frozen. The candidate (`13f003d`) adds a release build whose default is the

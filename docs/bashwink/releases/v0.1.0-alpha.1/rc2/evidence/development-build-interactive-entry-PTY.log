@@ -1,0 +1,15 @@
+# development-build interactive entry PTY
+# command: ./fixtures/interactive-entry/run.sh
+# started: 2026-11-24T19:44:11Z
+==> building bashwink 0.1.0-alpha.1 (20c8473) into <tmp>/bw-interactive-entry-v2phl2ut/install
+==> done
+    <tmp>/bw-interactive-entry-v2phl2ut/install/bin/bashwink
+
+    add to PATH:  export PATH="<tmp>/bw-interactive-entry-v2phl2ut/install/bin:$PATH"
+    check it:     bashwink --version && bashwink doctor
+PASS: fresh installed doctor, version, help, and noninteractive startup
+PASS: TUI rendered, attested git, and exited with 130
+PASS: TUI rendered, attested non-git, and exited with 130
+PASS: TUI rendered, attested git/deep/sub, and exited with 130
+PASS: installed doctor accepted the resulting evidence state
+# exit: 0

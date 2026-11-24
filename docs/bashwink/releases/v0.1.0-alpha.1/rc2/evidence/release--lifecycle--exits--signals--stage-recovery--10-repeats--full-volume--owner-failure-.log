@@ -1,0 +1,54 @@
+# release: lifecycle (exits, signals, stage recovery, 10 repeats, full volume, owner failure)
+# command: <scratch>/venv/bin/python fixtures/release/lifecycle.py build/rc2 --out <scratch>/verify-rc2/lifecycle.json
+# started: 2026-11-24T19:54:37Z
+--- normal
+PASS  normal exit: TUI reached, exit 0
+PASS  normal exit: no VM process left — {}
+PASS  normal exit: no stage directory left — set()
+--- ctrl-c
+PASS  Ctrl+C in the TUI ends the session — exited on Ctrl+C
+PASS  Ctrl+C: no VM process left — {}
+--- sigint
+PASS  SIGINT: launcher ends with an expected status — True
+PASS  SIGINT: the VM and its helper stop — {}
+PASS  SIGINT: an interrupted session keeps its stage for recovery, registered — {'bashwink-vm-Z3uebI'}
+PASS  SIGINT: `sandbox stages` lists it as removable (its session is gone) — would remove  /private/tmp/bashwink-vm-Z3uebI
+PASS  SIGINT: `sandbox stages --purge` removes exactly that stage — removed  /private/tmp/bashwink-vm-Z3uebI
+PASS  SIGINT: a new session starts afterwards
+--- sigterm
+PASS  SIGTERM: launcher ends with an expected status — True
+PASS  SIGTERM: the VM and its helper stop — {}
+PASS  SIGTERM: an interrupted session keeps its stage for recovery, registered — {'bashwink-vm-p66bsq'}
+PASS  SIGTERM: `sandbox stages` lists it as removable (its session is gone) — would remove  /private/tmp/bashwink-vm-p66bsq
+PASS  SIGTERM: `sandbox stages --purge` removes exactly that stage — removed  /private/tmp/bashwink-vm-p66bsq
+PASS  SIGTERM: a new session starts afterwards
+--- sigkill
+PASS  SIGKILL: launcher ends with an expected status — True
+PASS  SIGKILL: the VM and its helper stop — {}
+PASS  SIGKILL: an interrupted session keeps its stage for recovery, registered — {'bashwink-vm-FB6egE'}
+PASS  SIGKILL: `sandbox stages` lists it as removable (its session is gone) — would remove  /private/tmp/bashwink-vm-FB6egE
+PASS  SIGKILL: `sandbox stages --purge` removes exactly that stage — removed  /private/tmp/bashwink-vm-FB6egE
+PASS  SIGKILL: a new session starts afterwards
+--- repeat
+PASS  10 consecutive sessions each reach the TUI and exit 0 — [5.33, 5.37, 5.56, 5.62, 5.46, 5.17, 5.05, 4.93, 4.8, 4.68]
+PASS  10 sessions: no VM process accumulates — {}
+PASS  10 sessions: no stage directory accumulates — set()
+PASS  10 sessions: no Bashwink launcher process remains — []
+--- no-space
+PASS  full state volume: the launch refuses (nonzero) instead of hanging — exit 3, volume free 1667072 bytes
+FAIL  full state volume: the message names the real cause (no space) — isolated VM: the isolated VM needs an interactive terminal for its coding session No model request was made and no tool was dispatched. This failure was recorded in /Volumes/bwfull/bw/data/startup-failures.jsonl.
+PASS  full state volume: the launch stopped before any model request
+PASS  full state volume: no VM process or stage directory was created
+--- owner-fails
+Traceback (most recent call last):
+  File "<home>/Developer/bashwink/fixtures/release/lifecycle.py", line 294, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "<home>/Developer/bashwink/fixtures/release/lifecycle.py", line 283, in main
+    SCENARIOS[name](inst)
+  File "<home>/Developer/bashwink/fixtures/release/lifecycle.py", line 243, in scenario_owner_fails
+    subprocess.run([root / "bin/bashwink", *args], cwd=inst.project, env=env, check=True, capture_output=True)
+  File "<home>/miniforge3/lib/python3.12/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '[PosixPath('<tmp>/bw-lifecycle-ew6xi1uq/dev-install/bin/bashwink'), 'auth', 'add', 'commandcode', '--base-url', 'https://api.commandcode.ai/provider/v1', '--key-file', '<tmp>/bw-lifecycle-ew6xi1uq/bogus.key', '--model', 'claude-sonnet-5:anthropic']' returned non-zero exit status 127.
+# exit: 1

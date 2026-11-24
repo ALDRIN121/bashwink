@@ -1,0 +1,53 @@
+# tool lifecycle fixture (pinned runtime)
+# command: ./fixtures/tool-lifecycle/run.sh
+# started: 2026-11-24T19:44:00Z
+=== 1. start the local mock provider (no API key, offline) ===
+PASS  mock provider listening on 127.0.0.1:54170
+
+=== 2. configure the project to use it, and trust the workspace ===
+PASS  workspace prepared (plan + active task 'inspect')
+
+=== 3. run the REAL agent through the wrapper ===
+      Execution mode: DEVELOPMENT HOST (source build) — NOT ISOLATED. Approved commands run as you, with your files, network and credentials.
+      [0m
+      > build · mock-tool-model
+      [0m$ [0mprintf 'bw-mock-ok\n' && printf 'shell ran\n' > .bw-shell-canary
+      bw-mock-ok
+      > build · mock-tool-model
+      The shell permission probe is complete.
+      wrapper exit code: 0
+PASS  approved compound shell command created the canary
+PASS  evidence log was written at the default Bashwink location
+
+=== 4. the tool sequence is complete ===
+      before=1 after=1
+PASS  at least one 'before' event was recorded
+PASS  at least one 'after' event was recorded — the outcome is captured
+
+=== 5. before and after are joined on one call id, and the exit status is present ===
+      {"total":2,"befores":1,"afters":1,"matched":1,"exits":[0],"tools":["shell"],"linked":2,"reasoned":0,"bare":0,"taskIDs":["inspect"]}
+PASS  every after-event shares a call id with its before-event
+PASS  the shell exit status was captured (0)
+
+=== 6. every event is task-linked or explicitly unassigned ===
+PASS  no event is silently unattributed
+PASS  events were attributed to the active task
+=== 7. the planted secret is absent from the evidence log ===
+PASS  the planted secret never reached the log
+
+=== 8. the log is append-only across runs ===
+      lines:        5 ->       10
+PASS  the second run extended the log instead of rewriting it
+PASS  the hash chain still verifies after two runs
+
+=== 9. the interrupted task is still not verified ===
+PASS  running a tool did not verify the task
+
+=== 10. risky shell calls need approval and a native deny survives auto-approval ===
+PASS  unattended run requires shell approval by default
+PASS  unapproved shell left no canary
+PASS  explicit native shell denial removes shell even with auto-approval
+PASS  explicit denial left no canary under auto-approval
+PASS  the chain verifies after permission refusals
+passed: 19  failed: 0  skipped: 0
+# exit: 0

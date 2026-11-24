@@ -1,0 +1,35 @@
+# release gate validator (expected to refuse)
+# command: python3 scripts/verify_alpha_release.py --revision 20c8473b9a2b3bbff8f413a7e85acad5d7016007
+# started: 2026-11-24T19:56:45Z
+External v0.1.0-alpha.1 release FAIL
+- release manifest has no matching candidate commit
+- record one verified macOS Apple Silicon version and build
+- macos-arm64/clean-install: BLOCKED (Fresh-HOME, scrubbed-environment install from the exact archive passed on the engineering host, which has Docker and earlier Bashwink state. A clean Docker-free Apple Silicon host was not available.)
+- macos-arm64/interactive-mock: BLOCKED (Release-image project acceptance with a synthetic provider passed on the engineering host (9 controls). Clean-host acceptance was not run.)
+- macos-arm64/interactive-live-provider: BLOCKED (A live invalid-key request was rejected with 401 (1 request, 0 tokens). Live coding, model switching and cancellation were not run on this candidate: no credential was available.)
+- macos-arm64/file-and-link-policy: BLOCKED (Unit and acceptance controls passed on the engineering host. Clean-host qualification was not run.)
+- macos-arm64/subprocess-and-detached-cleanup: BLOCKED (Detached guest writer stopped at VM retirement in the release-image acceptance and boundary fixture. Cleanup after a live cancellation was not observed, and no clean host was available.)
+- macos-arm64/network-and-provider-transport: BLOCKED (In-guest egress probe and synthetic relay tests passed on the engineering host. Live transport beyond the 401 path and clean-host runs were not performed.)
+- macos-arm64/secret-isolation: BLOCKED (A synthetic credential was absent from transcripts, guest state and usage records. A real key was not available; clean-host run not performed.)
+- macos-arm64/approval-and-alternate-dispatch: BLOCKED (Release default, refusal and unrestricted-mode controls passed on the engineering host. Clean-host run not performed.)
+- macos-arm64/session-recovery-and-export: BLOCKED (SIGKILL, repeated recovery, consecutive batches and receipt controls passed on the engineering host. Power loss was not tested; clean-host run not performed.)
+- macos-arm64/unsupported-host-and-no-fallback: BLOCKED (Host verdict logic and asset refusal paths passed in tests and one real tampered-asset launch. A real unqualified macOS build was not available.)
+- macos-arm64/resource-limits: BLOCKED (Whole-workload resources were measured and the owner timer fired in the boundary fixture. The 30-minute deadline and full request-budget exhaustion were not run end to end; no clean host.)
+- macos-arm64/ci-or-reviewed-equivalent: NOT_RUN (Hosted CI was not run for the candidate: pushing was not authorized. Local equivalent verification is recorded but is not hosted CI.)
+- interactive-coding: BLOCKED (Release-image workflow passed with a synthetic provider and the first-run reached the TUI; live coding on the candidate was not run (no credential) and no clean host was available.)
+- real-provider: BLOCKED (Only an invalid-key request (401) was run live. Live coding, model switching, cancellation and interruption were not run.)
+- clean-install: BLOCKED (Install from the exact archive passed in a fresh HOME with a scrubbed environment on the engineering host. No clean Docker-free host.)
+- supported-platform: BLOCKED (One macOS build (27.0.1, 26A434) is listed, as an engineering host. It is not qualified on a clean host.)
+- shell-containment: BLOCKED (Egress probe and detached-writer controls passed on the engineering host; clean-host qualification is outstanding.)
+- host-access-denial: BLOCKED (Guest network, host path and raw-disk denial observed from inside the release guest on the engineering host; clean-host run outstanding.)
+- credential-protection: BLOCKED (Synthetic credential absent from guest state and transcripts; a real key was not available.)
+- session-recovery: BLOCKED (Passed on the engineering host with a synthetic provider; power loss and clean-host runs outstanding.)
+- reviewed-edits: BLOCKED (Reviewed multi-file apply, recovery and protected-test verification passed on the engineering host; clean-host run outstanding.)
+- critical-security-review: BLOCKED (No independent security review of the release path has been done, and the LGPL FFmpeg distribution question needs the owner's sign-off.)
+- regression: BLOCKED (The exact-candidate local run passed 22 of 23 steps. One legacy VM boundary fixture failed intermittently and its cause is unresolved.)
+- required-ci: NOT_RUN (Hosted CI was not run for the candidate: pushing was not authorized.)
+- release-archive: BLOCKED (A local archive was built from the candidate commit and its checksum recorded. It has not been installed on a clean host.)
+- documentation: BLOCKED (Tester documents are in the archive. They cannot be accepted until the live-provider, clean-host and licence items are resolved.)
+- feedback-channel: BLOCKED (Reporting instructions exist in the tester guide and SECURITY.md. The repository's private vulnerability reporting setting was not verified.)
+- missing GitHub Actions run and job reports
+# exit: 1

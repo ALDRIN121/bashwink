@@ -812,9 +812,9 @@
         "id": "clean-install",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
+        "commit": "20c8473b9a2b3bbff8f413a7e85acad5d7016007",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md",
         "verdict": "BLOCKED",
         "reason": "Fresh-HOME, scrubbed-environment install from the exact archive passed on the engineering host, which has Docker and earlier Bashwink state. A clean Docker-free Apple Silicon host was not available."
       },
@@ -822,9 +822,9 @@
         "id": "interactive-mock",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
+        "commit": "20c8473b9a2b3bbff8f413a7e85acad5d7016007",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md",
         "verdict": "BLOCKED",
         "reason": "Release-image project acceptance with a synthetic provider passed on the engineering host (9 controls). Clean-host acceptance was not run."
       },
@@ -832,19 +832,19 @@
         "id": "interactive-live-provider",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
+        "commit": "20c8473b9a2b3bbff8f413a7e85acad5d7016007",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md",
         "verdict": "BLOCKED",
-        "reason": "A live invalid-key request was rejected with 401 (1 request, 0 tokens). Live coding, model switching and cancellation were not run on this candidate: no credential was available."
+        "reason": "Live invalid-key rejection (401) passed on RC1 and the RC2 harness. Live coding, model switching and cancellation on RC2 were not run: the key file was not visible to the session."
       },
       {
         "id": "file-and-link-policy",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
+        "commit": "20c8473b9a2b3bbff8f413a7e85acad5d7016007",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md",
         "verdict": "BLOCKED",
         "reason": "Unit and acceptance controls passed on the engineering host. Clean-host qualification was not run."
       },
@@ -852,19 +852,19 @@
         "id": "subprocess-and-detached-cleanup",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
+        "commit": "20c8473b9a2b3bbff8f413a7e85acad5d7016007",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md",
         "verdict": "BLOCKED",
-        "reason": "Detached guest writer stopped at VM retirement in the release-image acceptance and boundary fixture. Cleanup after a live cancellation was not observed, and no clean host was available."
+        "reason": "RC2: detached guest writer stops at retirement; lifecycle run (38 checks) shows no VM process or stage left after normal exit, Ctrl+C, SIGINT, SIGTERM, SIGKILL, 10 repeats and a failed owner. Cleanup after a LIVE cancellation not observed; no clean host."
       },
       {
         "id": "network-and-provider-transport",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
+        "commit": "20c8473b9a2b3bbff8f413a7e85acad5d7016007",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md",
         "verdict": "BLOCKED",
         "reason": "In-guest egress probe and synthetic relay tests passed on the engineering host. Live transport beyond the 401 path and clean-host runs were not performed."
       },
@@ -872,9 +872,9 @@
         "id": "secret-isolation",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
+        "commit": "20c8473b9a2b3bbff8f413a7e85acad5d7016007",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md",
         "verdict": "BLOCKED",
         "reason": "A synthetic credential was absent from transcripts, guest state and usage records. A real key was not available; clean-host run not performed."
       },
@@ -882,9 +882,9 @@
         "id": "approval-and-alternate-dispatch",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
+        "commit": "20c8473b9a2b3bbff8f413a7e85acad5d7016007",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md",
         "verdict": "BLOCKED",
         "reason": "Release default, refusal and unrestricted-mode controls passed on the engineering host. Clean-host run not performed."
       },
@@ -892,44 +892,44 @@
         "id": "session-recovery-and-export",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
+        "commit": "20c8473b9a2b3bbff8f413a7e85acad5d7016007",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md",
         "verdict": "BLOCKED",
-        "reason": "SIGKILL, repeated recovery, consecutive batches and receipt controls passed on the engineering host. Power loss was not tested; clean-host run not performed."
+        "reason": "RC2: SIGKILL, repeated recovery, consecutive batches, receipts, stage registry recovery and the real 30-minute deadline (session saved at 1,746 s) passed on the engineering host. Power loss not tested; no clean host."
       },
       {
         "id": "unsupported-host-and-no-fallback",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
+        "commit": "20c8473b9a2b3bbff8f413a7e85acad5d7016007",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md",
         "verdict": "BLOCKED",
-        "reason": "Host verdict logic and asset refusal paths passed in tests and one real tampered-asset launch. A real unqualified macOS build was not available."
+        "reason": "RC2: host verdict logic and a bundle whose list excludes this Mac's real build refuse it with the real facts; tampered, missing and corrupt assets refuse real launches. A real, different unqualified macOS build was not available."
       },
       {
         "id": "resource-limits",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
+        "commit": "20c8473b9a2b3bbff8f413a7e85acad5d7016007",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md",
         "verdict": "BLOCKED",
-        "reason": "Whole-workload resources were measured and the owner timer fired in the boundary fixture. The 30-minute deadline and full request-budget exhaustion were not run end to end; no clean host."
+        "reason": "RC2: the 30-minute deadline was run end to end (saved at 1,746 s); owner timer, full state volume (ENOSPC refused cleanly) and 10 repeated sessions verified; whole-workload memory measured. Full request-budget exhaustion not run; no clean host."
       },
       {
         "id": "ci-or-reviewed-equivalent",
         "platform": "macos-arm64",
         "backend": "apple-virtualization",
-        "commit": "13f003de321977d13bfac3839b8b721a01a95cef",
+        "commit": "20c8473b9a2b3bbff8f413a7e85acad5d7016007",
         "policyDigest": null,
-        "evidence": "releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md",
+        "evidence": "releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md",
         "verdict": "NOT_RUN",
         "reason": "Hosted CI was not run for the candidate: pushing was not authorized. Local equivalent verification is recorded but is not hosted CI."
       }
     ],
-    "candidate": "13f003de321977d13bfac3839b8b721a01a95cef",
-    "hostNote": "Engineering host only (macOS 27.0.1 build 26A434, arm64, Docker installed). No clean Docker-free host was available; no row is PASS."
+    "candidate": "20c8473b9a2b3bbff8f413a7e85acad5d7016007",
+    "hostNote": "RC2 on the engineering host only (macOS 27.0.1 build 26A434, arm64, Docker installed). No clean Docker-free host and no live-coding credential were available; no row is PASS."
   }
 }

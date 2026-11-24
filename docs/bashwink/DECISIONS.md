@@ -242,3 +242,49 @@ it does not make the multi-file apply atomic.
 - **Consequences:** Stages created by RC1 and earlier are unregistered, so they are never deleted
   automatically. Registration happens before anything is written to a stage.
 - **Status:** Accepted.
+
+## ADR-015 — Standard native mode is the default; sandbox mode is optional
+
+- **Date / owner:** 2026-11-25, Aldrin Joseph (owner direction). **Supersedes** the parts of ADR-013 that made the
+  VM the default and macOS the only target. ADR-013's mechanisms (qualified-host list, asset pinning, stage
+  ownership from ADR-014) remain correct for the optional sandbox artifact.
+- **Problem:** A mandatory VM brought platform and distribution complexity (a Linux guest image, a Swift helper,
+  Apple-only virtualization) that a conventional coding CLI does not need, and blocked Windows entirely.
+- **Decision.**
+  1. `bashwink` runs **standard mode**: native on the host OS, permission-controlled, no VM, Docker or WSL.
+  2. `bashwink --sandbox` selects the retained VM backend. It is explicit, fails closed, never falls back to
+     native execution, and reports its mode accurately. It is **not** part of the standard npm package. Until it is
+     separately qualified it is neither distributed nor advertised.
+  3. The VM engineering (relay, stage registry, assets, harnesses, ADR-013/014) is preserved, not deleted.
+- **What standard mode provides** (enforced in runtime code, not prompts): workspace trust per resolved path
+  (untrusted: write, shell, network, web, sub-agent and automation denied); shell and network ask; restricted
+  TaskContracts deny shell they cannot constrain; edits limited to the contract's or workspace's allowed paths;
+  denials are applied after user rules and survive `--auto`; evidence on by default; the private server and plugin
+  policy must be acknowledged before any prompt; a failure to establish policy stops the launch.
+- **What it does not provide:** an operating-system sandbox. Approved commands run as the user and can read any file,
+  use the network and read credentials in the environment. Approval prompts, trust and path checks are guard rails.
+  A prompt-injected instruction the user approves runs with the user's access. Documentation and the in-TUI label
+  must say so and must never use the word "sandbox" for this mode.
+- **Original sandbox milestones still unfinished:** BW-031 (including Linux/Windows backends) and BW-032 (clean-host
+  qualification, hosted CI, live qualification, notarization, licensing) stay `In progress`. Passing alpha with
+  standard mode does not complete either.
+- **Status:** Accepted. Implementation tracked in `ALPHA_RELEASE_PROGRESS.md`.
+
+## ADR-016 — Future engine architecture (direction only; nothing here is implemented)
+
+- **Date / owner:** 2026-11-25, Aldrin Joseph.
+- **Direction:** a modular monolith of cooperating in-process engines with explicit, versioned, serializable
+  contracts: Orchestration, Inference, Chat Memory, Context, Execution, Security, Evidence, Evaluation, Planning,
+  Skill, Retrieval, Budget. Prefer in-process calls; allow meaningful dependencies; avoid cycles, access to another
+  engine's internal state, duplicated sources of truth, hidden side effects and needless network hops. Chat Memory
+  (cross-session retrieval, evidence-backed outcomes, privacy controls, invalidation) is the 2.0 flagship.
+  Performance-critical parts (launcher, execution backend, process lifecycle, filesystem, evidence storage,
+  retrieval, security enforcement) may migrate to Rust incrementally.
+- **What the alpha preserves without building it:** today's boundaries already map to engines (policy and trust =
+  Security; the evidence package = Evidence; the execution backend interface = Execution; provider/model config and
+  the OpenCode runtime = Inference; the plan/contract store = Planning). Contracts that cross them stay plain JSON
+  (evidence entries, task contracts, run records, provider usage records, the stage registry). Acceptance tests
+  stay language-independent (PTY and process-level fixtures).
+- **Explicitly not now:** the Chat Memory Engine, further engines, advanced orchestration, a Rust migration, repository
+  reorganization.
+- **Status:** Accepted as direction.

@@ -1,0 +1,19 @@
+# release: unrestricted mode (PTY)
+# command: <scratch>/venv/bin/python fixtures/release/release_unrestricted.py build/rc2 --out <scratch>/verify-rc2/unrestricted.json
+# started: 2026-11-24T19:52:15Z
+PASS  wrong acknowledgment b'yes\r' starts nothing
+PASS  wrong acknowledgment b'\r' starts nothing
+PASS  wrong acknowledgment b'i accept host access\r' starts nothing
+PASS  typed acknowledgment starts host mode and the TUI
+PASS  mode is labelled before the TUI
+PASS  mode is shown inside the TUI
+PASS  persistent indicator on the home screen after the toast period
+PASS  persistent indicator in the session view
+PASS  untrusted workspace: shell is denied and nothing ran on the host
+PASS  run record names the execution mode — unrestricted-host
+PASS  evidence booted in host mode — recorded
+PASS  trusted workspace (decline): shell asks for approval first
+PASS  trusted workspace (decline): host command did not run only as decided
+PASS  trusted workspace (approve): shell asks for approval first
+PASS  trusted workspace (approve): host command ran only as decided
+# exit: 0

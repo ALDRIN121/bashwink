@@ -1,0 +1,33 @@
+opencode script {
+  "channel": "latest",
+  "version": "2.3.2",
+  "preview": false,
+  "team": [
+    "adamdotdevin",
+    "arvsrn",
+    "Brendonovich",
+    "fwang",
+    "Hona",
+    "iamdavidhill",
+    "jayair",
+    "jlongster",
+    "kitlangton",
+    "kommander",
+    "ludvigrask",
+    "MrMushrooooom",
+    "neriousy",
+    "nexxeln",
+    "R44VC0RP",
+    "rekram1-node",
+    "thdxr",
+    "simonklee",
+    "Slickstef11",
+    "usrnk1",
+    "vimtor",
+    "StarpTech",
+    "actions-user",
+    "opencode",
+    "opencode-agent[bot]"
+  ]
+}
+building cli-darwin-arm64

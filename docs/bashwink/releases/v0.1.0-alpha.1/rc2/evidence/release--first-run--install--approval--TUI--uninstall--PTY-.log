@@ -1,0 +1,31 @@
+# release: first-run, install, approval, TUI, uninstall (PTY)
+# command: <scratch>/venv/bin/python fixtures/release/release_first_run.py build/rc2 --out <scratch>/verify-rc2/first-run.json
+# started: 2026-11-24T19:49:59Z
+work directory: <tmp>/bw-first-run-29xfqip4
+PASS     verify archive checksum — bashwink-0.1.0-alpha.1-macos-arm64.tar.gz: OK
+PASS     tampered archive fails checksum
+PASS     install — exit 0, 5.55s
+PASS     installed --version — bashwink 0.1.0-alpha.1
+PASS     installer refuses a damaged archive directory — exit 1
+PASS     tampered installed VM asset refuses launch and doctor fails — launch exit 3, doctor exit 1
+PASS     bare launch with no provider stops cleanly — exit 3
+PASS     bashwink auth add — added provider 'commandcode' to <tmp>/bw-first-run-29xfqip4/home/.config/bashwink/opencode.json
+  base URL: h
+PASS     bashwink model use — default model is now commandcode/claude-sonnet-5 (<tmp>/bw-first-run-29xfqip4/home/.config/bashwink/opencode.
+PASS     bashwink auth check — commandcode: key file <tmp>/bw-first-run-29xfqip4/bogus.key (36 bytes, mode 600)
+PASS     doctor after configuration — 12 checks, 4 warning(s), 0 failures
+PASS     workspace approval: shown, then declined
+PASS     declined approval started no VM and made no request
+PASS     approve and reach TUI (cold VM) — bogus key
+PASS     execution mode shown before the TUI
+PASS     execution mode shown inside the TUI (guest toast)
+PASS     persistent indicator on the guest home screen
+PASS     persistent indicator in the guest TUI session view
+PASS     live endpoint rejects an invalid key (read from the saved session) — errors=[('provider.auth', 401, 'provider authentication or access denied'), ('provider.auth', 401, 'provider authentication or access denied')] requests_sent=1 tokens=0
+PASS     no stage directory left in /private/tmp after a committed session
+PASS     host project unchanged until review
+PASS     repeat launches reach the TUI — [4.22, 5.4, 9.91]
+PASS     uninstall removes the install and keeps state — 719173981 bytes removed
+PASS     uninstall --purge-state removes state and exits 0 — exit 0
+PASS     purge left every pre-existing stage directory alone — 28 existed before, 28 after
+# exit: 0

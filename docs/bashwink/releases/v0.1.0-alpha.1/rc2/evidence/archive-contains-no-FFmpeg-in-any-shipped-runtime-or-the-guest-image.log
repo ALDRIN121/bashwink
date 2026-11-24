@@ -1,0 +1,6 @@
+# archive contains no FFmpeg in any shipped runtime or the guest image
+# command: <scratch>/venv/bin/python - <tmp>/tmp.m40c5F7eL2/bashwink-0.1.0-alpha.1-macos-arm64
+# started: 2026-11-24T19:56:41Z
+libexec/opencode FFmpeg markers: none
+lib/offline-vm/initramfs FFmpeg markers: none
+# exit: 0

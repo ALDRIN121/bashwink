@@ -1,0 +1,15 @@
+# unit and integration tests (bun test packages)
+# command: bun test packages
+# started: 2026-11-24T19:43:14Z
+bun test v1.4.4 (38afee6c8)
+No selected VM project changes.
+Unidentified VM apply staging, if present, remains at <tmp>/bashwink-vm-apply-PdWDrh/workspace/.bashwink-vm-apply-699cc26d-fef9-4c28-8162-fde738c1f3fd.
+Unidentified VM apply staging, if present, remains at <tmp>/bashwink-vm-apply-0roDoQ/workspace/.bashwink-vm-apply-1e6307c0-faba-421b-9d76-035fb45d7fb0.
+Unidentified VM apply staging, if present, remains at <tmp>/bashwink-vm-apply-B4JfpR/workspace/.bashwink-vm-apply-70e380bd-c022-48dc-bda0-73c3dee49549.
+Unidentified VM apply staging, if present, remains at <tmp>/bashwink-vm-apply-tcWAy0/workspace/.bashwink-vm-apply-e5b1aef1-b630-4757-8996-f2f7126a0329.
+
+ 515 pass
+ 0 fail
+ 1658 expect() calls
+Ran 515 tests across 32 files. [28.49s]
+# exit: 0

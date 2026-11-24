@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "version": "v0.1.0-alpha.1",
-  "candidate": "13f003de321977d13bfac3839b8b721a01a95cef",
+  "candidate": "20c8473b9a2b3bbff8f413a7e85acad5d7016007",
   "target": "macos-arm64",
   "supported": [],
   "artifact": {
     "path": "bashwink-0.1.0-alpha.1-macos-arm64.tar.gz",
-    "sha256": "f55db1940f917a7c41c91d12e9a2d1478ea91200a0c1bbee1fd65537cde486b2",
-    "note": "build output; not committed"
+    "sha256": "8acedf7f7ed1461cb9f6a065c06c096ce890e478879b5bc5950b1d40680c68be",
+    "note": "build output; not committed; byte-identical across two independent builds"
   },
   "ci": null,
   "checks": [
@@ -19,7 +19,7 @@
     {
       "id": "real-provider",
       "verdict": "BLOCKED",
-      "reason": "Only an invalid-key request (401) was run live. Live coding, model switching, cancellation and interruption were not run."
+      "reason": "Only an invalid-key request (401) was run live. Live coding, model switching, cancellation: not run on RC2 (no credential visible to the session)."
     },
     {
       "id": "clean-install",
@@ -59,12 +59,12 @@
     {
       "id": "critical-security-review",
       "verdict": "BLOCKED",
-      "reason": "No independent security review of the release path has been done, and the LGPL FFmpeg distribution question needs the owner's sign-off."
+      "reason": "No independent security review of the release path. FFmpeg removed from the shipped runtimes; JavaScriptCore (LGPL) in Bun and GPL guest components still need the owner's licence decision."
     },
     {
       "id": "regression",
       "verdict": "BLOCKED",
-      "reason": "The exact-candidate local run passed 22 of 23 steps. One legacy VM boundary fixture failed intermittently and its cause is unresolved."
+      "reason": "RC2 exact-candidate run: every step passed except lifecycle (harness defects, since fixed; rerun 38/38), the expected gate refusal and the manifest check pending a documented refresh. Intermittent fixture root-caused and fixed (40/40, control 2/40)."
     },
     {
       "id": "required-ci",
@@ -74,7 +74,7 @@
     {
       "id": "release-archive",
       "verdict": "BLOCKED",
-      "reason": "A local archive was built from the candidate commit and its checksum recorded. It has not been installed on a clean host."
+      "reason": "RC2 archive built from the candidate commit, byte-identical across two builds, checksum recorded. Not installed on a clean host."
     },
     {
       "id": "documentation",

@@ -1,0 +1,9 @@
+# native gate tests
+# command: python3 scripts/test_native_release_gate.py
+# started: 2026-11-24T19:43:47Z
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.001s
+
+OK
+# exit: 0

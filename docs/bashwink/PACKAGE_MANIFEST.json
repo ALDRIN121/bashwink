@@ -35,8 +35,8 @@
       "size_bytes": 3292
     },
     "ALPHA_RELEASE_CHECKLIST.md": {
-      "sha256": "c6c928170367b5be0ca29468be15fe2970b1826ae4c231cf6226af9d3e8ef778",
-      "size_bytes": 10039
+      "sha256": "78f06d1ef82a8333dadcb40d642afc298a5bce386eb3aa1c0a3ba80421860d1f",
+      "size_bytes": 10446
     },
     "ALPHA_TESTER_GUIDE.md": {
       "sha256": "9980d44cc33c0bf791388b5c54e6dcc511699a38b39c8fdf1b072d315e0bc054",
@@ -99,8 +99,8 @@
       "size_bytes": 8002
     },
     "BW-032_QUALIFICATION_RESULTS.md": {
-      "sha256": "f04ef5e47c9576d11f1672e35f6272aa489e3188ffe524278d6477371fb697a5",
-      "size_bytes": 7516
+      "sha256": "262a7af64e14bfa43c89895ea51c3ab6851c0fbec9f3b3d985f439f11c1788d5",
+      "size_bytes": 8248
     },
     "CI_BASELINE_RECONCILIATION.md": {
       "sha256": "14d4f9555edbae2f3ef7e8c5d2185ddaaa83de9df6c528c7286934df6e273b47",
@@ -127,8 +127,8 @@
       "size_bytes": 4119
     },
     "KNOWN_LIMITATIONS.md": {
-      "sha256": "d45362f4d7cca99858c47112efd1b9a7f1ad8fe71fae27b07d75166ee033f55e",
-      "size_bytes": 11464
+      "sha256": "8f32f7ec51cea9d13b8c2d5d5c520fc7fe90d01790d4153deb64e4589bccdc9a",
+      "size_bytes": 11619
     },
     "LLM_INTEGRATION_AUDIT.md": {
       "sha256": "09a0da4a4f7df07586ae1db2df32f06b267f114cee6fdb639bb608615132f24e",
@@ -139,8 +139,8 @@
       "size_bytes": 1924
     },
     "NATIVE_SANDBOX_QUALIFICATION.json": {
-      "sha256": "9ad2b75274835053cd79d38839e35c54ef45e88f0f12d6ead53de9f738062b6a",
-      "size_bytes": 40956
+      "sha256": "4b84a37c2ff5da32c0d020ef093ec42737aa2664adb13a85de47769f14bd2b2e",
+      "size_bytes": 42444
     },
     "NATIVE_SANDBOX_SECURITY_MODEL.md": {
       "sha256": "dfc3f85518b0ca1716b3704acf3d82038fd0a55bbe92c47c6a44daf6ac5d096b",

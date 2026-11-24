@@ -1,0 +1,10 @@
+# strict documentation manifest check
+# command: python3 scripts/verify_bashwink_docs.py --check-manifest
+# started: 2026-11-24T19:56:45Z
+Phase tasks: P0=9, P1=10, P2=16, P3=19, P4=13, P5=8, P6=9, P7=7
+Audit: FAIL
+ERROR: Hash mismatch since bundle creation: ALPHA_RELEASE_CHECKLIST.md
+ERROR: Hash mismatch since bundle creation: BW-032_QUALIFICATION_RESULTS.md
+ERROR: Hash mismatch since bundle creation: KNOWN_LIMITATIONS.md
+ERROR: Hash mismatch since bundle creation: NATIVE_SANDBOX_QUALIFICATION.json
+# exit: 1

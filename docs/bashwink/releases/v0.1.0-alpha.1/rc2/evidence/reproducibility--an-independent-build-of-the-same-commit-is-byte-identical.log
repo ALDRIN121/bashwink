@@ -1,0 +1,4 @@
+# reproducibility: an independent build of the same commit is byte-identical
+# command: cmp build/rc2/bashwink-0.1.0-alpha.1-macos-arm64.tar.gz build/rc2b/bashwink-0.1.0-alpha.1-macos-arm64.tar.gz
+# started: 2026-11-24T19:56:44Z
+# exit: 0

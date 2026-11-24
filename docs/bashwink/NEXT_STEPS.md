@@ -1,5 +1,8 @@
 # Bashwink next steps
 
+**Current mission:** private npm-tarball alpha with standard native mode as default ([ADR-015](DECISIONS.md)). Resume from
+[ALPHA_RELEASE_PROGRESS.md](ALPHA_RELEASE_PROGRESS.md). The RC1/RC2 notes below describe the optional sandbox artifact.
+
 ## v0.1.0-alpha.1 release candidate RC1 — stopped at the gate (2026-11-25)
 
 A self-contained macOS Apple Silicon archive exists locally (candidate

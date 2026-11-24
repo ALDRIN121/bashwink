@@ -243,6 +243,24 @@ time.sleep(20)
     print("PASS: reopened the last sealed checkpoint after launcher death, and refused corrupt or foreign session state", flush=True)
 
     review = [installed, "sandbox", "vm-review"]
+    bun = shutil.which("bun", path=environment["PATH"])
+    fault = Path(__file__).resolve().parent / "vm-apply-interrupt.ts"
+    assert bun
+    for phase in ("journaled", "stage-created"):
+        with terminal([Path(bun), fault, phase, "one.ts"], project, environment) as (_, master, contains, finish, capture):
+            seen(contains, "Type apply", capture)
+            feed(master, "apply")
+            finish(-9)
+        check_unchanged()
+        unidentified = list(project.glob(".bashwink-vm-apply-*"))
+        assert len(unidentified) == (0 if phase == "journaled" else 1)
+        for _ in range(2):
+            recovered = subprocess.run([installed, "sandbox", "vm-recover"], cwd=project, env=environment, capture_output=True, text=True)
+            assert recovered.returncode == 0, recovered.stderr
+        assert all(stage.is_dir() for stage in unidentified), "unidentified staging was not preserved"
+        check_unchanged()
+    assert len(list(directory.glob("apply-abandoned-*.json"))) == 2
+    print("PASS: SIGKILL before staging identity preserved host files and quarantined the unidentified directory", flush=True)
     with terminal(review, project, environment) as (_, master, contains, finish, capture):
         seen(contains, "Type apply", capture)
         for name, operation in (("one.ts", "modified"), ("two.ts", "modified"),
@@ -274,10 +292,23 @@ time.sleep(20)
     assert (project / "one.ts").read_bytes() == base64.b64decode(before_files["one.ts"])
     assert (project / "two.ts").read_bytes() == originals["two.ts"]
     assert not (project / "new.ts").exists()
+    with terminal([*launch, "--continue"], project, environment) as (_, master, contains, finish, capture):
+        seen(contains, "Fix the persistent project", capture, 35)
+        feed(master, "Continue the saved project task")
+        seen(contains, "VM project original conversation observed", capture)
+        os.write(master, b"\x04")
+        finish(0)
+    assert (project / "one.ts").read_bytes() == base64.b64decode(before_files["one.ts"])
+    assert (project / "two.ts").read_bytes() == originals["two.ts"]
+    print("PASS: session resumed after the first reviewed application", flush=True)
+    with terminal(review, project, environment) as (_, master, contains, finish, capture):
+        seen(contains, "Type apply", capture)
+        assert not contains("@@ one.ts (modified) @@"), "already applied file returned in review"
+        assert contains("@@ two.ts (modified) @@")
+        feed(master, "no")
+        finish(0)
+    print("PASS: refreshed baseline excludes the previously applied file from the next review", flush=True)
 
-    bun = shutil.which("bun", path=environment["PATH"])
-    fault = Path(__file__).resolve().parent / "vm-apply-interrupt.ts"
-    assert bun
     recovery = [installed, "sandbox", "vm-recover"]
     for phase, selection in (("prepared", ["two.ts"]), ("mutated", ["new.ts", "obsolete.ts"])):
         with terminal([Path(bun), fault, phase, *selection], project, environment) as (_, master, contains, finish, capture):

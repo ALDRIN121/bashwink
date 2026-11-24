@@ -71,11 +71,27 @@ interface Receipt {
   }[]
 }
 
+interface AbandonedReceipt {
+  readonly version: 1
+  readonly outcome: "abandoned-before-mutation"
+  readonly rootId: string
+  readonly workspaceId: string
+  readonly stage: string
+}
+
 interface ReviewIO {
   readonly assertProject?: () => void
   readonly approve: (diff: string) => Promise<boolean>
   readonly checkpoint?: (
-    phase: "prepared" | "before-mutation" | "checked" | "mutated" | "committed" | "cleaned",
+    phase:
+      | "journaled"
+      | "stage-created"
+      | "prepared"
+      | "before-mutation"
+      | "checked"
+      | "mutated"
+      | "committed"
+      | "cleaned",
     filename?: string,
   ) => void
 }
@@ -271,7 +287,7 @@ class ApplyDirectories {
     this.writeRecord(JOURNAL, journal, initial)
   }
 
-  writeRecord(name: string, record: Journal | Receipt, exclusive: boolean) {
+  writeRecord(name: string, record: Journal | Receipt | AbandonedReceipt, exclusive: boolean) {
     this.assertBound()
     const temporary = `.apply-${randomUUID()}`
     const bytes = recordBytes(record)
@@ -341,7 +357,7 @@ function uniqueNames(names: readonly string[]) {
   return new Set(names.map((name) => name.toLowerCase())).size === names.length
 }
 
-function recordBytes(record: Journal | Receipt) {
+function recordBytes(record: Journal | Receipt | AbandonedReceipt) {
   const checksum = sha256(JSON.stringify(record))
   return Buffer.from(JSON.stringify({ checksum, record }) + "\n")
 }
@@ -611,12 +627,37 @@ export function recoverVmProject(
   root: string,
   workspace: string,
   assertProject?: () => void,
+  checkpoint?: () => void,
 ): void {
   if (!vmProjectApplyPending(root)) return
   const dirs = new ApplyDirectories(root, workspace)
   try {
     const journal = readJournal(dirs)
     if (journal === undefined) throw new Error("VM apply journal disappeared before recovery")
+    if (journal.phase === "preparing" && journal.stageId === null) {
+      assertProject?.()
+      ensureUnchanged(dirs, journal.entries)
+      const receipt: AbandonedReceipt = {
+        version: 1,
+        outcome: "abandoned-before-mutation",
+        rootId: journal.rootId,
+        workspaceId: journal.workspaceId,
+        stage: journal.stage,
+      }
+      const name = `apply-abandoned-${journal.stage.slice(".bashwink-vm-apply-".length)}.json`
+      const existing = dirs.readOptional(dirs.root, name)
+      if (existing === undefined) dirs.writeRecord(name, receipt, true)
+      else if (existing.mode !== 0o600 || !existing.data.equals(recordBytes(receipt)))
+        throw new Error("ambiguous abandoned VM apply record. Journal retained")
+      checkpoint?.()
+      dirs.assertBound()
+      dirs.unlink(dirs.root, JOURNAL)
+      fsyncSync(dirs.root)
+      process.stdout.write(
+        `Unidentified VM apply staging, if present, remains at ${path.join(workspace, journal.stage)}.\n`,
+      )
+      return
+    }
     const stage = dirs.openStage(journal)
     try {
       finish(dirs, stage, journal, assertProject === undefined ? undefined : { assertProject })
@@ -750,7 +791,9 @@ export async function reviewVmProjectWithApproval(
       entries,
     }
     dirs.writeJournal(journal, true)
+    io.checkpoint?.("journaled")
     dirs.createStage(journal.stage)
+    io.checkpoint?.("stage-created")
     const stage = dirs.openOptional(
       dirs.workspace,
       journal.stage,

@@ -12,7 +12,8 @@ import {
 } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { regularFile } from "../src/native-stage.js"
+import { directoryIdentity, regularFile } from "../src/native-stage.js"
+import { reconcileVmProjectReceipts } from "../src/vm-project.js"
 import {
   recoverVmProject,
   reviewVmProjectWithApproval,
@@ -86,6 +87,243 @@ describe.skipIf(process.platform !== "darwin")("reviewed VM project apply", () =
     expect(receipt.files[2].after).toBeNull()
   })
 
+  test("refreshes only committed files in the project baseline and does not replay receipts", async () => {
+    const base = {
+      "one.js": original("one.js", "one before"),
+      "two.js": original("two.js", "two before"),
+    }
+    const files = { "one.js": encoded("one after"), "two.js": encoded("two after") }
+    await reviewVmProjectWithApproval(root, workspace, base, files, ["one.js"], {
+      approve: approved,
+    })
+    const record = {
+      version: 1 as const,
+      project: workspace,
+      identity: directoryIdentity(workspace),
+      revision: "a".repeat(40),
+      profile: "fixture",
+      base,
+      snapshot: { token: "583ac076-7196-4c56-8af8-099829254ff8", files, state: {}, sessions: [] },
+    }
+    const filename = path.join(root, "checkpoint.json")
+    const refreshed = reconcileVmProjectReceipts(root, workspace, filename, record)
+    expect(refreshed.base["one.js"]?.data).toBe(files["one.js"])
+    expect(refreshed.base["two.js"]?.data).toBe(base["two.js"].data)
+    const checkpoint = readFileSync(filename)
+    expect(reconcileVmProjectReceipts(root, workspace, filename, refreshed)).toEqual(refreshed)
+    expect(readFileSync(filename)).toEqual(checkpoint)
+    await reviewVmProjectWithApproval(root, workspace, refreshed.base, files, undefined, {
+      approve: async (diff) => {
+        expect(diff).toContain("@@ two.js (modified) @@")
+        expect(diff).not.toContain("@@ one.js")
+        return false
+      },
+    })
+  })
+
+  test("refreshes consecutive batches and rejects later host conflicts", async () => {
+    const base = { "one.js": original("one.js", "before") }
+    const firstFiles = { "one.js": encoded("first") }
+    const snapshot = {
+      token: "583ac076-7196-4c56-8af8-099829254ff8",
+      files: firstFiles,
+      state: {},
+      sessions: [],
+    }
+    const initial = {
+      version: 1 as const,
+      project: workspace,
+      identity: directoryIdentity(workspace),
+      revision: "a".repeat(40),
+      profile: "fixture",
+      base,
+      snapshot,
+    }
+    const filename = path.join(root, "checkpoint.json")
+    await reviewVmProjectWithApproval(root, workspace, initial.base, firstFiles, undefined, {
+      approve: approved,
+    })
+    const first = reconcileVmProjectReceipts(root, workspace, filename, initial)
+    const secondFiles = { "one.js": encoded("second") }
+    const next = { ...first, snapshot: { ...snapshot, files: secondFiles } }
+    await reviewVmProjectWithApproval(root, workspace, next.base, secondFiles, undefined, {
+      approve: approved,
+    })
+    const second = reconcileVmProjectReceipts(root, workspace, filename, next)
+    expect(second.base["one.js"]?.data).toBe(secondFiles["one.js"])
+    expect(second.appliedReceipts).toHaveLength(2)
+    expect(
+      await reviewVmProjectWithApproval(root, workspace, second.base, secondFiles, undefined, {
+        approve: () => {
+          throw new Error("unchanged files must not require approval")
+        },
+      }),
+    ).toBe(false)
+    writeFileSync(host("one.js"), "independent host change")
+    await expect(
+      reviewVmProjectWithApproval(
+        root,
+        workspace,
+        second.base,
+        { "one.js": encoded("third") },
+        undefined,
+        { approve: approved },
+      ),
+    ).rejects.toThrow(/host base.*changed/)
+    expect(readFileSync(host("one.js"), "utf8")).toBe("independent host change")
+  })
+
+  test("reconciles older sequential receipts when only the final staged bytes remain", async () => {
+    const base = { "one.js": original("one.js", "before") }
+    await reviewVmProjectWithApproval(
+      root,
+      workspace,
+      base,
+      { "one.js": encoded("first") },
+      undefined,
+      { approve: approved },
+    )
+    const installed = regularFile(host("one.js"))
+    const interim = { "one.js": { ...installed, data: installed.data.toString("base64") } }
+    const files = { "one.js": encoded("second") }
+    await reviewVmProjectWithApproval(root, workspace, interim, files, undefined, {
+      approve: approved,
+    })
+    const record = {
+      version: 1 as const,
+      project: workspace,
+      identity: directoryIdentity(workspace),
+      revision: "a".repeat(40),
+      profile: "fixture",
+      base,
+      snapshot: { token: "583ac076-7196-4c56-8af8-099829254ff8", files, state: {}, sessions: [] },
+    }
+    const refreshed = reconcileVmProjectReceipts(
+      root,
+      workspace,
+      path.join(root, "checkpoint.json"),
+      record,
+    )
+    expect(refreshed.base["one.js"]?.data).toBe(files["one.js"])
+    expect(refreshed.appliedReceipts).toHaveLength(2)
+  })
+
+  test("refuses a tampered committed receipt without changing the baseline", async () => {
+    const base = { "one.js": original("one.js", "before") }
+    const files = { "one.js": encoded("after") }
+    await reviewVmProjectWithApproval(root, workspace, base, files, undefined, {
+      approve: approved,
+    })
+    const [receipt] = readdirSync(root).filter((name) => name.startsWith("apply-receipt-"))
+    const receiptPath = path.join(root, receipt!)
+    const envelope = JSON.parse(readFileSync(receiptPath, "utf8"))
+    envelope.record.files[0].after.revision = "0".repeat(64)
+    writeFileSync(receiptPath, JSON.stringify(envelope))
+    const record = {
+      version: 1 as const,
+      project: workspace,
+      identity: directoryIdentity(workspace),
+      revision: "a".repeat(40),
+      profile: "fixture",
+      base,
+      snapshot: { token: "583ac076-7196-4c56-8af8-099829254ff8", files, state: {}, sessions: [] },
+    }
+    expect(() =>
+      reconcileVmProjectReceipts(root, workspace, path.join(root, "checkpoint.json"), record),
+    ).toThrow(/invalid VM apply receipt/)
+    expect(record.base["one.js"].data).toBe(encoded("before"))
+    expect(readFileSync(host("one.js"), "utf8")).toBe("after")
+  })
+
+  test("detects tampering with a receipt already used to refresh the baseline", async () => {
+    const base = { "one.js": original("one.js", "before") }
+    const files = { "one.js": encoded("after") }
+    await reviewVmProjectWithApproval(root, workspace, base, files, undefined, {
+      approve: approved,
+    })
+    const record = {
+      version: 1 as const,
+      project: workspace,
+      identity: directoryIdentity(workspace),
+      revision: "a".repeat(40),
+      profile: "fixture",
+      base,
+      snapshot: { token: "583ac076-7196-4c56-8af8-099829254ff8", files, state: {}, sessions: [] },
+    }
+    const filename = path.join(root, "checkpoint.json")
+    const refreshed = reconcileVmProjectReceipts(root, workspace, filename, record)
+    const [receipt] = readdirSync(root).filter((name) => name.startsWith("apply-receipt-"))
+    writeFileSync(path.join(root, receipt!), "{}")
+    expect(() => reconcileVmProjectReceipts(root, workspace, filename, refreshed)).toThrow(
+      /invalid VM apply receipt/,
+    )
+  })
+
+  test("keeps a host change made after application and detects it in the next review", async () => {
+    const base = { "one.js": original("one.js", "before") }
+    const files = { "one.js": encoded("approved") }
+    await reviewVmProjectWithApproval(root, workspace, base, files, undefined, {
+      approve: approved,
+    })
+    writeFileSync(host("one.js"), "later host edit")
+    const record = {
+      version: 1 as const,
+      project: workspace,
+      identity: directoryIdentity(workspace),
+      revision: "a".repeat(40),
+      profile: "fixture",
+      base,
+      snapshot: { token: "583ac076-7196-4c56-8af8-099829254ff8", files, state: {}, sessions: [] },
+    }
+    const refreshed = reconcileVmProjectReceipts(
+      root,
+      workspace,
+      path.join(root, "checkpoint.json"),
+      record,
+    )
+    await expect(
+      reviewVmProjectWithApproval(
+        root,
+        workspace,
+        refreshed.base,
+        { "one.js": encoded("new proposal") },
+        undefined,
+        { approve: approved },
+      ),
+    ).rejects.toThrow(/host base.*changed/)
+    expect(readFileSync(host("one.js"), "utf8")).toBe("later host edit")
+  })
+
+  test("refreshes the baseline only after an interrupted commit is recovered", async () => {
+    const base = { "one.js": original("one.js", "before") }
+    const files = { "one.js": encoded("after") }
+    await expect(
+      reviewVmProjectWithApproval(root, workspace, base, files, undefined, {
+        approve: approved,
+        checkpoint: (phase) => {
+          if (phase === "committed") throw new Error("interrupted")
+        },
+      }),
+    ).rejects.toThrow("interrupted")
+    const record = {
+      version: 1 as const,
+      project: workspace,
+      identity: directoryIdentity(workspace),
+      revision: "a".repeat(40),
+      profile: "fixture",
+      base,
+      snapshot: { token: "583ac076-7196-4c56-8af8-099829254ff8", files, state: {}, sessions: [] },
+    }
+    const filename = path.join(root, "checkpoint.json")
+    expect(reconcileVmProjectReceipts(root, workspace, filename, record)).toBe(record)
+    const installed = regularFile(host("one.js")).identity
+    recoverVmProject(root, workspace)
+    const refreshed = reconcileVmProjectReceipts(root, workspace, filename, record)
+    expect(refreshed.base["one.js"]?.data).toBe(files["one.js"])
+    expect(regularFile(host("one.js")).identity).toBe(installed)
+    expect(reconcileVmProjectReceipts(root, workspace, filename, refreshed)).toEqual(refreshed)
+  })
+
   test("refuses a host edit made during approval", async () => {
     const base = { "code.js": original("code.js", "before") }
     await expect(
@@ -105,6 +343,140 @@ describe.skipIf(process.platform !== "darwin")("reviewed VM project apply", () =
     ).rejects.toThrow(/host base.*changed/)
     expect(readFileSync(host("code.js"), "utf8")).toBe("host edit")
     expect(readdirSync(root)).toEqual([])
+  })
+
+  test("quarantines an unidentified early stage and recovers idempotently", async () => {
+    const base = { "code.js": original("code.js", "before") }
+    await expect(
+      reviewVmProjectWithApproval(
+        root,
+        workspace,
+        base,
+        { "code.js": encoded("after") },
+        undefined,
+        {
+          approve: approved,
+          checkpoint: (phase) => {
+            if ((phase as string) === "stage-created")
+              throw new Error("interrupted after stage creation")
+          },
+        },
+      ),
+    ).rejects.toThrow("interrupted after stage creation")
+    const [stage] = readdirSync(workspace).filter((name) => name.startsWith(".bashwink-vm-apply-"))
+    expect(stage).toBeDefined()
+    recoverVmProject(root, workspace)
+    recoverVmProject(root, workspace)
+    expect(readFileSync(host("code.js"), "utf8")).toBe("before")
+    expect(readdirSync(workspace)).toContain(stage!)
+    const receipt = readdirSync(root).find((name) => name.startsWith("apply-abandoned-"))
+    expect(receipt).toBeDefined()
+    expect(JSON.parse(readFileSync(path.join(root, receipt!), "utf8")).record.outcome).toBe(
+      "abandoned-before-mutation",
+    )
+    expect(readdirSync(root)).not.toContain("apply.json")
+  })
+
+  test("recovers a journal interrupted before staging exists", async () => {
+    const base = { "code.js": original("code.js", "before") }
+    await expect(
+      reviewVmProjectWithApproval(
+        root,
+        workspace,
+        base,
+        { "code.js": encoded("after") },
+        undefined,
+        {
+          approve: approved,
+          checkpoint: (phase) => {
+            if (phase === "journaled") throw new Error("interrupted")
+          },
+        },
+      ),
+    ).rejects.toThrow("interrupted")
+    expect(readdirSync(workspace)).toEqual(["code.js"])
+    recoverVmProject(root, workspace)
+    recoverVmProject(root, workspace)
+    expect(readFileSync(host("code.js"), "utf8")).toBe("before")
+    expect(readdirSync(root)).not.toContain("apply.json")
+  })
+
+  test("retries safely after the abandoned receipt is durable", async () => {
+    const base = { "code.js": original("code.js", "before") }
+    await expect(
+      reviewVmProjectWithApproval(
+        root,
+        workspace,
+        base,
+        { "code.js": encoded("after") },
+        undefined,
+        {
+          approve: approved,
+          checkpoint: (phase) => {
+            if (phase === "stage-created") throw new Error("interrupted")
+          },
+        },
+      ),
+    ).rejects.toThrow("interrupted")
+    expect(() =>
+      recoverVmProject(root, workspace, undefined, () => {
+        throw new Error("receipt interruption")
+      }),
+    ).toThrow("receipt interruption")
+    expect(readdirSync(root)).toContain("apply.json")
+    expect(readdirSync(root).filter((name) => name.startsWith("apply-abandoned-"))).toHaveLength(1)
+    recoverVmProject(root, workspace)
+    expect(readdirSync(root)).not.toContain("apply.json")
+    expect(readFileSync(host("code.js"), "utf8")).toBe("before")
+  })
+
+  test("retains an early journal if the host base changes before recovery", async () => {
+    const base = { "code.js": original("code.js", "before") }
+    await expect(
+      reviewVmProjectWithApproval(
+        root,
+        workspace,
+        base,
+        { "code.js": encoded("after") },
+        undefined,
+        {
+          approve: approved,
+          checkpoint: (phase) => {
+            if ((phase as string) === "stage-created") throw new Error("interrupted")
+          },
+        },
+      ),
+    ).rejects.toThrow("interrupted")
+    writeFileSync(host("code.js"), "concurrent host change")
+    expect(() => recoverVmProject(root, workspace)).toThrow(/host base.*changed/)
+    expect(readFileSync(host("code.js"), "utf8")).toBe("concurrent host change")
+    expect(readdirSync(root)).toContain("apply.json")
+  })
+
+  test("leaves an unexpected replacement of an early stage untouched", async () => {
+    const base = { "code.js": original("code.js", "before") }
+    await expect(
+      reviewVmProjectWithApproval(
+        root,
+        workspace,
+        base,
+        { "code.js": encoded("after") },
+        undefined,
+        {
+          approve: approved,
+          checkpoint: (phase) => {
+            if (phase === "stage-created") throw new Error("interrupted")
+          },
+        },
+      ),
+    ).rejects.toThrow("interrupted")
+    const [stage] = readdirSync(workspace).filter((name) => name.startsWith(".bashwink-vm-apply-"))
+    rmSync(host(stage!), { recursive: true })
+    symlinkSync(host("code.js"), host(stage!))
+    recoverVmProject(root, workspace)
+    expect(readFileSync(host("code.js"), "utf8")).toBe("before")
+    expect(readFileSync(host(stage!), "utf8")).toBe("before")
+    expect(readdirSync(root)).not.toContain("apply.json")
   })
 
   test("protects tests and refuses symlink and hardlink destinations", async () => {

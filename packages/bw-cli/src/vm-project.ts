@@ -7,6 +7,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readSync,
   realpathSync,
   renameSync,
@@ -56,6 +57,157 @@ interface ProjectRecord {
   relayBinding?: string
   base: Record<string, VmProjectBaseFile>
   snapshot?: VmProjectSnapshot
+  appliedReceipts?: string[]
+}
+
+interface ReceiptMark {
+  identity: string
+  revision: string
+  mode: number
+  stamp: string
+}
+
+interface ApplyReceipt {
+  version: 1
+  outcome: "committed"
+  rootId: string
+  workspaceId: string
+  files: { name: string; before: ReceiptMark | null; after: ReceiptMark | null }[]
+}
+
+const APPLY_RECEIPT = /^apply-receipt-[a-f0-9-]{36}\.json$/
+
+function validReceiptMark(value: ReceiptMark | null) {
+  return (
+    value === null ||
+    (typeof value === "object" &&
+      value !== null &&
+      /^\d+:\d+$/.test(value.identity) &&
+      /^[a-f0-9]{64}$/.test(value.revision) &&
+      Number.isInteger(value.mode) &&
+      value.mode >= 0 &&
+      value.mode <= 0o777 &&
+      /^-?\d+(?:\.\d+)?:-?\d+(?:\.\d+)?$/.test(value.stamp))
+  )
+}
+
+function sameReceiptMark(base: VmProjectBaseFile | undefined, mark: ReceiptMark | null) {
+  if (mark === null) return base === undefined
+  return (
+    base !== undefined &&
+    base.identity === mark.identity &&
+    base.revision === mark.revision &&
+    base.mode === mark.mode &&
+    base.stamp === mark.stamp
+  )
+}
+
+function writeProjectRecord(root: string, filename: string, record: ProjectRecord) {
+  const payload = JSON.stringify(record)
+  const temporary = path.join(root, `.checkpoint-${randomUUID()}`)
+  const fd = openSync(temporary, "wx", 0o600)
+  try {
+    writeFileSync(fd, JSON.stringify({ payload, digest: sha256(payload) }))
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+  renameSync(temporary, filename)
+  syncDirectory(root)
+}
+
+export function reconcileVmProjectReceipts(
+  root: string,
+  workspace: string,
+  filename: string,
+  record: ProjectRecord,
+): ProjectRecord {
+  if (record.project !== workspace || directoryIdentity(workspace) !== record.identity)
+    throw new Error("VM apply workspace identity changed")
+  try {
+    lstatSync(path.join(root, "apply.json"))
+    return record
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+  }
+  const processed = record.appliedReceipts ?? []
+  if (
+    !Array.isArray(processed) ||
+    processed.some((name) => typeof name !== "string" || !APPLY_RECEIPT.test(name)) ||
+    new Set(processed).size !== processed.length
+  )
+    throw new Error("invalid VM apply receipt history")
+  const available = readdirSync(root).filter((name) => APPLY_RECEIPT.test(name))
+  if (processed.some((name) => !available.includes(name)))
+    throw new Error("VM apply receipt history is missing")
+  if (available.length === 0) return record
+  const rootId = directoryIdentity(root)
+  const workspaceId = directoryIdentity(workspace)
+  const receipts = available.sort().map((name) => {
+    const file = regularFile(path.join(root, name), 1024 * 1024)
+    if (file.mode !== 0o600) throw new Error("invalid VM apply receipt permissions")
+    const envelope = JSON.parse(file.data.toString()) as {
+      checksum?: unknown
+      record?: ApplyReceipt
+    }
+    const receipt = envelope.record
+    if (
+      !receipt ||
+      envelope.checksum !== sha256(JSON.stringify(receipt)) ||
+      receipt.version !== 1 ||
+      receipt.outcome !== "committed" ||
+      receipt.rootId !== rootId ||
+      receipt.workspaceId !== workspaceId ||
+      !Array.isArray(receipt.files) ||
+      receipt.files.length === 0 ||
+      receipt.files.length > 256 ||
+      receipt.files.some(
+        (entry) =>
+          !entry ||
+          typeof entry.name !== "string" ||
+          !vmProjectFile(entry.name) ||
+          vmProtectedTest(entry.name) ||
+          !validReceiptMark(entry.before) ||
+          !validReceiptMark(entry.after),
+      ) ||
+      new Set(receipt.files.map((entry) => entry.name.toLowerCase())).size !== receipt.files.length
+    )
+      throw new Error("invalid VM apply receipt")
+    return { name, receipt }
+  })
+  const pending = receipts.filter(({ name }) => !processed.includes(name))
+  if (pending.length === 0) return record
+  if (!record.snapshot) throw new Error("VM apply receipts require a saved snapshot")
+  const base = { ...record.base }
+  const applied = [...processed]
+  const changed = new Set<string>()
+  while (pending.length > 0) {
+    const index = pending.findIndex(({ receipt }) =>
+      receipt.files.every(({ name, before }) => sameReceiptMark(base[name], before)),
+    )
+    if (index < 0) throw new Error("VM apply receipt history does not match the saved baseline")
+    const { name, receipt } = pending.splice(index, 1)[0]!
+    for (const entry of receipt.files) {
+      changed.add(entry.name)
+      if (entry.after === null) {
+        delete base[entry.name]
+        continue
+      }
+      base[entry.name] = { ...entry.after, data: "" }
+    }
+    applied.push(name)
+  }
+  for (const name of changed) {
+    const file = base[name]
+    if (file === undefined) continue
+    const data = record.snapshot.files[name]
+    if (typeof data !== "string" || sha256(Buffer.from(data, "base64")) !== file.revision)
+      throw new Error(`VM apply receipt bytes unavailable for ${name}`)
+    base[name] = { ...file, data }
+  }
+  const refreshed = { ...record, base, appliedReceipts: applied }
+  writeProjectRecord(root, filename, refreshed)
+  return refreshed
 }
 
 export function bindVmProjectProvider(record: ProjectRecord, binding?: string) {
@@ -313,6 +465,7 @@ export function openVmProject(profile?: string) {
       )
         throw new Error("VM project or runtime identity changed")
       if (record.snapshot) record.snapshot = validateVmSnapshot(record.snapshot)
+      record = reconcileVmProjectReceipts(root, project, filename, record)
     } else {
       if (profile === undefined) throw new Error("no saved VM project to review")
       record = { version: 1, project, identity, profile, ...readBase(project) }
@@ -369,17 +522,7 @@ export function commitVmProject(
       .some((line) => line.includes('"phase":"boot"'))
   )
     throw new Error("VM checkpoint does not extend the verified evidence chain with a fresh boot")
-  const payload = JSON.stringify({ ...project.record, snapshot })
-  const temporary = path.join(project.root, `.checkpoint-${randomUUID()}`)
-  const fd = openSync(temporary, "wx", 0o600)
-  try {
-    writeFileSync(fd, JSON.stringify({ payload, digest: sha256(payload) }))
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
-  renameSync(temporary, project.filename)
-  syncDirectory(project.root)
+  writeProjectRecord(project.root, project.filename, { ...project.record, snapshot })
   if (snapshot.sessions.length > 0)
     process.stdout.write(`Saved VM sessions: ${snapshot.sessions.join(", ")}\n`)
 }

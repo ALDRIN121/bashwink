@@ -189,6 +189,30 @@ test("refuses oversized requests before dispatch", async () => {
   )
 })
 
+test("rejects a capability from another run and revokes access after shutdown", async () => {
+  let dispatches = 0
+  await fixture(
+    {
+      resolve: resolvePublic,
+      async request() {
+        dispatches++
+        return { status: 200, contentType: "application/json", body: text("{}"), cancel() {} }
+      },
+    },
+    async (socket, relay) => {
+      expect(
+        (await post(socket, { headers: { authorization: `Bearer ${"B".repeat(43)}` } })).status,
+      ).toBe(401)
+      expect(dispatches).toBe(0)
+      expect((await post(socket)).status).toBe(200)
+      relay.stop()
+      await Bun.sleep(25)
+      await expect(post(socket)).rejects.toThrow()
+      expect(dispatches).toBe(1)
+    },
+  )
+})
+
 test("refuses oversized provider responses", async () => {
   await fixture(
     {

@@ -310,3 +310,11 @@ reopen, including older sequential receipts. The installed fixture exercised SIG
 review, repeated recovery, resume after an applied batch and protected tests. Live
 CommandCode tests switched Claude to GPT in one session. Qualification, the
 distributable VM installation, and the external-alpha gate remain open.
+
+## 2026-11-25: private alpha, standard (native) npm package
+
+Implemented and verified on macOS arm64: standard build flavor, mode label, fail-closed `--sandbox`, first-run trust offer,
+standard help, Node launcher, deterministic tarball builder with a content audit, plugin staging by copy under
+`node_modules` and on Windows, `USERPROFILE` home fallback, portable install check, PTY smoke. Written but never run:
+`npm-package` and `windows-full-suite` CI jobs. Not implemented: bounded retries, cost/request cap and display. Not
+verified: any live model session, Windows, Linux, macOS Intel. See `FINAL_ALPHA_RELEASE_REPORT.md`.

@@ -1673,3 +1673,19 @@ timeout, while checking the detached guest writer and host controls.
 At documentation commit `c126e0d`, `bun test packages` exited 0 with 448 passed
 and 0 failed. Typecheck, Oxlint, formatting, lint negative controls, documentation
 manifest and task-register checks exited 0. Hosted CI was not run.
+
+## 2026-11-25: standard npm package, candidate `npm-rc1` (commit `2ba4b98`)
+
+Host: macOS 27.0.1, Apple M1; the developer's machine, not a clean host. Nothing here ran on Windows or Linux.
+
+| Command | Exit | Result |
+| --- | --- | --- |
+| `bun test packages` | 0 | 541 pass, 0 fail |
+| `bun run lint` / `bun run typecheck` | 0 / 0 | clean |
+| `python3 scripts/build_npm_package.py --out <dir>` run three times on the clean commit | 0 | identical SHA-256 `e0a3f48f…d458` |
+| `python3 scripts/npm_install_check.py <tgz>` | 0 | 10/10 PASS |
+| `python3 fixtures/release/npm_smoke.py <tgz>` (PTY) | 0 | 17/17 PASS |
+| reinstall over an existing install; `--omit=optional` install | 0 / 0 | both worked |
+| startup benchmark, 7 alternating runs | 0 | bashwink median 2.07 s; raw `opencode --standalone` 1.76 s |
+
+Result files: `release/standard/0.1.0-alpha.1-npm-rc1/*.json`. Hosted CI, live provider runs, Windows and Linux: NOT_RUN.

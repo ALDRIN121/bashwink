@@ -71,6 +71,13 @@ layout is the *optional sandbox* artifact now.
 
 ADR-015 (standard default, sandbox optional), ADR-016 (future engines, direction only), ADR-013/014 (sandbox mechanisms).
 
+## Status at the end of this session (2026-11-25)
+
+Candidate `npm-rc1` exists (`e0a3f48f…d458`, commit `2ba4b98`, reproducible) and is verified on macOS arm64 only. The
+report is `FINAL_ALPHA_RELEASE_REPORT.md`; its section G lists what the owner must provide. Items 2-6 below are partly
+done: tester docs, platform/provider matrices and CI jobs are written; live runs, Windows, the audit and the quality
+controls are not.
+
 ## Done since the baseline (local commit; usage limit reached mid-milestone)
 
 - **Standard flavor** (`__BASHWINK_STANDARD__`): native default, mode `standard-native` (label `STANDARD`, persistent TUI
@@ -96,7 +103,7 @@ ADR-015 (standard default, sandbox optional), ADR-016 (future engines, direction
    rendered screen, evidence boots, SIGTERM ends the session with 130 and the run record says `standard-native` with
    evidence `recorded`, a second launch does not ask again, no process is left, `npm uninstall -g` removes the command
    and leaves the user's state and project alone. Result file:
-   `docs/bashwink/releases/v0.1.0-alpha.1/npm-candidate/npm_smoke_macos_arm64.json`. The tarball built for it came from a
+   `release/standard/0.1.0-alpha.1-npm-rc1/tui-smoke-macos-arm64.json`. The tarball built for it came from a
    dirty tree, so it is **not** a candidate; the candidate is built from a clean commit.
    Defects found and fixed by running the installed package (none were visible from the source checkout):
    - npm's `bun` package moves the binary out of the platform package into `bun/bin/bun.exe`; the launcher looked only in

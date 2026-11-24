@@ -2,12 +2,12 @@
   {
     "check": "npm install -g <tarball> succeeds without any source checkout",
     "verdict": "PASS",
-    "detail": "17s"
+    "detail": "16s"
   },
   {
     "check": "installed size recorded",
     "verdict": "PASS",
-    "detail": "315218105 bytes including runtimes"
+    "detail": "315218994 bytes including runtimes"
   },
   {
     "check": "no workspace dependency or source-tree path leaked into the installed manifest",

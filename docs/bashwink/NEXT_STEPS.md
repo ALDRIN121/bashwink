@@ -128,3 +128,10 @@ and git subprocess differences (`git 2.56.1` vs Apple Git 2.54.0).
 Qualify remaining live cancellation, interrupted upstream and platform controls. Package and qualify a
 relay-enabled installation on a clean target host. Keep BW-031, BW-032 and external
 alpha open until their full acceptance criteria pass.
+
+## 2026-11-25: after candidate `npm-rc1`
+
+Eligible now: permission negative tests against the installed package; bounded retries and a request/cost cap with
+display (BW-075 minimum); the 25-question audit; `npm audit` and transitive licences. Blocked on the owner: the key
+file, Windows 11 x64 and Linux hosts, permission to push for hosted CI, the licensing decision. BW-031 and BW-032 stay
+In progress. Full list: `FINAL_ALPHA_RELEASE_REPORT.md` section G.

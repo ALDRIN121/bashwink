@@ -220,3 +220,29 @@ checks each exact digest before extracting the test inputs.
    evidence. Keep external and public release blocked.
 
 [Qualification results](BW-032_QUALIFICATION_RESULTS.md) · [Security model](NATIVE_SANDBOX_SECURITY_MODEL.md).
+
+
+## VM release-path baseline, 24 November 2026
+
+The Apple Virtualization.framework guest was selected for the macOS shell-capable
+release path after the Seatbelt experiment demonstrated that a detached process
+could survive the available process-group cleanup and continue writing. The existing
+Seatbelt file-only profile retains its narrower tested role. Bubblewrap remains a
+Linux option, with qualification blocked on the documented host readiness failure.
+The VM tests support the tested guest termination and filesystem boundaries on the
+lab host. They do not qualify all macOS versions or a live provider.
+
+The installed VM path requires macOS Apple Silicon, a signed helper with the
+virtualization entitlement, a pinned Linux kernel and guest image, and the pinned
+OpenCode and Bun guest runtime. The relay-enabled guest additionally includes pinned
+virtio socket modules and socat. The current build script does not assemble those VM
+assets, and no qualified release archive exists. The VM configuration allocates two
+virtual CPUs and 1536 MiB for an interactive guest. Actual peak host memory, CPU
+consumption, boot latency and TUI latency have not been measured for release.
+
+The VM has no configured network device or shared host directory. A private virtual
+socket carries provider requests through a host-owned, capability-checked relay.
+The host owns provider credentials. VM lifetime, guest software updates, asset
+integrity, entitlement signing, security fixes and dependency notices create ongoing
+maintenance obligations. Unsupported hosts and missing assets must fail closed when
+VM execution is requested. BW-031 and BW-032 remain in progress.

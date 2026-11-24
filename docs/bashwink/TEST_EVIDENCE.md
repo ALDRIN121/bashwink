@@ -1520,3 +1520,14 @@ Reproduce the synthetic VM fixture with pinned input directories using
 <relay-inputs>`. The host requires Virtualization.framework entitlement and a
 disposable workspace. Existing workspace, baseline refresh and early-journal
 limitations remain open. No CI run was requested for this milestone.
+
+
+## Milestone 4 baseline — live-provider gate
+
+On 24 November 2026, the clean `codex/v0.1.0-alpha-preparation` checkout at
+`f7921bd548ce4ed39fb151ac3d35616cf33cb11a` ran `bun test packages` using Bun
+1.4.4 on Darwin arm64. The command exited 0 with 428 passed and 0 failed across
+27 files. This result is the package suite, not a live-provider or VM acceptance run.
+No commonly named supported provider credential was present in this agent process.
+No authorized live account was identified. Live-provider qualification is BLOCKED.
+The remaining milestone checks were not run at this gate.

@@ -91,8 +91,8 @@
       "size_bytes": 6702
     },
     "BW-031_IMPLEMENTATION_REPORT.md": {
-      "sha256": "7e1a925a877a44a65ad2e344cb0845023aa266bb9b50d00e57931800e02248aa",
-      "size_bytes": 16481
+      "sha256": "ed100a267aeb5552ad60506f82587c999604f7b94cd6aef4d7a87cfd4e86f5ea",
+      "size_bytes": 18146
     },
     "BW-032_PLATFORM_QUALIFICATION.md": {
       "sha256": "64a9655c4d71dc510ffb4083d7de3a49d8217922e23cff54fbdb0edaddac55f0",
@@ -199,8 +199,8 @@
       "size_bytes": 45255
     },
     "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md": {
-      "sha256": "95fca11af815084e4ee79a3362d763a30d04d2c914ef9ecaebe63ccb58af8863",
-      "size_bytes": 1075
+      "sha256": "27e71d01b8589a3fce2afabcdd100b3f096321bf8afdb4824a6f9067988c208f",
+      "size_bytes": 1121
     },
     "releases/v0.1.0-alpha/FEEDBACK_GUIDE.md": {
       "sha256": "8d6653bd94b0ddf636f074346d8fbc46e2476ceac2a111ef7a73da876d7366cb",
@@ -223,8 +223,8 @@
       "size_bytes": 1062
     },
     "releases/v0.1.0-alpha/RELEASE_READINESS.md": {
-      "sha256": "ee0e2dff2dbb5a4cd9c1bb7fed272eb898b760a1bbcb4d97f56caa60ac5e0339",
-      "size_bytes": 2940
+      "sha256": "4bb8cc2beacc634890c354e4870a883ed0d128f1c1e939b4b2b0c0598b0a4ab8",
+      "size_bytes": 3369
     },
     "releases/v0.1.0-alpha/SECURITY_LIMITATIONS.md": {
       "sha256": "af77cfbe30cc51925ce3eea50522d4ea45afe8281a91f055f58fde8fefb99d00",

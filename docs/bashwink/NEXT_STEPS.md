@@ -1,5 +1,10 @@
 # Bashwink next steps
 
+Milestone 4 is stopped at the live-provider gate. Supply an explicitly authorized
+provider credential to the test process and select an account-authorized model. A
+relay-enabled VM installation must also be provisioned before the live PTY test.
+Do not treat the package regression suite as provider qualification.
+
 The pre-dispatch readiness and local backend foundation have local evidence. Hosted macOS
 runtime health passed. The Ubuntu readiness failure remains open. The supervised internal
 alpha remains conditional, and external alpha remains blocked. [Current test evidence](TEST_EVIDENCE.md).

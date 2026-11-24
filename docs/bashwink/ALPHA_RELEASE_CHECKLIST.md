@@ -152,3 +152,11 @@ results independently.
 blocker. Phase 2 test integrity, independently linked verification and packaged alpha criteria
 remain open. Hard execution and spend ceilings are required for unattended use.
 [Internal alpha readiness](INTERNAL_ALPHA_READINESS.md).
+
+
+## Live provider evidence update
+
+A CommandCode model completed a disposable installed-VM coding and resume exercise.
+The release gate remains failed pending full platform qualification, a clean
+installation, remaining relay and export controls, and release-candidate evidence.
+See [test evidence](TEST_EVIDENCE.md).

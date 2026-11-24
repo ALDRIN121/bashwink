@@ -1,9 +1,8 @@
 # Bashwink next steps
 
-Milestone 4 is stopped at the live-provider gate. Supply an explicitly authorized
-provider credential to the test process and select an account-authorized model. A
-relay-enabled VM installation must also be provisioned before the live PTY test.
-Do not treat the package regression suite as provider qualification.
+A disposable relay-enabled VM completed a live CommandCode coding task and resume.
+Qualify the remaining relay, export, installation and platform controls before
+advancing the external-alpha gate.
 
 The pre-dispatch readiness and local backend foundation have local evidence. Hosted macOS
 runtime health passed. The Ubuntu readiness failure remains open. The supervised internal
@@ -107,3 +106,11 @@ and git subprocess differences (`git 2.56.1` vs Apple Git 2.54.0).
 | BW-015 | Export keeping `pass`/`fail`/`not_run` distinct, plus md/json and a raw-result digest |
 | BW-016 | `taskID` on every event from a durable marker; explicit `unassignedReason` otherwise |
 | BW-019 | Real SIGKILL fixture: `writes=1`, resume reopens to `in_progress`, never `verified` |
+
+
+## Following the live CommandCode run
+
+Qualify live model switching, relay cancellation and negative controls, and resolve
+the early export journal window and baseline refresh. Package and qualify a
+relay-enabled installation on a clean target host. Keep BW-031, BW-032 and external
+alpha open until their full acceptance criteria pass.

@@ -35,8 +35,8 @@
       "size_bytes": 3292
     },
     "ALPHA_RELEASE_CHECKLIST.md": {
-      "sha256": "18766067bbbcf8c588141ad84bf6224ed268a9b598b59a8a66bcb1cccdd58e6b",
-      "size_bytes": 9307
+      "sha256": "8740c76450d7160d4bbdfffed6b679b4233d07afc3ac1b9787e77bd912df842f",
+      "size_bytes": 9626
     },
     "ALPHA_TESTER_GUIDE.md": {
       "sha256": "9980d44cc33c0bf791388b5c54e6dcc511699a38b39c8fdf1b072d315e0bc054",
@@ -91,16 +91,16 @@
       "size_bytes": 6702
     },
     "BW-031_IMPLEMENTATION_REPORT.md": {
-      "sha256": "ed100a267aeb5552ad60506f82587c999604f7b94cd6aef4d7a87cfd4e86f5ea",
-      "size_bytes": 18146
+      "sha256": "df2e6eb1dbcccd537350659d9828fc563654931d79b5da98f81c06709359c731",
+      "size_bytes": 18577
     },
     "BW-032_PLATFORM_QUALIFICATION.md": {
       "sha256": "64a9655c4d71dc510ffb4083d7de3a49d8217922e23cff54fbdb0edaddac55f0",
       "size_bytes": 7016
     },
     "BW-032_QUALIFICATION_RESULTS.md": {
-      "sha256": "bad3ebaf9f632cce54c528f4e861747b3365fabde2e086e2ebfd66b0afa17acd",
-      "size_bytes": 6023
+      "sha256": "e4ec8d05df8aecdbefd2e8903f54f2ece69c2a1c363a235d387271e78cfe4941",
+      "size_bytes": 6498
     },
     "CI_BASELINE_RECONCILIATION.md": {
       "sha256": "14d4f9555edbae2f3ef7e8c5d2185ddaaa83de9df6c528c7286934df6e273b47",
@@ -127,8 +127,8 @@
       "size_bytes": 4119
     },
     "KNOWN_LIMITATIONS.md": {
-      "sha256": "783641ec9428837413932ea7268e598b98a666116d4b308c50fe4aabf1e93887",
-      "size_bytes": 9944
+      "sha256": "36593a13f7d438a4e62a52ae5c8f5f0c08156b916c3306b03b039054a80ac301",
+      "size_bytes": 10438
     },
     "LLM_INTEGRATION_AUDIT.md": {
       "sha256": "09a0da4a4f7df07586ae1db2df32f06b267f114cee6fdb639bb608615132f24e",
@@ -199,8 +199,8 @@
       "size_bytes": 45255
     },
     "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md": {
-      "sha256": "27e71d01b8589a3fce2afabcdd100b3f096321bf8afdb4824a6f9067988c208f",
-      "size_bytes": 1121
+      "sha256": "d8efde85f76a7545eddf0ed09bef530ff52456e88b3d4aaed6db528cd2c0f9d4",
+      "size_bytes": 1123
     },
     "releases/v0.1.0-alpha/FEEDBACK_GUIDE.md": {
       "sha256": "8d6653bd94b0ddf636f074346d8fbc46e2476ceac2a111ef7a73da876d7366cb",
@@ -223,8 +223,8 @@
       "size_bytes": 1062
     },
     "releases/v0.1.0-alpha/RELEASE_READINESS.md": {
-      "sha256": "4bb8cc2beacc634890c354e4870a883ed0d128f1c1e939b4b2b0c0598b0a4ab8",
-      "size_bytes": 3369
+      "sha256": "963548f4925bde0fc77dbc4f1b11e0ec6a3aefbd381099a6fa3235ce8f60ae2b",
+      "size_bytes": 3403
     },
     "releases/v0.1.0-alpha/SECURITY_LIMITATIONS.md": {
       "sha256": "af77cfbe30cc51925ce3eea50522d4ea45afe8281a91f055f58fde8fefb99d00",

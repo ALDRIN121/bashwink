@@ -246,3 +246,12 @@ The host owns provider credentials. VM lifetime, guest software updates, asset
 integrity, entitlement signing, security fixes and dependency notices create ongoing
 maintenance obligations. Unsupported hosts and missing assets must fail closed when
 VM execution is requested. BW-031 and BW-032 remain in progress.
+
+
+## Live provider exercise
+
+The Apple VM fixture completed a bounded live CommandCode multi-file coding task
+through the host relay, then resumed and exported the reviewed edits. The guest test
+and separate protected verification passed. Provider model switching, complete
+lifecycle qualification and a distributable VM installation remain open. The
+observations and limitations are recorded in [test evidence](TEST_EVIDENCE.md).

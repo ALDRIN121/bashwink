@@ -190,3 +190,12 @@ for session management will hit this.
 - **The policy is written once per run.** A mid-run edit to `data/scope.json` does not change
   what the running plugin enforces — it read the policy at setup — but it will affect another run’s distinct scope file. Scope snapshots live in the data root under
   `scopes/`.
+
+
+## Live VM provider limitations
+
+A single CommandCode model completed a live lab task. Live model switching and provider cancellation remain unverified. Synthetic relay
+controls cover client disconnect, timeout, size limits and malformed responses. The VM
+installation is a local fixture rather than a qualified distributable. The early
+export-journal window, baseline refresh between apply batches, and wider workspace
+support remain open. Request budgets do not enforce a monetary ceiling.

@@ -1531,3 +1531,36 @@ On 24 November 2026, the clean `codex/v0.1.0-alpha-preparation` checkout at
 No commonly named supported provider credential was present in this agent process.
 No authorized live account was identified. Live-provider qualification is BLOCKED.
 The remaining milestone checks were not run at this gate.
+
+
+## CommandCode live VM coding — 24 November 2026
+
+On macOS 27.0.1 build 26A434 arm64, the installed VM fixture built from
+`90687438` with the `f7921bd` relay selected `commandcode/claude-sonnet-5` through
+the host relay. The live provider streamed responses and invoked file tools. A
+disposable PTY session approved edits to `one.ts` and `two.ts` and the guest
+`bun test accept.test.ts` command. Evidence records show exit 0 and one passing test.
+`--continue` restored the same session and extended its evidence chain. The reviewed
+two-file diff was approved and applied. The independent host test and fresh VM
+protected-test verification exited 0. The host canary and original test hash stayed
+unchanged. The inspected guest state and host usage records did not contain the raw
+provider key. Fixture artifacts are under `/private/tmp/bw-live-commandcode-nm8j4_ft`.
+The process-list check found no remaining fixture VM owner. Detached-writer behavior
+was not independently exercised in this live run.
+
+The coding run used five relay requests and the resume used one. These are observations
+for this small task, not a budget recommendation. The prior usage summary omitted
+Anthropic cache-read and cache-write input counters. A focused regression covers the
+new separate counters. The final local complete package run reported 434 passed and 0 failed, exit 0. Live tests used the previously built installed fixture,
+so the new usage display is covered by regression tests rather than that installed run.
+Synthetic relay tests cover oversized requests and responses, client disconnect,
+timeout, malformed response and upstream 5xx. Real-provider model switching and
+cancellation, complete network and replay negatives, and full BW-032 qualification
+remain unverified. External alpha remains blocked.
+
+The updated local installation subsequently completed a live read-only CommandCode
+task with the guest file tool and a finished model response. It reported 2 requests,
+17,454 Anthropic cache-read input tokens and 194 cache-write input tokens. Its full
+coding workflow was not rerun after the reporting change. One earlier live coding
+attempt hit the 100-second guest execution deadline while the automation was waiting
+for an edit approval. The stage was retained and the host checkout stayed unchanged.

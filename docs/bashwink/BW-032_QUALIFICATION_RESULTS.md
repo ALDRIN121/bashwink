@@ -48,3 +48,12 @@ permission-controlled local baseline and its documented host-access exposure. Ex
 developer alpha and public release are blocked.
 
 [Executed evidence](TEST_EVIDENCE.md) · [Full qualification plan](BW-032_PLATFORM_QUALIFICATION.md).
+
+
+## Live CommandCode observation
+
+A disposable macOS Apple Silicon VM fixture completed live model-driven edits, guest
+tests, session resume, reviewed host apply and independent protected tests. Inspected
+saved guest state did not contain the provider key. This is a single lab-host result,
+not complete platform qualification. Model switching, clean installation, remaining
+negative controls and the exact-release CI run remain open. See [test evidence](TEST_EVIDENCE.md).

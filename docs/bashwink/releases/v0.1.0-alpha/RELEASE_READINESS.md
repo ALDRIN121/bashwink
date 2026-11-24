@@ -8,7 +8,7 @@ build and successful CI at the exact candidate revision.
 
 **PARTIAL.** An isolated VM and pinned OpenCode completed a scripted synthetic-provider
 PTY coding task through the host relay, then resumed and applied reviewed changes. A live
-provider and paid-account coding task remain blocked. Other upstream provider errors currently
+provider coding task completed in a lab fixture. Release qualification remains blocked. Other upstream provider errors currently
 collapse to a generic failure. The clean installation, complete qualification and exact-SHA
 CI requirements remain open.
 

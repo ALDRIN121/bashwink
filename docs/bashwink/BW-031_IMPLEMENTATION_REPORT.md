@@ -66,11 +66,38 @@ its separately authenticated, workspace-scoped admission endpoint. Terminal ioct
 targets its inherited PTY. The app retains private fixture state for observation and never
 exports edits to the caller's checkout. Use this command only for the controlled fixture.
 
-The host verified a durable session associated with the tool evidence. Restart and import
-of retained session state still need a trusted reopening path. The abrupt launcher case
-left a stale readiness file even though neither directly owned child was alive when
-observed. Detached descendants and security of a production terminal boundary remain
-unqualified. [Recorded evidence](TEST_EVIDENCE.md).
+The host verified a durable session associated with the tool evidence.
+Security of a production terminal boundary remains unqualified. [Recorded evidence](TEST_EVIDENCE.md).
+
+## Recover and export a staged file
+
+From the host directory containing the regular text file `task.txt`, start
+`bashwink sandbox offline <mock-port> --stage-file`. This explicitly stages a copy of
+that one file. The recovery profile denies process creation and shell execution. It also
+checks the shell refusal through Seatbelt before starting OpenCode. The separate
+shell-enabled fixture still exercises kernel file and network denials in a real shell
+child. A shell-enabled stage cannot be reopened or exported.
+
+Use the printed stage root with
+`bashwink sandbox offline <mock-port> --stage <root> --continue` or replace
+`--continue` with `--session <id>`. The launcher checks the registered stage directories,
+policy and runtime/plugin fingerprint, saved session ownership, and the saved evidence
+prefix. It then requires fresh attestation from the owned server and confirms the saved
+session again over its authenticated API before starting the TUI.
+
+From the original host directory run `bashwink sandbox export <root>`. The command
+previews the bounded text change and waits for the exact word `apply` on a terminal.
+It checks the original directory, file identity, timestamps, mode and SHA-256 base,
+then uses a single same-directory atomic exchange. It verifies the displaced file and
+retains it if a concurrent mutation makes recovery ambiguous. This fixture supports
+one file and preserves ordinary permission bits. General project import, extended
+file metadata, and atomic transactions across files remain unqualified.
+
+The host retains an activation interlock until supervised shutdown and evidence
+checkpointing complete. An abrupt kill can leave both the interlock and a readiness
+file behind. Such stages remain closed. The baseline shell profile allowed an inert
+disowned process to outlive both owned OpenCode processes. Complete descendant cleanup
+remains a release blocker. [Test evidence](TEST_EVIDENCE.md).
 
 ## Open work in order
 
@@ -81,9 +108,9 @@ unqualified. [Recorded evidence](TEST_EVIDENCE.md).
 2. Run native mounts, network namespace, seccomp and lifecycle controls with the distro
    Bubblewrap on an AppArmor-enabled host. Keep the macOS deny profile small and qualify
    it on each advertised release.
-3. Extend the proven fixture workload with trusted reopening of staged sessions, reviewed
-   import and detached-descendant observation. Keep the first prompt gated on fresh
-   workload and plugin identity.
+3. Close the observed descendant survival gap and qualify interruption recovery for
+   shell-capable stages. Extend reviewed export only after defining a portable project
+   transaction and qualifying host metadata and write conflicts.
 4. Implement the narrow host provider relay with credential separation. Qualify its
    negative controls, then exercise an authorized live provider and model switching.
 5. Verify detached cleanup, resource limits and clean Docker-free installs through BW-032.

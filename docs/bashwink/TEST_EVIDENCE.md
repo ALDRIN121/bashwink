@@ -1,5 +1,30 @@
 # Bashwink — Test Evidence Register
 
+## Native offline recovery and single-file export (2026-11-24)
+
+Source revision `f04c5cbdb4f892804bd5c4d204c36836cff0dbfe`. Installed outside the checkout with Bun 1.4.4 and
+OpenCode v2.3.2 on macOS arm64 27.0.1 (26A434). Disposable host and stage directories,
+an independent loopback mock, and a controlling PTY were used.
+
+| Command or control | Exit | Result |
+| --- | ---: | --- |
+| `python3 fixtures/native-offline/recovery.py <installed-bashwink> <native-opencode>` | 0 | File-only Seatbelt admission verified the pinned runtime and kernel rejection of shell launch. Real in-process edits worked. `--continue` then explicit `--session` attached to the same SQLite session after a supervised SIGTERM. The provider saw the earlier and current prompt together. Three distinct boot proofs were recorded and the previous evidence bytes stayed intact. Foreign workspace, incompatible profile, active marker, stale readiness, and truncated evidence were refused with no model request. |
+| Reviewed host export in the same PTY fixture | harness 0 | No export on ordinary exit. Declining and Ctrl+C at preview preserved the original hash. A conflict after preview preserved the host edit. Wrong directory, traversal, symlink, hardlink and FIFO were refused. Confirmed apply replaced only `task.txt` with the reviewed bytes and preserved the outside canary hash. |
+| `fixtures/native-offline/run.py` supervised lifecycle modes | harness 0 | Normal exit and Ctrl+C returned 0. Server crash returned 3, timeout 124, and wrong-runtime startup 3 before any provider request. Both directly owned processes were gone after supervised exits, and their readiness lease was removed. |
+| `run.py --lifecycle abrupt` | harness 0, launcher -9 | Both owned process identities were gone when observed. The readiness file and activation interlock remained. Recovery refuses an outstanding interlock. Abrupt stale-state retirement is unresolved. |
+| `run.py --lifecycle detached` | harness 0, cleanup FAIL | A bounded disowned shell process with the same start-time and command identity outlived the owned server and client. The observer ended it through its fixture FIFO and verified it was gone. No PID-only cleanup of detached processes was used. |
+| `run.py --lifecycle coding` under the original shell-capable profile | 0 | The file tool and real shell still worked. Seatbelt blocked writes to the protected sibling and the unrelated loopback connection. Host inode, hash and listener state were preserved. |
+| `bun run packages/bw-evidence/src/cli.ts verify <reopened-evidence.jsonl>` | 0 | Nine entries verified after the recovered conversation. |
+| `bun run test`, typecheck, lint, formatting, lint gate | 0 each | 399 tests passed in 23 files. 61 formatted files and six lint gate checks. |
+| Existing runtime, tool permission, contract and resume fixtures | 0 each | 11, 19, 14 and 10 checks respectively using pinned local OpenCode. |
+| Ubuntu / Bubblewrap | BLOCKED | Host is Darwin arm64. No local Bubblewrap, x86-64 QEMU or Lima command, no Podman machines, and no Docker daemon responded. The re-read historical Ubuntu job showed OpenCode v2.3.2 launching and a generic readiness failure before the tool fixture. This is insufficient to establish a root cause. New endpoint diagnostics distinguish malformed/oversized output and EOF, report exit/signal where known, and identify inventory, proof and ownership substeps without logging credentials or raw stdout. |
+| Hosted CI | NOT_RUN | No new dispatch under the existing Actions quota pause. [Historical Ubuntu diagnostic baseline](https://github.com/ALDRIN121/bashwink/actions/runs/45266792026/job/138015719611). |
+
+Detached cleanup and automatic reopening after launcher SIGKILL are release blockers.
+The two experimental commands remain restricted to their fixture profiles. There is
+no provider relay or general native coding admission.
+[Qualification results](BW-032_QUALIFICATION_RESULTS.md).
+
 ## Installed macOS offline TUI milestone (2026-11-24)
 
 Source revision `ac3566340a420304345c1419a2eea0e02ef1f4d2`. macOS arm64 27.0.1 build 26A434. Bun 1.4.4

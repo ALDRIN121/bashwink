@@ -7,11 +7,11 @@ alpha remains conditional, and external alpha remains blocked. [Current test evi
 1. Reproduce the Ubuntu readiness failure with the pinned Linux binaries on a disposable
    Linux machine. Use the local substep diagnostics to identify the failing stage and qualify
    the fix before closing BW-018 and BW-030. Keep additional hosted runs paused.
-2. Use the installed offline macOS fixture as the baseline for trusted session reopening,
-   reviewed staged import and descendant cleanup. Diagnose and repair stale readiness
-   state after abrupt launcher death. Build and verify the first Bubblewrap workload
-   on a disposable Ubuntu host. Keep the pinned client and private server
-   within the same boundary and demonstrate protected inputs, staged outputs and cleanup.
+2. Design and verify a workload lifetime boundary for the shell-capable Seatbelt profile.
+   The detached fixture survived both owned processes. Keep shell-enabled stages closed
+   to recovery and export until surviving writers can be ruled out. Automate stale-lease
+   retirement only with equivalent ownership evidence. The file-only profile already has
+   installed PTY recovery and reviewed single-file export evidence.
 3. Add the narrow host provider channel, then run BW-032 using clean Docker-free installs
    on each advertised platform. Hold external alpha until the real runtime, provider and
    OS-level negative controls pass. Optional Docker has a separate qualification path.

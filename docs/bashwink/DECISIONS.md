@@ -94,6 +94,16 @@ choice. Docker remains optional. This decision changes the roadmap and leaves th
 implementation and qualification tasks open.
 [Feasibility](BW-031-SANDBOX-PROPOSAL.md) · [BW-032](BW-032_PLATFORM_QUALIFICATION.md).
 
+## Native offline recovery profile (2026-11-24)
+
+A disowned process survived ordinary TUI and server shutdown in the shell-enabled
+fixture. Saved-stage reopening and host export therefore require the file-only profile.
+Seatbelt denies process creation and shell execution for that profile. Only the staged
+text file can leave through a separate host preview and approval. An abandoned
+activation marker remains a refusal condition. There is no automatic PID-based reaping
+of abandoned descendants.
+[Milestone report](BW-031_IMPLEMENTATION_REPORT.md) · [Qualification](BW-032_QUALIFICATION_RESULTS.md).
+
 ## Decision template
 
 ### ADR-XXX — Decision title

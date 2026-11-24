@@ -98,8 +98,10 @@ The revised architecture makes native Seatbelt and Bubblewrap the preferred isol
 paths and keeps Docker optional. The starting proof covers narrow macOS primitives.
 Full native policy, provider transport, platform qualification and descendant cleanup
 remain open. **BW-031 and BW-032 are In progress.** The installed macOS probe passed six controls.
-The installed offline TUI completed a real mock coding turn inside Seatbelt. General
-native admission, native recovery and platform qualification are still open.
+The installed offline TUI completed a real mock coding turn inside Seatbelt. The separate
+file-only profile reopens saved sessions and applies an explicitly approved single-file
+export. Detached cleanup failed under the shell-enabled fixture. General native admission
+and platform qualification remain open.
 [Implementation milestone](BW-031_IMPLEMENTATION_REPORT.md) · [Qualification results](BW-032_QUALIFICATION_RESULTS.md).
 [Feasibility](BW-031-SANDBOX-PROPOSAL.md) · [Implementation plan](BW-031_IMPLEMENTATION_PLAN.md).
 

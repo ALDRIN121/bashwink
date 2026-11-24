@@ -268,6 +268,81 @@
       "verdict": "NOT_RUN",
       "exitCode": null,
       "reason": "The conducted observer tracked only the directly owned TUI and server."
+    },
+    {
+      "id": "file-only-native-recovery",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "f04c5cbdb4f892804bd5c4d204c36836cff0dbfe",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/recovery.py",
+      "expected": "Demonstrate the stated control through an externally observed fixture",
+      "observed": "Installed PTY reopened the same conversation with --continue and --session and fresh boot attestations after supervised signal.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 0,
+      "reason": ""
+    },
+    {
+      "id": "reviewed-single-file-export",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "f04c5cbdb4f892804bd5c4d204c36836cff0dbfe",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/recovery.py",
+      "expected": "Demonstrate the stated control through an externally observed fixture",
+      "observed": "Preview, cancellation, conflict, rejected links and FIFO, wrong directory and traversal controls passed. Confirmed apply changed exactly one approved text file.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 0,
+      "reason": ""
+    },
+    {
+      "id": "shell-profile-detached-lifetime",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "f04c5cbdb4f892804bd5c4d204c36836cff0dbfe",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/run.py --lifecycle detached",
+      "expected": "Demonstrate the stated control through an externally observed fixture",
+      "observed": "The same disowned process identity stayed alive after direct children exited. Its inert fixture pipe ended it.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "FAIL",
+      "exitCode": 0,
+      "reason": "The same disowned process identity stayed alive after direct children exited. Its inert fixture pipe ended it."
+    },
+    {
+      "id": "abrupt-stage-reopen",
+      "tier": "installed-offline-tui",
+      "platform": "macos-arm64",
+      "backend": "seatbelt-offline-fixture",
+      "commit": "f04c5cbdb4f892804bd5c4d204c36836cff0dbfe",
+      "policyDigest": null,
+      "command": "python3 fixtures/native-offline/run.py --lifecycle abrupt",
+      "expected": "Demonstrate the stated control through an externally observed fixture",
+      "observed": "An activation interlock and readiness file persisted after launcher death. The stage cannot reopen automatically.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "BLOCKED",
+      "exitCode": 0,
+      "reason": "An activation interlock and readiness file persisted after launcher death. The stage cannot reopen automatically."
+    },
+    {
+      "id": "ubuntu-native-qualification",
+      "tier": "platform",
+      "platform": "ubuntu-x86_64",
+      "backend": "bubblewrap",
+      "commit": "f04c5cbdb4f892804bd5c4d204c36836cff0dbfe",
+      "policyDigest": null,
+      "command": null,
+      "expected": "Demonstrate the stated control through an externally observed fixture",
+      "observed": "No disposable supported Ubuntu host was available. Historical logs stop at generic readiness failure.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "BLOCKED",
+      "exitCode": null,
+      "reason": "No disposable supported Ubuntu host was available. Historical logs stop at generic readiness failure."
     }
   ],
   "qualification": [
@@ -333,8 +408,8 @@
       "expected": "External observer verifies descendant containment and cleanup",
       "observed": "No release-tier evidence",
       "evidence": "BW-032_QUALIFICATION_RESULTS.md",
-      "verdict": "BLOCKED",
-      "reason": "The fixture observations are narrower than this required release control. See BW-032 qualification results."
+      "verdict": "FAIL",
+      "reason": "The observed disowned shell process survived both owned runtime processes."
     },
     {
       "id": "network-and-provider-transport",
@@ -386,7 +461,7 @@
       "observed": "No release-tier evidence",
       "evidence": "BW-032_QUALIFICATION_RESULTS.md",
       "verdict": "BLOCKED",
-      "reason": "The fixture observations are narrower than this required release control. See BW-032 qualification results."
+      "reason": "File-only fixture recovery and export passed. Shell-capable and abrupt recovery and general project export remain outside the verified boundary."
     },
     {
       "id": "unsupported-host-and-no-fallback",

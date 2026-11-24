@@ -134,3 +134,28 @@ describe("staging", () => {
     ).toThrow(/no resolvable server entry/)
   })
 })
+
+describe("home directory", () => {
+  const { homeDirectory, paths } = require("../src/paths.js") as typeof import("../src/paths.js")
+  test("HOME is used where set, USERPROFILE where HOME is not (Windows), and never the current directory", () => {
+    const home = path.join(root, "home-a")
+    expect(homeDirectory({ HOME: home })).toBe(home)
+    expect(homeDirectory({ USERPROFILE: home })).toBe(home)
+    expect(homeDirectory({ HOME: "relative/dir", USERPROFILE: home })).toBe(home)
+    expect(path.isAbsolute(homeDirectory({}))).toBe(true)
+    expect(homeDirectory({ HOME: "" })).not.toBe("")
+  })
+  test("with only USERPROFILE set, configuration and data land under the profile, not in the project", () => {
+    const profile = path.join(root, "profile")
+    const resolved = paths({ USERPROFILE: profile })
+    for (const directory of [
+      resolved.config,
+      resolved.data,
+      resolved.cache,
+      resolved.state,
+      resolved.evidence,
+    ])
+      expect(directory.startsWith(profile)).toBe(true)
+    expect(resolved.config).toBe(path.join(profile, ".config", "bashwink"))
+  })
+})

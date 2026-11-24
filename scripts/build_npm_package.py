@@ -29,6 +29,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "release/npm"
+# On Windows npm is `npm.cmd`, which a bare "npm" does not find without a shell.
+NPM = shutil.which("npm") or "npm"
 
 
 def run(command, **kwargs):
@@ -129,7 +131,7 @@ def main() -> int:
     stage = out / "stage/package"
     out.mkdir(parents=True)
     manifest = stage_package(stage, commit, args.bun)
-    packed = capture(["npm", "pack", "--ignore-scripts", "--pack-destination", out, stage], cwd=out).splitlines()[-1]
+    packed = capture([NPM, "pack", "--ignore-scripts", "--pack-destination", out, stage], cwd=out).splitlines()[-1]
     tarball = out / packed
     report = audit(tarball)
     shutil.rmtree(out / "stage")
@@ -139,7 +141,7 @@ def main() -> int:
         "schema": 1, "flavor": "standard", "package": manifest["name"], "version": manifest["version"],
         "candidate_commit": commit, "artifact": {"name": tarball.name, "sha256": digest, "bytes": tarball.stat().st_size},
         "dependencies": manifest["dependencies"], "engines": manifest["engines"], "os": manifest["os"], "cpu": manifest["cpu"],
-        "contents": report["names"], "audit": "passed", "built_with": {"bun": "1.4.4", "npm": capture(["npm", "--version"]),
+        "contents": report["names"], "audit": "passed", "built_with": {"bun": "1.4.4", "npm": capture([NPM, "--version"]),
         "node": capture(["node", "--version"])},
     }, indent=2) + "\n")
     print(f"tarball  {tarball}\nsha256   {digest}\nsize     {tarball.stat().st_size} bytes, {report['files']} files\ncommit   {commit}")

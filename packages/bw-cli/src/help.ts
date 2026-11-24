@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { PINNED_RUNTIME_VERSION } from "./runtime.js"
-import { RELEASE_BUILD } from "./release.js"
+import { RELEASE_BUILD, STANDARD_BUILD } from "./release.js"
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -202,6 +202,38 @@ EXIT CODES
 See share/doc/ALPHA_TESTER_GUIDE.md and KNOWN_LIMITATIONS.md in the install directory.
 `
 
+/**
+ * The help of the standard (native) package: the general help without what that package does not have.
+ * Derived from HELP so the two cannot drift: the optional sandbox subcommands and the environment switch
+ * for the execution backend are removed (the standard package refuses both), and the mode is stated first.
+ */
+function standardHelp(): string {
+  const kept: string[] = []
+  let skipping = false
+  for (const line of HELP.split("\n")) {
+    if (line.startsWith("  sandbox ")) {
+      skipping = true
+      continue
+    }
+    if (skipping && line.startsWith(" ".repeat(28))) continue
+    skipping = false
+    if (line.startsWith("  BASHWINK_BACKEND=")) continue
+    kept.push(line)
+  }
+  const mode = [
+    "MODE",
+    "  STANDARD: native and permission-controlled. Bashwink runs on this computer with your user's access.",
+    "  It asks before shell commands, edits outside the agreed scope and network use. It is NOT an",
+    "  operating-system sandbox: an approved command can do anything you can. The optional isolated",
+    "  sandbox (`--sandbox`) is not part of this package; asking for it fails closed and starts nothing.",
+    "",
+  ]
+  const text = kept.join("\n")
+  const at = text.indexOf("USAGE")
+  return `${text.slice(0, at)}${mode.join("\n")}\n${text.slice(at)}`
+}
+
 export function renderHelp(): string {
+  if (STANDARD_BUILD) return standardHelp()
   return RELEASE_BUILD ? RELEASE_HELP : HELP
 }

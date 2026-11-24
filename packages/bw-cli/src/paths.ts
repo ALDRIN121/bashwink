@@ -30,6 +30,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs"
+import { homedir } from "node:os"
 import path from "node:path"
 
 /** Plugin id that must be registered before any policy plugin (ADR-002). */
@@ -442,6 +443,19 @@ export interface Paths {
 }
 
 /**
+ * The user's home directory. `HOME` where it is set; on Windows it normally is not, and the profile is
+ * `USERPROFILE`. The last resort is the operating system's own answer. It is never the current directory:
+ * an earlier fallback of "." would have written configuration and run records into the user's project.
+ */
+export function homeDirectory(environment: NodeJS.ProcessEnv = process.env): string {
+  for (const key of ["HOME", "USERPROFILE"]) {
+    const value = environment[key]
+    if (value !== undefined && value !== "" && path.isAbsolute(value)) return value
+  }
+  return homedir()
+}
+
+/**
  * Resolve Bashwink's directories.
  *
  * `BASHWINK_HOME` takes priority so a test or a user can relocate everything at once; it is
@@ -461,12 +475,12 @@ export function paths(environment: NodeJS.ProcessEnv = process.env): Paths {
       evidence: path.join(root, "data", "evidence"),
     }
   }
+  const home = homeDirectory(environment)
   const xdg = {
-    config: environment["XDG_CONFIG_HOME"] ?? path.join(environment["HOME"] ?? ".", ".config"),
-    data: environment["XDG_DATA_HOME"] ?? path.join(environment["HOME"] ?? ".", ".local", "share"),
-    cache: environment["XDG_CACHE_HOME"] ?? path.join(environment["HOME"] ?? ".", ".cache"),
-    state:
-      environment["XDG_STATE_HOME"] ?? path.join(environment["HOME"] ?? ".", ".local", "state"),
+    config: environment["XDG_CONFIG_HOME"] ?? path.join(home, ".config"),
+    data: environment["XDG_DATA_HOME"] ?? path.join(home, ".local", "share"),
+    cache: environment["XDG_CACHE_HOME"] ?? path.join(home, ".cache"),
+    state: environment["XDG_STATE_HOME"] ?? path.join(home, ".local", "state"),
   }
   const data = path.join(xdg.data, "bashwink")
   return {

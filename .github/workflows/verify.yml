@@ -297,6 +297,59 @@ jobs:
           fi
           echo "OK: no credential patterns in the tree (no path exclusions)"
 
+  # The standard (native) npm package, built and installed the way a tester installs it: from the tarball, into a
+  # throwaway prefix, with the pinned `bun` and `@opencode/cli` pulled from the public registry. Windows is
+  # included because the package is Windows-first. A skipped or cancelled leg is NOT a pass: branch protection
+  # must require each matrix leg by name. Nothing here publishes anything.
+  npm-package:
+    name: npm package (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Portable unit tests (launcher platform plan, plugin staging, home directory)
+        run: bun test packages/bw-cli/test/npm-launcher.test.ts packages/bw-cli/test/plugin-staging.test.ts
+      - name: Build and audit the tarball
+        run: python scripts/build_npm_package.py --out build/npm
+      - name: Install the tarball and exercise the installed command
+        run: python scripts/npm_install_check.py build/npm/bashwink-0.1.0-alpha.1.tgz --out build/npm/install-check.json
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: npm-package-${{ matrix.os }}
+          path: build/npm/*.json
+          if-no-files-found: warn
+  # Informational only, and labelled so: the full CLI suite was written on macOS and Linux. Its first Windows run
+  # establishes the baseline of what still assumes a POSIX host; until that list is triaged it cannot gate.
+  windows-full-suite:
+    name: full CLI suite on Windows (informational, not a gate)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: CLI suite (failures here are the Windows to-do list)
+        run: bun run test:cli
+
   # Licence scope gate. Deliberately NOT a blanket "no GPL anywhere" rule: the shipped
   # artifact's obligations depend on which packages actually reach the distribution.
   # This job enforces what is checkable in-tree and fails loudly on anything with no

@@ -1,0 +1,20 @@
+Bashwink 0.1.0-alpha.1 (standard npm package): third-party notices
+
+STATUS: engineering notice, not a legal opinion. No licence sign-off has been given for redistribution of this
+package; it is a private alpha for invited testers and must not be redistributed.
+
+This tarball contains Bashwink's own files (MIT; see LICENSE) and the OpenCode plugin SDK types it imports at run time
+from the host. It does NOT contain the following, which npm downloads from the public registry at install time and which
+are governed by their own licences:
+
+  bun 1.4.4 and @oven/bun-<platform>   MIT for Bun itself. Bun embeds JavaScriptCore (LGPL-2.0) and other components;
+                                        see the licence file shipped inside the bun package.
+  @opencode/cli 2.3.2 and its           MIT for OpenCode. The stock binary embeds the FFmpeg libraries through its terminal
+  @opencode/cli-<platform> binaries     UI library (LGPL). The licence texts and attributions that the OpenCode and
+                                        OpenTUI projects ship with those packages apply to them.
+
+Bashwink does not modify, patch or relink either runtime. Obligations for redistributing a bundle that includes them
+(source offers, relinking terms, notices) have not been assessed for this private alpha; the optional isolated-VM
+artifact ships a rebuilt, FFmpeg-free OpenCode instead and is documented separately in the repository.
+
+To see exactly what the installed package pulled in: `npm ls -g --all bashwink`.

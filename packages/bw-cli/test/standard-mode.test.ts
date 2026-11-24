@@ -111,9 +111,19 @@ describe("standard bundle", () => {
     expect(result.stderr.toString()).toContain("optional sandbox component")
   })
 
-  test("version and help work", () => {
+  test("version works, and help states the mode and lists nothing the package refuses", () => {
     expect(run(["--version"]).exitCode).toBe(0)
-    expect(run(["--help"]).exitCode).toBe(0)
+    const help = run(["--help"])
+    expect(help.exitCode).toBe(0)
+    const text = help.stdout.toString()
+    expect(text).toContain("STANDARD: native and permission-controlled")
+    expect(text).toContain("NOT an")
+    expect(text).toContain("auth add")
+    // Nothing the standard package refuses is advertised, and the dev-only backend switch is gone.
+    expect(text).not.toContain("sandbox probe")
+    expect(text).not.toContain("sandbox vm-review")
+    expect(text).not.toContain("BASHWINK_BACKEND")
+    expect(text).not.toContain("unrestricted host access")
   })
 })
 

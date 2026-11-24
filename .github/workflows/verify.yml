@@ -62,6 +62,10 @@ jobs:
           python-version: "3.12"
       - name: Verify documentation bundle
         run: python3 scripts/verify_bashwink_docs.py
+      - name: Verify release-gate acceptance and refusal controls
+        run: |
+          python3 scripts/test_native_release_gate.py
+          python3 scripts/test_alpha_release_gate.py
 
   evidence:
     name: evidence (${{ matrix.os }})

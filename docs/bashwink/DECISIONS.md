@@ -117,6 +117,13 @@ profile remains available, and native shell admission stays disabled pending ins
 OpenCode, stage retirement and platform qualification. Optional Docker remains separate.
 [Feasibility and alternatives](BW-031_IMPLEMENTATION_REPORT.md).
 
+## v0.1.0-alpha platform scope (2026-11-24)
+
+The v0.1.0-alpha scope is macOS Apple Silicon only. The alpha gate uses its own
+release-tier overlay in the native matrix and requires all existing macOS and
+Ubuntu regression CI jobs at the candidate SHA. The broader BW-032 matrix retains
+its original platform requirements. [Release checklist](ALPHA_RELEASE_CHECKLIST.md)
+
 ## Decision template
 
 ### ADR-XXX — Decision title

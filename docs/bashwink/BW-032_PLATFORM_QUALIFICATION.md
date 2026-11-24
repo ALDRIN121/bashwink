@@ -5,6 +5,11 @@
 disposable fixtures with synthetic credentials, a local mock and an explicitly authorized
 test provider account. Source review and primitive tests cannot close this task.
 
+The v0.1.0-alpha candidate targets macOS Apple Silicon only. Its release gate
+requires all macOS controls for the supported build and keeps macOS and Ubuntu
+regression CI mandatory. Platform qualification for Ubuntu remains in the broader
+BW-032 gate. [Alpha release decision](releases/v0.1.0-alpha/RELEASE_READINESS.md)
+
 ## Qualification environment
 
 - Use a clean machine for each advertised combination. Start with macOS arm64 on the

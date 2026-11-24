@@ -46,8 +46,10 @@ remains open. The ordinary local backend still runs commands with the user's hos
 offline profile has tested Seatbelt confinement and stage protection through launcher
 SIGKILL. Shell-capable startup is disabled after the detached-writer failure.
 File-only single-file export now has interruption reconciliation. A disposable
-Virtualization.framework guest demonstrated detached-writer teardown. Packaged
-OpenCode shell admission and end-to-end VM lifecycle qualification remain open.
+Virtualization.framework guest demonstrated detached-writer teardown and then ran
+the pinned OpenCode TUI with a real file edit and an approved shell call against a
+guest mock. Packaged shell admission, persistent VM stages, and qualification remain
+open. [Mac-only alpha scope](releases/v0.1.0-alpha/RELEASE_READINESS.md)
 Ubuntu qualification, live provider connectivity, and external alpha remain blocked.
 [Qualification results](BW-032_QUALIFICATION_RESULTS.md).
 

@@ -135,10 +135,12 @@ file was edited, and a test was run and re-run to PASS.
 
 ## Native qualification gate
 
-Run `./scripts/verify_native_release.py` against the exact release candidate. The installed
-macOS diagnostic passed six controls. The release gate returns exit 1 while required
-platform, native interactive, live-provider and cleanup evidence is absent.
-[Qualification results](BW-032_QUALIFICATION_RESULTS.md).
+Run `python3 scripts/verify_alpha_release.py --revision <candidate-sha>` for the
+macOS-only v0.1.0-alpha. The gate requires every macOS control on the named Apple
+Silicon OS build, exact-candidate macOS and Ubuntu regression CI, and the verified
+archive checksum. The broader two-platform native qualification remains available
+through `scripts/verify_native_release.py`.
+[v0.1.0-alpha decision](releases/v0.1.0-alpha/RELEASE_READINESS.md) · [Qualification results](BW-032_QUALIFICATION_RESULTS.md).
 
 ## Verdict
 

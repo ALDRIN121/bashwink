@@ -28,22 +28,22 @@ VERDICTS = {"PASS", "FAIL", "BLOCKED", "NOT_RUN"}
 REPORT = Path(__file__).resolve().parents[1] / "docs/bashwink/NATIVE_SANDBOX_QUALIFICATION.json"
 
 
-def validate(matrix, revision, evidence_exists):
+def validate(matrix, revision, evidence_exists, targets=TARGETS):
     errors = []
     if not isinstance(matrix, dict) or matrix.get("schema") != 1:
         return ["unrecognized qualification matrix schema"]
     if not re.fullmatch(r"[0-9a-f]{40}", revision):
         return ["candidate revision must be a full Git commit SHA"]
     advertised = matrix.get("advertised")
-    if not isinstance(advertised, list) or sorted(str(item) for item in advertised) != sorted(TARGETS):
-        errors.append("advertised platforms must match the two required native targets")
+    if not isinstance(advertised, list) or sorted(str(item) for item in advertised) != sorted(targets):
+        errors.append("advertised platforms must match the required native targets")
 
     rows = matrix.get("qualification")
     if not isinstance(rows, list):
         return errors + ["missing qualification result list"]
-    expected_pairs = {(platform, check) for platform in TARGETS for check in REQUIRED}
+    expected_pairs = {(platform, check) for platform in targets for check in REQUIRED}
     seen = Counter()
-    policies = {platform: set() for platform in TARGETS}
+    policies = {platform: set() for platform in targets}
     for row in rows:
         if not isinstance(row, dict):
             errors.append("malformed qualification result")
@@ -55,7 +55,7 @@ def validate(matrix, revision, evidence_exists):
             errors.append(f"{label}: unrecognized platform or check")
             continue
         seen[pair] += 1
-        if row.get("backend") != TARGETS[platform]:
+        if row.get("backend") != targets[platform]:
             errors.append(f"{label}: wrong backend")
         verdict = str(row.get("verdict"))
         if verdict != "PASS":

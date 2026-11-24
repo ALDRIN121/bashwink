@@ -1,5 +1,30 @@
 # Bashwink — Test Evidence Register
 
+## v0.1.0-alpha freeze, VM runtime and installed entry (2026-11-24)
+
+Freeze source `f69266bd32c63e7820fd58585fb36cb981588d74`. CLI fixes
+`98f1adf9a587967827ff454090ed27af0e5ba613`. VM fixture source
+`d9d8cf6d11a535d80b5673494a812c80dd18a104`. macOS arm64 27.0.1 (26A434),
+Bun 1.4.4, OpenCode 2.3.2. Guest assets were pinned and fetched into disposable
+directories. The VM had no NIC or host directory shares and used an offline mock.
+
+| Command or control | Exit | Result |
+| --- | ---: | --- |
+| `python3 fixtures/native-offline/vm-boundary.py <Alpine inputs>` | 0 | **PASS at lab tier.** Forced stop, VM-owner SIGKILL, separate launcher SIGKILL, Ctrl+C, and timer stopped an independently observed guest writer. Owner stop, interrupt and timer returned 0, 130 and 124. Controlled SIGKILL exited -9. Concurrent open was refused while the owner held its lock. Fresh VMs reopened the same disk after owner and launcher death. |
+| Same fixture with `--opencode-inputs <runtime inputs>` | 0 | **PASS at lab tier.** Plain guest Bashwink launched the pinned real TUI and server. One prompt streamed, edited a file and executed a shell tool after PTY approval. The guest process ran unprivileged. Host-path canary contents stayed unchanged. After whole-VM stop, the host checked the original disk inode, read two exact files and refused an unexpected path and bad digest. The fixture used a fixed synthetic result. |
+| `bash fixtures/interactive-entry/run.sh` | 0 | **PASS at local-build tier.** Fresh install outside the checkout, version/help, doctor before and after coding-mode startup, and Git, non-Git and nested PTYs passed. Doctor disclosed local host access and refused an unavailable selected native backend. The legacy fixture initially failed doctor from an existing installation. Its broad process-name cleanup was replaced with owned PTYs and fresh state. |
+| Installed Seatbelt recovery, lifetime, export-reconciliation, process-policy and admission-shutdown | 0 each | **PASS.** Session, reviewed one-file export, interrupted exchange, live-writer quarantine, OS process denial and shutdown admission controls repeated. |
+| `bun run test`, typecheck, Oxlint, formatting, lint gate | 0 each | **PASS.** 404 tests across 23 files and 1,166 assertions, including CLI model-select parsing with workspace and standalone-server refusals. |
+| Runtime health, tool lifecycle, contract and idempotent resume | 0 each | **PASS.** 11, 19, 14 and 10 controls against pinned host OpenCode. |
+| Native and macOS-only alpha gate tests | 0 each | Four native and five alpha tests passed. The alpha gate refused the incomplete manifest and qualification. |
+| Hosted candidate CI and external-user acceptance | — | **NOT RUN.** No candidate archive exists. Prior Actions quota pause remained in effect. |
+
+The local install comes from a source build. Release-tier clean installation,
+guest session persistence, reviewed project export, production launcher integration
+and an authorized real provider remain open. No supported OS build is advertised.
+[Release readiness](releases/v0.1.0-alpha/RELEASE_READINESS.md) ·
+[Acceptance results](releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md)
+
 ## macOS shell VM feasibility and interrupted export (2026-11-24)
 
 Source revision `22fc13aea0e3a27c6bbd1283d8e224d8fac58056`. macOS arm64 27.0.1

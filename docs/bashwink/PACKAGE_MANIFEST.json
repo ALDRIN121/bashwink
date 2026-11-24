@@ -35,8 +35,8 @@
       "size_bytes": 3292
     },
     "ALPHA_RELEASE_CHECKLIST.md": {
-      "sha256": "5f693c67e423e90d82bd9c629fe7a162a05552b7291ede59e910946dd725b304",
-      "size_bytes": 9117
+      "sha256": "18766067bbbcf8c588141ad84bf6224ed268a9b598b59a8a66bcb1cccdd58e6b",
+      "size_bytes": 9307
     },
     "ALPHA_TESTER_GUIDE.md": {
       "sha256": "9980d44cc33c0bf791388b5c54e6dcc511699a38b39c8fdf1b072d315e0bc054",
@@ -91,16 +91,16 @@
       "size_bytes": 6702
     },
     "BW-031_IMPLEMENTATION_REPORT.md": {
-      "sha256": "d36aae419f00102b1d933934500e71c51eef5c6578fd743d6f20a5d61682bf13",
-      "size_bytes": 14752
+      "sha256": "7e1a925a877a44a65ad2e344cb0845023aa266bb9b50d00e57931800e02248aa",
+      "size_bytes": 16481
     },
     "BW-032_PLATFORM_QUALIFICATION.md": {
-      "sha256": "b086061e8ea0a9ee6ffc688ea4bb44028b3b6cf4c6c5d91a4d26512c1e8e8db3",
-      "size_bytes": 6694
+      "sha256": "64a9655c4d71dc510ffb4083d7de3a49d8217922e23cff54fbdb0edaddac55f0",
+      "size_bytes": 7016
     },
     "BW-032_QUALIFICATION_RESULTS.md": {
-      "sha256": "d677d513f8b9a1a56ab250a162ae22a244d9c6f7561642888495ddc4dacaecd5",
-      "size_bytes": 5419
+      "sha256": "bad3ebaf9f632cce54c528f4e861747b3365fabde2e086e2ebfd66b0afa17acd",
+      "size_bytes": 6023
     },
     "CI_BASELINE_RECONCILIATION.md": {
       "sha256": "14d4f9555edbae2f3ef7e8c5d2185ddaaa83de9df6c528c7286934df6e273b47",
@@ -127,8 +127,8 @@
       "size_bytes": 4119
     },
     "KNOWN_LIMITATIONS.md": {
-      "sha256": "7155568420636dbca935066072c4387752ff93b8d2af43e5ead38a01bd2a45f5",
-      "size_bytes": 9871
+      "sha256": "783641ec9428837413932ea7268e598b98a666116d4b308c50fe4aabf1e93887",
+      "size_bytes": 9944
     },
     "LLM_INTEGRATION_AUDIT.md": {
       "sha256": "09a0da4a4f7df07586ae1db2df32f06b267f114cee6fdb639bb608615132f24e",
@@ -139,8 +139,8 @@
       "size_bytes": 1924
     },
     "NATIVE_SANDBOX_QUALIFICATION.json": {
-      "sha256": "1d7d028ed2ab4fc70e86ead6cc6ba993f24428a334f6e67ecbae7cae308d6da0",
-      "size_bytes": 34026
+      "sha256": "d7257c585df116b7a3ba950edd89d7b1568481c573d25df912c828e669c66526",
+      "size_bytes": 40643
     },
     "NATIVE_SANDBOX_SECURITY_MODEL.md": {
       "sha256": "dfc3f85518b0ca1716b3704acf3d82038fd0a55bbe92c47c6a44daf6ac5d096b",
@@ -197,6 +197,46 @@
     "reports/BASHWINK_V2_RESEARCH_AND_ROADMAP.docx": {
       "sha256": "71f86e30b5128dab17124773aa8816b11d00593d0d0e3ec014b6a8b5f8547787",
       "size_bytes": 45255
+    },
+    "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md": {
+      "sha256": "95fca11af815084e4ee79a3362d763a30d04d2c914ef9ecaebe63ccb58af8863",
+      "size_bytes": 1075
+    },
+    "releases/v0.1.0-alpha/FEEDBACK_GUIDE.md": {
+      "sha256": "8d6653bd94b0ddf636f074346d8fbc46e2476ceac2a111ef7a73da876d7366cb",
+      "size_bytes": 758
+    },
+    "releases/v0.1.0-alpha/INSTALLATION.md": {
+      "sha256": "8413c760bc198003d9c606f453ebd1f678e8906fca5e650d0492269032ee6114",
+      "size_bytes": 1055
+    },
+    "releases/v0.1.0-alpha/QUICK_START.md": {
+      "sha256": "2a3e5362b458a1f306d4229edc5c661ed46bb1d5d341dd59e06ccde6247b5321",
+      "size_bytes": 911
+    },
+    "releases/v0.1.0-alpha/RELEASE_MANIFEST.json": {
+      "sha256": "e56db3054cbb525f432ea0242f789fa17e46097904c5b4ec5e47882b8be51de8",
+      "size_bytes": 2290
+    },
+    "releases/v0.1.0-alpha/RELEASE_NOTES.md": {
+      "sha256": "00a3f35e0baf4ec669965bebe9f150ef0b3203b8cf5586fd7ffa0b5aa94ab58f",
+      "size_bytes": 1062
+    },
+    "releases/v0.1.0-alpha/RELEASE_READINESS.md": {
+      "sha256": "ee0e2dff2dbb5a4cd9c1bb7fed272eb898b760a1bbcb4d97f56caa60ac5e0339",
+      "size_bytes": 2940
+    },
+    "releases/v0.1.0-alpha/SECURITY_LIMITATIONS.md": {
+      "sha256": "af77cfbe30cc51925ce3eea50522d4ea45afe8281a91f055f58fde8fefb99d00",
+      "size_bytes": 860
+    },
+    "releases/v0.1.0-alpha/SUPPORTED_PLATFORMS.md": {
+      "sha256": "0b091017b8d74430038a366d65c4a19ebb6f458a2d61cb350e5965ee331c42e9",
+      "size_bytes": 552
+    },
+    "releases/v0.1.0-alpha/TESTER_GUIDE.md": {
+      "sha256": "8d361286d7964b3122a7e0b0e49bc101210f3a62d0761874ad85922a6d47e584",
+      "size_bytes": 921
     }
   }
 }

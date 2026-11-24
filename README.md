@@ -26,7 +26,13 @@ bashwink/
 The pinned OpenCode foundation is **not** vendored here. It lives beside this repository at
 `~/Developer/bashwink-upstream/opencode` and is consumed by exact version.
 
-## Quick start
+## v0.1.0-alpha
+
+External release is blocked. macOS Apple Silicon is the initial target.
+See the [release decision](docs/bashwink/releases/v0.1.0-alpha/RELEASE_READINESS.md)
+and [quick-start draft](docs/bashwink/releases/v0.1.0-alpha/QUICK_START.md).
+
+## Local development quick start
 
 Use a real model (inference, streaming and tool calls are the pinned runtime's; Bashwink
 configures it and records what it did):
@@ -47,8 +53,9 @@ it substitutes at run time, and `--key` is refused outright. A `:protocol` suffi
 required when one provider serves models on different wire protocols — a provider-level
 package applies to every model, so a mixed provider gets none.
 
-Build the alpha from the private source checkout and install the pinned OpenCode runtime
-separately. Follow the [alpha installation guide](docs/bashwink/ALPHA_TESTER_GUIDE.md#1-install)
+Build the internal development version from the checkout and install the pinned OpenCode
+runtime separately. Approved local commands run with host access. Follow the
+[internal installation guide](docs/bashwink/ALPHA_TESTER_GUIDE.md#1-install)
 for Bun 1.4.4, OpenCode 2.3.2, the runtime binary path and the wrapper build. Use the
 [readiness decision](docs/bashwink/INTERNAL_ALPHA_READINESS.md) to select a trusted alpha workspace.
 

@@ -172,6 +172,34 @@ with Apple command-line build tools. The lab signs a temporary helper with the
 virtualization entitlement. It compiles and runs outside the checkout, with a synthetic
 disk and without installing a service.
 
+## Pinned OpenCode inside the VM
+
+The release-preparation fixture boots the built Bashwink bundle and OpenCode 2.3.2
+under an unprivileged guest user in the same NIC-free VM. A serial terminal drives
+the real OpenCode TUI using its normal private server and policy/evidence plugin.
+The guest mock produced an edit and a shell request. The host observer submitted
+the shell approval, saw the streamed completion, and inspected the two exact
+result files on the sealed disk after VM stop. The host parsed one bounded sector
+with a fixed inventory and verified hashes without mounting a guest filesystem.
+This is a fixture handoff. Production workspace import, reviewed apply, and guest
+session persistence remain open.
+
+The VM owner also watches a host-only pipe from a distinct launcher. Killing that
+launcher closed the pipe and caused whole-VM stop. The host independently checked
+that the private stage stopped changing, and a fresh VM reopened its retained
+marker. Forced stop, VM-owner SIGKILL, Ctrl+C, and the owner timer passed the same
+disk check. The VM helper and pipe are exercised in the lab. Installed CLI
+admission, the provider relay, and runtime/server crash behavior for the proposed
+product backend remain open. [Release evidence](TEST_EVIDENCE.md).
+
+To reproduce the OpenCode lab, run the same VM fixture with
+`--opencode-inputs <directory>`. Supply the Linux arm64 musl binaries from
+`@opencode/cli-linux-arm64-musl@2.3.2` and
+`@oven/bun-linux-aarch64-musl@1.4.4` as `opencode` and `bun`. Supply Alpine
+3.23 arm64 `libgcc`, `libstdc++`, and `ncurses-terminfo-base` APKs as
+`libgcc.apk`, `libstdc++.apk`, and `ncurses-terminfo-base.apk`. The fixture
+checks each exact digest before extracting the test inputs.
+
 ## Open work in order
 
 1. Reproduce the Ubuntu readiness failure on a disposable Ubuntu x86-64 system. Use

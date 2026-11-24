@@ -6,7 +6,7 @@ in the [machine-readable matrix](NATIVE_SANDBOX_QUALIFICATION.json).
 
 | Evidence tier | Result |
 | --- | --- |
-| Bun 1.4.4 unit/integration suite | PASS, 403 tests, zero failures, exit 0 |
+| Bun 1.4.4 unit/integration suite | PASS, 404 tests, zero failures, exit 0 |
 | Typecheck, Oxlint, formatting and lint controls | PASS, exit 0 each |
 | Native release validator tests | PASS, four tests, exit 0 |
 | Real OpenCode runtime regressions in existing local mode | PASS, readiness 11 checks, tool lifecycle 19, contract 14, recovery 10. Each fixture exited 0 |
@@ -19,7 +19,9 @@ in the [machine-readable matrix](NATIVE_SANDBOX_QUALIFICATION.json).
 | File-only abrupt stage retirement | PASS at fixture tier. After launcher SIGKILL an actual stopped OpenCode writer held the inherited lock and blocked reopen, recovery and export. An independent lock acquisition after server exit allowed retirement and intact reopen. Concurrent retirement and retry were safe. Interrupted export remained closed with its host file unchanged. |
 | Detached descendants | FAIL under the historical shell-capable profile. A disowned process with its own process group and session survived both owned processes and could still write into staging. The harness ended the synthetic writer using its fixture pipe. The current implementation refuses that profile at startup. |
 | File-only interrupted export reconciliation | PASS at fixture tier. Verified pre-exchange abort and three post-exchange fault points. Original directory and exact file identities were required. Receipt, target inode and evidence chain stayed unchanged on retry. |
-| Detached guest writer | PASS at Virtualization.framework lab tier. A new-session guest worker closed its inherited descriptor and wrote to the private stage disk. Whole-VM stop and VM-owner SIGKILL stopped disk writes. The fixture refused concurrent open and reopened the disk after owner death. Installed shell-capable OpenCode, a separate launcher death and interactive latency remain unqualified. |
+| Detached guest writer | PASS at Virtualization.framework lab tier. A new-session guest worker closed its inherited descriptor and wrote to the private stage disk. Whole-VM stop and VM-owner SIGKILL stopped disk writes. The fixture refused concurrent open and reopened the disk after owner death. Packaged shell-capable OpenCode remains unqualified. |
+| OpenCode guest PTY and stage handoff | PASS at Virtualization.framework lab tier. The sandboxed real runtime streamed an offline prompt, edited a file, paused for shell approval and ran the approved command. The host independently inspected two expected files after teardown. Project export, VM session recovery and a live provider remain unqualified. |
+| Separate launcher death, interrupt, and timeout | PASS at Virtualization.framework lab tier. A host-only pipe caused VM stop on launcher SIGKILL. SIGINT and the owner timer returned 130 and 124. The independent disk observer saw no surviving writes and reopened the marker after launcher death. |
 | Real provider relay and live turn | BLOCKED. Provider relay and general native admission are absent |
 | Detached-workload cancellation and resource enforcement | NOT_RUN. The probe supervises direct diagnostic invocations |
 | Ubuntu x86-64 with distro AppArmor and Bubblewrap | BLOCKED. No disposable Ubuntu host was available for execution in this cycle |

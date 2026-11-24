@@ -1,0 +1,86 @@
+{
+  "schema": 1,
+  "version": "v0.1.0-alpha",
+  "candidate": null,
+  "target": "macos-arm64",
+  "supported": [],
+  "artifact": null,
+  "ci": null,
+  "checks": [
+    {
+      "id": "interactive-coding",
+      "verdict": "BLOCKED",
+      "reason": "Installed VM-backed coding is not implemented."
+    },
+    {
+      "id": "real-provider",
+      "verdict": "BLOCKED",
+      "reason": "No qualified host-side provider relay or accepted real coding run."
+    },
+    {
+      "id": "clean-install",
+      "verdict": "BLOCKED",
+      "reason": "No qualifying archive or clean Apple Silicon host run."
+    },
+    {
+      "id": "supported-platform",
+      "verdict": "BLOCKED",
+      "reason": "No macOS build is fully qualified."
+    },
+    {
+      "id": "shell-containment",
+      "verdict": "BLOCKED",
+      "reason": "VM lab evidence does not qualify the installed runtime."
+    },
+    {
+      "id": "host-access-denial",
+      "verdict": "BLOCKED",
+      "reason": "Full installed workload file, network and host IPC controls are unqualified."
+    },
+    {
+      "id": "credential-protection",
+      "verdict": "BLOCKED",
+      "reason": "Host relay credentials have not been isolated in the product."
+    },
+    {
+      "id": "session-recovery",
+      "verdict": "BLOCKED",
+      "reason": "VM-backed recovery is unqualified."
+    },
+    {
+      "id": "reviewed-edits",
+      "verdict": "BLOCKED",
+      "reason": "Reviewed project transfer is not implemented."
+    },
+    {
+      "id": "critical-security-review",
+      "verdict": "BLOCKED",
+      "reason": "Installed shell boundary and stage retirement remain open."
+    },
+    {
+      "id": "regression",
+      "verdict": "NOT_RUN",
+      "reason": "There is no exact candidate SHA."
+    },
+    {
+      "id": "required-ci",
+      "verdict": "NOT_RUN",
+      "reason": "Candidate CI has not run."
+    },
+    {
+      "id": "release-archive",
+      "verdict": "NOT_RUN",
+      "reason": "No qualifying archive was created."
+    },
+    {
+      "id": "documentation",
+      "verdict": "BLOCKED",
+      "reason": "Candidate guidance is in draft and depends on exact archive evidence."
+    },
+    {
+      "id": "feedback-channel",
+      "verdict": "BLOCKED",
+      "reason": "Tester access to a private channel has not been confirmed."
+    }
+  ]
+}

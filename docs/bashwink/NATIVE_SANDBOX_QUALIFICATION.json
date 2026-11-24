@@ -448,6 +448,44 @@
       "verdict": "PASS",
       "exitCode": 0,
       "reason": ""
+    },
+    {
+      "id": "vm-separate-launcher-lifetime",
+      "tier": "vm-prototype",
+      "platform": "macos-arm64",
+      "backend": "apple-virtualization-fixture",
+      "commit": "d9d8cf6d11a535d80b5673494a812c80dd18a104",
+      "policyDigest": "31a50b3e3e9860bb2b82ac38a630c2a150658c50265e37400a4fd4c29d3c6326",
+      "osVersion": "27.0.1",
+      "osBuild": "26A434",
+      "architecture": "arm64",
+      "runtime": "2.3.2",
+      "command": "python3 fixtures/native-offline/vm-boundary.py <Alpine inputs>",
+      "expected": "Observe the guest disk become quiescent after separate launcher death, Ctrl+C and owner deadline.",
+      "observed": "Each workload stopped. Verified whole-VM stop, a stable disk and reopen after launcher SIGKILL.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 0,
+      "reason": ""
+    },
+    {
+      "id": "vm-pinned-tui-shell-and-handoff",
+      "tier": "vm-prototype",
+      "platform": "macos-arm64",
+      "backend": "apple-virtualization-fixture",
+      "commit": "d9d8cf6d11a535d80b5673494a812c80dd18a104",
+      "policyDigest": "31a50b3e3e9860bb2b82ac38a630c2a150658c50265e37400a4fd4c29d3c6326",
+      "osVersion": "27.0.1",
+      "osBuild": "26A434",
+      "architecture": "arm64",
+      "runtime": "2.3.2",
+      "command": "python3 fixtures/native-offline/vm-boundary.py <Alpine inputs> --opencode-inputs <runtime inputs>",
+      "expected": "Use real OpenCode TUI for an edit and an approved shell request and read the results from a retired disk.",
+      "observed": "Pinned runtime ran in the NIC-free VM. The host inspected exact results after shutdown, refused malformed fixture records and verified its canary.",
+      "evidence": "TEST_EVIDENCE.md",
+      "verdict": "PASS",
+      "exitCode": 0,
+      "reason": ""
     }
   ],
   "qualification": [
@@ -763,5 +801,131 @@
       "verdict": "BLOCKED",
       "reason": "No disposable Ubuntu x86-64 host with distro AppArmor was available"
     }
-  ]
+  ],
+  "alphaQualification": {
+    "schema": 1,
+    "advertised": [],
+    "qualification": [
+      {
+        "id": "clean-install",
+        "platform": "macos-arm64",
+        "backend": "apple-virtualization",
+        "commit": null,
+        "policyDigest": null,
+        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "verdict": "NOT_RUN",
+        "reason": "No exact release archive and no clean qualification host without Docker."
+      },
+      {
+        "id": "interactive-mock",
+        "platform": "macos-arm64",
+        "backend": "apple-virtualization",
+        "commit": null,
+        "policyDigest": null,
+        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "verdict": "BLOCKED",
+        "reason": "An offline pinned VM lab passed. The installed VM backend and ordinary project coding are unqualified."
+      },
+      {
+        "id": "interactive-live-provider",
+        "platform": "macos-arm64",
+        "backend": "apple-virtualization",
+        "commit": null,
+        "policyDigest": null,
+        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "verdict": "BLOCKED",
+        "reason": "The host provider relay and authorized end-to-end coding test are open."
+      },
+      {
+        "id": "file-and-link-policy",
+        "platform": "macos-arm64",
+        "backend": "apple-virtualization",
+        "commit": null,
+        "policyDigest": null,
+        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "verdict": "BLOCKED",
+        "reason": "The lab has a host canary. Installed project staging, link and host path controls are open."
+      },
+      {
+        "id": "subprocess-and-detached-cleanup",
+        "platform": "macos-arm64",
+        "backend": "apple-virtualization",
+        "commit": null,
+        "policyDigest": null,
+        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "verdict": "BLOCKED",
+        "reason": "The VM lab passed owner and launcher death, but the installed backend and abnormal OpenCode exits are open."
+      },
+      {
+        "id": "network-and-provider-transport",
+        "platform": "macos-arm64",
+        "backend": "apple-virtualization",
+        "commit": null,
+        "policyDigest": null,
+        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "verdict": "BLOCKED",
+        "reason": "NIC-free lab passed basic controls. Provider-only mode and complete network controls are open."
+      },
+      {
+        "id": "secret-isolation",
+        "platform": "macos-arm64",
+        "backend": "apple-virtualization",
+        "commit": null,
+        "policyDigest": null,
+        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "verdict": "BLOCKED",
+        "reason": "No qualified provider relay or installed host credential controls."
+      },
+      {
+        "id": "approval-and-alternate-dispatch",
+        "platform": "macos-arm64",
+        "backend": "apple-virtualization",
+        "commit": null,
+        "policyDigest": null,
+        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "verdict": "BLOCKED",
+        "reason": "Lab PTY approvals passed. Installed workload admission and alternate-entry negative controls are open."
+      },
+      {
+        "id": "session-recovery-and-export",
+        "platform": "macos-arm64",
+        "backend": "apple-virtualization",
+        "commit": null,
+        "policyDigest": null,
+        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "verdict": "BLOCKED",
+        "reason": "File-only recovery passed. VM persistence and reviewed project transfer are open."
+      },
+      {
+        "id": "unsupported-host-and-no-fallback",
+        "platform": "macos-arm64",
+        "backend": "apple-virtualization",
+        "commit": null,
+        "policyDigest": null,
+        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "verdict": "BLOCKED",
+        "reason": "The requested native CLI currently refuses. Installed VM error cases are open."
+      },
+      {
+        "id": "resource-limits",
+        "platform": "macos-arm64",
+        "backend": "apple-virtualization",
+        "commit": null,
+        "policyDigest": null,
+        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "verdict": "BLOCKED",
+        "reason": "The VM lab passed a host timer. Installed workload and provider limits are open."
+      },
+      {
+        "id": "ci-or-reviewed-equivalent",
+        "platform": "macos-arm64",
+        "backend": "apple-virtualization",
+        "commit": null,
+        "policyDigest": null,
+        "evidence": "releases/v0.1.0-alpha/ACCEPTANCE_RESULTS.md",
+        "verdict": "NOT_RUN",
+        "reason": "Required verify workflow has not run for an exact release candidate."
+      }
+    ]
+  }
 }

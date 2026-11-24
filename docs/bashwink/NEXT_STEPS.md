@@ -4,6 +4,14 @@ The pre-dispatch readiness and local backend foundation have local evidence. Hos
 runtime health passed. The Ubuntu readiness failure remains open. The supervised internal
 alpha remains conditional, and external alpha remains blocked. [Current test evidence](TEST_EVIDENCE.md).
 
+For v0.1.0-alpha, the next implementation step is a host VM backend that joins the
+verified owner pipe, pinned guest runtime and private stage into the installed
+application. Add persistent workspace and session state, enforce refusal on invalid
+or unqualified startup, and run the separate-launcher and guest-crash fixtures through
+that entry. Then qualify reviewed stage transfer and the provider-only host relay.
+Ubuntu remains valuable regression coverage and outside this first release's
+advertised platform scope. [Release readiness](releases/v0.1.0-alpha/RELEASE_READINESS.md)
+
 1. Reproduce the Ubuntu readiness failure with the pinned Linux binaries on a disposable
    Linux machine. Use the local substep diagnostics to identify the failing stage and qualify
    the fix before closing BW-018 and BW-030. Keep additional hosted runs paused.

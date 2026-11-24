@@ -61,6 +61,10 @@ COMMANDS
   sandbox recover-export <path>
                             reconcile an approved interrupted export from its original directory
   sandbox recover <path>    retire a closed, attested native activation
+  sandbox vm-review [files...]
+                            preview and apply selected changes from a stopped VM project
+  sandbox vm-recover        finish an interrupted, approved VM project apply
+  sandbox vm-verify         run protected tests against a fresh copy of the host project
   doctor                    check preconditions and report what is missing
   init                      create Bashwink's config and data directories
   trust <dir>               trust a workspace so shell/write actions are permitted there

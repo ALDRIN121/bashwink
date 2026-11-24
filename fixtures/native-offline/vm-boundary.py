@@ -19,6 +19,7 @@ import time
 import zlib
 from recovery import terminal
 from run import process_identity, wait_for as wait_until
+from vm_project_acceptance import accept_project
 
 
 FILES = Path(__file__).resolve().parent
@@ -83,6 +84,9 @@ def prepare_opencode(root, guest, inputs):
     (opt / "opencode-fixture.json").write_text(json.dumps(config))
     shutil.copyfile(FILES / "vm-opencode-mock.ts", opt / "mock.ts")
     shutil.copyfile(FILES / "vm-opencode-user.sh", opt / "run-user")
+    shutil.copyfile(FILES / "vm-project-guest.ts", opt / "vm-project-guest.ts")
+    shutil.copyfile(FILES / "vm-project-heartbeat.sh", opt / "project-heartbeat")
+    (opt / "project-heartbeat").chmod(0o755)
     (opt / "run-user").chmod(0o755)
     return (FILES / "vm-opencode-init.sh").read_text()
 
@@ -358,9 +362,12 @@ def main():
     parser.add_argument("alpine", type=Path, help="directory containing the three pinned inputs")
     parser.add_argument("--opencode-inputs", type=Path, help="run the separate pinned OpenCode PTY fixture")
     parser.add_argument("--installed-cli", action="store_true", help="exercise bare Bashwink from the built install")
+    parser.add_argument("--project-cli", action="store_true", help="exercise persistent multi-file project sessions")
     args = parser.parse_args()
-    if args.installed_cli and not args.opencode_inputs:
-        parser.error("--installed-cli requires --opencode-inputs")
+    if (args.installed_cli or args.project_cli) and not args.opencode_inputs:
+        parser.error("installed and project modes require --opencode-inputs")
+    if args.installed_cli and args.project_cli:
+        parser.error("choose exactly one installed CLI profile")
     alpine = args.alpine.resolve()
     for name, expected in CHECKSUMS.items():
         assert digest(alpine / name) == expected, f"unexpected test input {name}"
@@ -409,6 +416,10 @@ def main():
                     "-o", runner], check=True)
     subprocess.run(["codesign", "--force", "--sign", "-", "--entitlements", entitlements,
                     runner], check=True)
+    if args.project_cli:
+        accept_project(root, runner, image, root / "initramfs", protected)
+        localhost.close()
+        return
     if args.installed_cli:
         prove_installed_cli(root, runner, image, root / "initramfs", protected)
         localhost.close()

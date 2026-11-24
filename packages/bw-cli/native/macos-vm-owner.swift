@@ -11,11 +11,22 @@ let hostTerminal = options.contains("--host-terminal")
 let serialInput = options.contains("--serial-input")
 guard !(hostTerminal && serialInput) else { exit(3) }
 let deadlines = options.filter { $0.hasPrefix("--timeout-ms=") }
+let stageLocks = options.filter { $0.hasPrefix("--stage-lock-fd=") }
 let leaseOptions = options.filter {
     $0 != "--serial-input" && $0 != "--host-terminal" && !$0.hasPrefix("--timeout-ms=")
+        && !$0.hasPrefix("--stage-lock-fd=")
 }
 guard leaseOptions.count <= 1, deadlines.count <= 1, !hostTerminal || leaseOptions.isEmpty else {
     exit(3)
+}
+if !stageLocks.isEmpty {
+    var info = stat()
+    guard stageLocks == ["--stage-lock-fd=3"], hostTerminal,
+        fstat(3, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
+        info.st_uid == getuid(), info.st_mode & 0o077 == 0,
+        fcntl(3, F_SETFD, FD_CLOEXEC) == 0
+    else { exit(3) }
+    // Keep the launcher's inherited flock reference until the VM owner exits.
 }
 let timeoutMs = deadlines.first.flatMap { Int($0.dropFirst("--timeout-ms=".count)) }
 if !deadlines.isEmpty {

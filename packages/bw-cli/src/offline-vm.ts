@@ -13,7 +13,18 @@ import {
   writeFileSync,
 } from "node:fs"
 import path from "node:path"
-import { regularFile } from "./native-stage.js"
+import { regularFile, sha256 } from "./native-stage.js"
+import {
+  assertVmProjectRevision,
+  commitVmProject,
+  openVmProject,
+  recordVmVerification,
+  VM_PROJECT_DISK_SIZE,
+  vmProjectSeed,
+  vmVerificationSeed,
+  writeVmPayload,
+} from "./vm-project.js"
+import { vmProjectApplyPending } from "./vm-project-apply.js"
 
 const ASSETS = ["vm-owner", "Image", "initramfs"] as const
 const SECTOR_SIZE = 512
@@ -42,10 +53,13 @@ export function offlineVmSelected(moduleDirectory: string) {
 }
 
 async function validateAssets(directory: string) {
-  const manifest = JSON.parse(
-    regularFile(path.join(directory, "offline-vm.json"), 4096).data.toString(),
-  ) as { version?: unknown; sha256?: Record<string, unknown> }
-  if (manifest?.version !== 1 || !manifest.sha256) throw new Error("invalid asset manifest")
+  const bytes = regularFile(path.join(directory, "offline-vm.json"), 4096).data
+  const manifest = JSON.parse(bytes.toString()) as {
+    version?: unknown
+    sha256?: Record<string, unknown>
+  }
+  if ((manifest?.version !== 1 && manifest?.version !== 2) || !manifest.sha256)
+    throw new Error("invalid asset manifest")
   const assets = path.join(directory, "offline-vm")
   if (realpathSync(assets) !== assets) throw new Error("asset directory is a symlink")
   for (const name of ASSETS) {
@@ -73,7 +87,11 @@ async function validateAssets(directory: string) {
     )
       throw new Error(`VM asset integrity check failed: ${name}`)
   }
-  return ASSETS.map((name) => path.join(assets, name))
+  return {
+    assets: ASSETS.map((name) => path.join(assets, name)),
+    version: manifest.version,
+    profile: sha256(bytes),
+  }
 }
 
 function guestStatus(disk: string) {
@@ -94,22 +112,86 @@ function guestStatus(disk: string) {
   }
 }
 
-export async function runOfflineVm(moduleDirectory: string): Promise<number> {
+export async function runOfflineVm(moduleDirectory: string, resume?: string): Promise<number> {
   if (process.platform !== "darwin" || process.arch !== "arm64")
     throw new Error("the offline VM requires macOS Apple Silicon")
   if (!process.stdin.isTTY || !process.stdout.isTTY)
     throw new Error("the offline VM requires an interactive terminal")
 
-  const assets = await validateAssets(moduleDirectory)
-  const input = regularFile("task.txt", SECTOR_SIZE - 1).data
-  new TextDecoder("utf-8", { fatal: true }).decode(input)
-  if (input.length === 0 || input.includes(0)) throw new Error("task.txt must be nonempty UTF-8")
+  const config = await validateAssets(moduleDirectory)
+  if (resume && config.version !== 2)
+    throw new Error("this offline VM build does not support project sessions")
+  const project = config.version === 2 ? openVmProject(config.profile) : undefined
+  try {
+    if (project && vmProjectApplyPending(project.root))
+      throw new Error("reviewed apply is interrupted. Run bashwink sandbox vm-recover first")
+    const seed = project ? vmProjectSeed(project.record, resume) : undefined
+    const result = await launchOfflineVm(
+      config.assets,
+      (fd) => {
+        if (seed) {
+          ftruncateSync(fd, VM_PROJECT_DISK_SIZE)
+          writeVmPayload(fd, seed)
+        } else {
+          const input = regularFile("task.txt", SECTOR_SIZE - 1).data
+          new TextDecoder("utf-8", { fatal: true }).decode(input)
+          if (input.length === 0 || input.includes(0))
+            throw new Error("task.txt must be nonempty UTF-8")
+          ftruncateSync(fd, DISK_SIZE)
+          writeFileSync(fd, input)
+        }
+      },
+      project?.lifetime.fd,
+    )
+    if (project && seed && result.code === 0) commitVmProject(project, result.disk, seed.token)
+    return result.code
+  } finally {
+    project?.lifetime.close()
+  }
+}
+
+export async function runOfflineVmVerification(moduleDirectory: string) {
+  if (
+    process.platform !== "darwin" ||
+    process.arch !== "arm64" ||
+    !process.stdin.isTTY ||
+    !process.stdout.isTTY
+  )
+    throw new Error("offline VM verification requires an interactive macOS Apple Silicon terminal")
+  const config = await validateAssets(moduleDirectory)
+  if (config.version !== 2)
+    throw new Error("this offline VM build does not support protected verification")
+  const project = openVmProject(config.profile)
+  try {
+    if (vmProjectApplyPending(project.root))
+      throw new Error("reviewed apply is interrupted. Run bashwink sandbox vm-recover first")
+    assertVmProjectRevision(project)
+    const seed = vmVerificationSeed(project)
+    const result = await launchOfflineVm(
+      config.assets,
+      (fd) => {
+        ftruncateSync(fd, VM_PROJECT_DISK_SIZE)
+        writeVmPayload(fd, seed)
+      },
+      project.lifetime.fd,
+    )
+    if (result.code !== 0) return result.code
+    return recordVmVerification(project, seed, result.disk)
+  } finally {
+    project.lifetime.close()
+  }
+}
+
+async function launchOfflineVm(
+  assets: string[],
+  initialize: (fd: number) => void,
+  lifetime?: number,
+) {
   const stage = mkdtempSync("/private/tmp/bashwink-vm-")
   const disk = path.join(stage, "stage.raw")
   const fd = openSync(disk, "wx", 0o600)
   try {
-    ftruncateSync(fd, DISK_SIZE)
-    writeFileSync(fd, input)
+    initialize(fd)
     fsyncSync(fd)
   } finally {
     closeSync(fd)
@@ -119,13 +201,20 @@ export async function runOfflineVm(moduleDirectory: string): Promise<number> {
 
   const terminal = Bun.spawnSync(["/bin/stty", "-g"], { stdin: "inherit", stderr: "ignore" })
   if (terminal.exitCode !== 0) throw new Error("could not read the host terminal settings")
-  const owner = Bun.spawn([...assets, disk, "--host-terminal", "--timeout-ms=75000"], {
-    cwd: stage,
-    env: { PATH: "/usr/bin:/bin", LANG: "C" },
-    stdin: "pipe",
-    stdout: "inherit",
-    stderr: "inherit",
-  })
+  const owner = Bun.spawn(
+    [
+      ...assets,
+      disk,
+      "--host-terminal",
+      "--timeout-ms=75000",
+      ...(lifetime === undefined ? [] : ["--stage-lock-fd=3"]),
+    ],
+    {
+      cwd: stage,
+      env: { PATH: "/usr/bin:/bin", LANG: "C" },
+      stdio: ["pipe", "inherit", "inherit", ...(lifetime === undefined ? [] : [lifetime])],
+    },
+  )
   let interrupt: number | undefined
   const stop = (exitCode: number) => {
     if (interrupt !== undefined || owner.exitCode !== null) return
@@ -138,12 +227,13 @@ export async function runOfflineVm(moduleDirectory: string): Promise<number> {
   process.on("SIGTERM", onTerminate)
   try {
     const code = await owner.exited
-    if (interrupt !== undefined && (code === 0 || code === interrupt)) return interrupt
+    if (interrupt !== undefined && (code === 0 || code === interrupt))
+      return { code: interrupt, disk }
     if (code !== 0) throw new Error(`VM owner exited with status ${code}; stage retained`)
     const guest = guestStatus(disk)
     if (guest !== 0 && guest !== 130)
       process.stderr.write(`offline VM guest exited with status ${guest}; stage retained\n`)
-    return guest
+    return { code: guest, disk }
   } finally {
     process.off("SIGINT", onInterrupt)
     process.off("SIGTERM", onTerminate)

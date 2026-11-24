@@ -54,7 +54,15 @@ import { OFFLINE_USAGE, parseOffline, runNativeOffline } from "./native-offline.
 import { recoverClosedNativeStage } from "./native-lifetime.js"
 import { exportNativeStage, recoverNativeExport } from "./native-export.js"
 import { probeNativeSandbox } from "./native-sandbox.js"
-import { offlineVmCapabilities, offlineVmSelected, runOfflineVm } from "./offline-vm.js"
+import {
+  offlineVmCapabilities,
+  offlineVmSelected,
+  runOfflineVm,
+  runOfflineVmVerification,
+} from "./offline-vm.js"
+import { assertVmProjectRevision, openVmProject } from "./vm-project.js"
+import { recoverVmProject, reviewVmProject, vmProjectApplyPending } from "./vm-project-apply.js"
+import { SESSION_ID } from "./native-stage.js"
 
 /** Value of `--flag value` or `--flag=value`, or undefined. First occurrence wins. */
 function flagOf(argv: readonly string[], flag: string): string | undefined {
@@ -157,6 +165,47 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
   // forwards `--help` to the runtime where it means the runtime's help.
   switch (first) {
     case "sandbox": {
+      if (rest[0] === "vm-review" || rest[0] === "vm-recover" || rest[0] === "vm-verify") {
+        try {
+          if (!offlineVm) throw new Error("this installation has no offline VM selected")
+          if (rest[0] !== "vm-review" && rest.length !== 1)
+            throw new Error("unexpected VM operation arguments")
+          if (rest[0] === "vm-verify")
+            return { exitCode: await runOfflineVmVerification(MODULE_DIR), handled: true }
+          const project = openVmProject()
+          try {
+            assertVmProjectRevision(project)
+            if (rest[0] === "vm-recover") {
+              const pending = vmProjectApplyPending(project.root)
+              recoverVmProject(project.root, project.project, () =>
+                assertVmProjectRevision(project),
+              )
+              out(
+                pending
+                  ? "Reconciled the approved VM apply journal."
+                  : "No VM apply journal is pending.",
+              )
+            } else {
+              const snapshot = project.record.snapshot
+              if (!snapshot) throw new Error("no stopped VM checkpoint to review")
+              await reviewVmProject(
+                project.root,
+                project.project,
+                project.record.base,
+                snapshot.files,
+                rest.length > 1 ? rest.slice(1) : undefined,
+                () => assertVmProjectRevision(project),
+              )
+            }
+            return { exitCode: 0, handled: true }
+          } finally {
+            project.lifetime.close()
+          }
+        } catch (error) {
+          err(`offline VM: ${error instanceof Error ? error.message : String(error)}`)
+          return { exitCode: 3, handled: true }
+        }
+      }
       if (rest[0] === "offline") {
         try {
           const options = parseOffline(rest.slice(1))
@@ -281,11 +330,25 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
 
   let runtimeArgs
   if (offlineVm) {
+    if (
+      (first === "--continue" && rest.length === 0) ||
+      (first === "--session" && rest.length === 1 && SESSION_ID.test(rest[0]!))
+    ) {
+      try {
+        return {
+          exitCode: await runOfflineVm(MODULE_DIR, first === "--continue" ? "continue" : rest[0]),
+          handled: true,
+        }
+      } catch (error) {
+        err(`offline VM: ${error instanceof Error ? error.message : String(error)}`)
+        return { exitCode: 3, handled: true }
+      }
+    }
     if (first === "backend") {
       out(JSON.stringify(offlineVmCapabilities, null, 2))
       return { exitCode: 0, handled: true }
     }
-    err("the offline VM currently supports bare interactive bashwink only")
+    err("the offline VM supports bare bashwink, --continue, and --session <id>")
     return { exitCode: 3, handled: true }
   }
   let backend

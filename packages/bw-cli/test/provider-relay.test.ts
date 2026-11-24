@@ -318,6 +318,32 @@ test("cancels the upstream when a streaming client disconnects", async () => {
   )
 })
 
+test("fails an interrupted upstream stream without reporting successful completion", async () => {
+  let cancelled = false
+  await fixture(
+    {
+      resolve: resolvePublic,
+      async request() {
+        return {
+          status: 200,
+          contentType: "text/event-stream",
+          body: (async function* () {
+            yield Buffer.from('data: {"choices":[]}\n\n')
+            throw new Error("synthetic upstream interruption")
+          })(),
+          cancel() {
+            cancelled = true
+          },
+        }
+      },
+    },
+    async (socket) => {
+      await expect(post(socket, { body: { ...valid, stream: true } })).rejects.toThrow()
+      expect(cancelled).toBe(true)
+    },
+  )
+})
+
 test("reports malformed and upstream server responses without exposing their bodies", async () => {
   let count = 0
   await fixture(

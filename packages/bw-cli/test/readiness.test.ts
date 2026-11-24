@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import {
@@ -69,4 +69,39 @@ test("an acknowledgement is only valid for the exact launch, server pid and work
     null,
   ])
     expect(matchesReadiness(wrong, expected)).toBe(false)
+})
+
+test("readiness distinguishes a malformed endpoint without exposing raw stdout", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "bw-readiness-endpoint-"))
+  const runtime = path.join(root, "fixture")
+  writeFileSync(runtime, '#!/bin/sh\nprintf "raw endpoint must not be included\\n"\n', {
+    mode: 0o700,
+  })
+  const signal = new AbortController().signal
+  try {
+    const server = await startPrivateServer(
+      runtime,
+      { XDG_DATA_HOME: root },
+      {
+        runId: "run_fixture",
+        workspace: root,
+        scopesDirectory: root,
+        pluginDirectory: root,
+        logFile: path.join(root, "log"),
+      },
+      signal,
+    )
+    try {
+      const error = await server.ready(signal).catch((failure: unknown) => failure)
+      expect(error).toBeInstanceOf(Error)
+      expect(String(error)).toContain(
+        "owned server advertised a malformed or non-loopback endpoint",
+      )
+      expect(String(error)).not.toContain("raw endpoint must not be included")
+    } finally {
+      await server.stop()
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

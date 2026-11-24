@@ -10,6 +10,7 @@ export interface ReadinessRequest {
   readonly scopesDirectory: string
   readonly pluginDirectory: string
   readonly logFile: string
+  readonly resumeSession?: string
 }
 
 interface Identity {
@@ -28,6 +29,8 @@ export interface RuntimeLauncher {
 }
 
 export class ReadinessError extends Error {}
+
+class EndpointError extends Error {}
 
 export function matchesReadiness(value: unknown, expected: Identity): boolean {
   if (typeof value !== "object" || value === null) return false
@@ -74,12 +77,19 @@ async function drainEndpoint(
       pending += decoder.decode(bytes, { stream: true })
       const newline = pending.indexOf("\n")
       if (newline !== -1) {
-        ready.resolve(parsePrivateEndpoint(pending.slice(0, newline)))
+        if (newline > 4096) throw new EndpointError("owned server endpoint line was oversized")
+        try {
+          ready.resolve(parsePrivateEndpoint(pending.slice(0, newline)))
+        } catch {
+          throw new EndpointError("owned server advertised a malformed or non-loopback endpoint")
+        }
         found = true
         pending = ""
-      } else if (pending.length > 4096) throw new Error("oversized server endpoint line")
+      } else if (pending.length > 4096)
+        throw new EndpointError("owned server endpoint line was oversized")
     }
-    if (!found) throw new Error("server exited before advertising its endpoint")
+    if (!found)
+      throw new EndpointError("owned server closed stdout before advertising its endpoint")
   } catch (error) {
     ready.reject(error)
   }
@@ -232,7 +242,16 @@ export async function startPrivateServer(
       signal.addEventListener("abort", abort, { once: true })
       try {
         if (signal.aborted) throw failed()
-        const url = await Promise.race([endpoint.promise, interrupted.promise])
+        const url = await Promise.race([endpoint.promise, interrupted.promise]).catch(
+          (error: unknown) => {
+            if (error instanceof EndpointError) {
+              stage = `${error.message}, exit=${child.exitCode ?? "unknown"}, signal=${child.signalCode ?? "none"}`
+              throw failed()
+            }
+            throw error
+          },
+        )
+        stage = "validating the owned server endpoint"
         if (launcher !== undefined && new URL(url).port !== String(launcher.serverPort))
           throw failed()
         const headers = {
@@ -247,6 +266,7 @@ export async function startPrivateServer(
             stage = `private plugin inventory returned HTTP ${response.status}`
             throw failed()
           }
+          stage = "decoding private plugin inventory"
           const listed = (await response.json()) as {
             location?: { directory?: string }
             data?: Array<{
@@ -272,8 +292,10 @@ export async function startPrivateServer(
               `required policy plugin failed to activate; see ${request.logFile}`,
             )
           if (existsSync(ack)) {
-            stage = "policy acknowledgment did not match the run, server or workspace"
-            if (!matchesReadiness(JSON.parse(readFileSync(ack, "utf8")), expected)) throw failed()
+            stage = "reading the policy acknowledgment"
+            const proof: unknown = JSON.parse(readFileSync(ack, "utf8"))
+            stage = "checking policy acknowledgment run, server and workspace identity"
+            if (!matchesReadiness(proof, expected)) throw failed()
             if (
               plugins.some(
                 (entry) =>
@@ -283,6 +305,27 @@ export async function startPrivateServer(
                   entry.state?.status === "active",
               )
             ) {
+              if (request.resumeSession !== undefined) {
+                stage = "checking saved session ownership on the attested runtime"
+                const lookup = await fetch(
+                  url + "/api/session/" + encodeURIComponent(request.resumeSession),
+                  {
+                    headers,
+                    signal,
+                    redirect: "error",
+                  },
+                )
+                if (!lookup.ok) throw failed()
+                const record = (await lookup.json()) as {
+                  data?: { id?: string; location?: { directory?: string; workspaceID?: string } }
+                }
+                if (
+                  record.data?.id !== request.resumeSession ||
+                  record.data.location?.directory !== request.workspace ||
+                  record.data.location.workspaceID !== undefined
+                )
+                  throw failed()
+              }
               stage = "opening the local session endpoint"
               if (signal.aborted || child.exitCode !== null || child.signalCode !== null)
                 throw failed()

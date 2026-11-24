@@ -581,9 +581,11 @@ const VERIFY_LIMITATIONS = [
 export function verify(file: string): VerifyResult {
   if (!existsSync(file))
     return { ok: true, entries: 0, head: GENESIS, limitations: VERIFY_LIMITATIONS }
-  const lines = readFileSync(file, "utf8")
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
+  return verifyText(readFileSync(file, "utf8"))
+}
+
+export function verifyText(text: string): VerifyResult {
+  const lines = text.split("\n").filter((line) => line.trim().length > 0)
   let prev = GENESIS
   for (let index = 0; index < lines.length; index++) {
     let entry: EvidenceEntry

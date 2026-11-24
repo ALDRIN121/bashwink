@@ -45,3 +45,30 @@ test("offline coding requires a valid fixture port before runtime resolution", (
   expect(result.exitCode).toBe(2)
   expect(result.stderr.toString()).toContain("usage: bashwink sandbox offline <mock-port>")
 })
+
+test("offline continuation requires an existing stage before attempting runtime launch", () => {
+  const result = Bun.spawnSync([
+    process.execPath,
+    cli,
+    "sandbox",
+    "offline",
+    "12345",
+    "--stage",
+    "/private/tmp/bashwink-offline-missing",
+    "--continue",
+  ])
+  expect(result.exitCode).toBe(3)
+  expect(result.stderr.toString()).toContain("offline stage is missing or unrecognized")
+})
+
+test("staged export requires a recognized stage before reading any destination", () => {
+  const result = Bun.spawnSync([
+    process.execPath,
+    cli,
+    "sandbox",
+    "export",
+    "/private/tmp/bashwink-offline-missing",
+  ])
+  expect(result.exitCode).toBe(3)
+  expect(result.stderr.toString()).toContain("offline stage is missing or unrecognized")
+})

@@ -53,6 +53,11 @@ export function acknowledge(lease: Lease): () => void {
   // registrations themselves and runs first. An unexpected unload kills the owned
   // server before it can expose a generation without the required hooks.
   return () => {
-    if (!existsSync(lease.retiring)) process.exit(3)
+    if (existsSync(lease.retiring)) return
+    try {
+      unlinkSync(lease.ack)
+    } finally {
+      process.exit(3)
+    }
   }
 }

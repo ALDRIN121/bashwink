@@ -50,7 +50,8 @@ import {
   standaloneArguments,
 } from "./execution-policy.js"
 import { executionTimeout, runWithBackend, selectBackend } from "./execution-backend.js"
-import { OFFLINE_USAGE, runNativeOffline } from "./native-offline.js"
+import { OFFLINE_USAGE, parseOffline, runNativeOffline } from "./native-offline.js"
+import { exportNativeStage } from "./native-export.js"
 import { probeNativeSandbox } from "./native-sandbox.js"
 
 /** Value of `--flag value` or `--flag=value`, or undefined. First occurrence wins. */
@@ -147,18 +148,27 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
     case "sandbox": {
       if (rest[0] === "offline") {
         try {
-          if (rest.length !== 2) throw new Error(OFFLINE_USAGE)
+          const options = parseOffline(rest.slice(1))
           const plugin = resolvePluginDirectory(
             [path.join(MODULE_DIR, "evidence"), path.join(MODULE_DIR, "..", "..", "bw-evidence")],
             {},
           )
-          const result = await runNativeOffline(rest[1], plugin)
+          const result = await runNativeOffline(options, plugin)
           if (result.outcome !== "exited") err(result.detail ?? result.outcome)
           return { exitCode: result.exitCode, handled: true }
         } catch (error) {
           const message = error instanceof Error ? error.message : "offline startup failed"
           err(message)
           return { exitCode: message === OFFLINE_USAGE ? 2 : 3, handled: true }
+        }
+      }
+      if (rest[0] === "export" && rest.length === 2) {
+        try {
+          await exportNativeStage(rest[1]!)
+          return { exitCode: 0, handled: true }
+        } catch (error) {
+          err(error instanceof Error ? error.message : "staged export failed")
+          return { exitCode: 3, handled: true }
         }
       }
       if (rest.length !== 1 || rest[0] !== "probe") {

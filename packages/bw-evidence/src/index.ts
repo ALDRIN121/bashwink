@@ -343,5 +343,6 @@ export function create(options: EvidencePluginOptions = {}) {
 export default create()
 
 export { EvidenceRecorder, verify }
+export { verifyText } from "./recorder.js"
 export * from "./recorder.js"
 export { physicalPath, type ScopePolicy } from "./scope.js"

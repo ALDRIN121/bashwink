@@ -61,6 +61,10 @@ SCENARIOS = {
         "command": "sh ./kernel-check.sh",
         "final": "Offline fixture completed its file and shell checks.",
     },
+    "native-recovery": {
+        "command": "sh ./kernel-check.sh",
+        "final": "Offline recovery completed its file checks.",
+    },
     "fail": {
         "command": "printf 'bw-mock-fail\\n'; exit 7",
         # Honest: the mock reports the failure it caused. A summary that lied about a
@@ -188,6 +192,7 @@ class Handler(BaseHTTPRequestHandler):
         model = request.get("model", "mock-tool-model")
         messages = request.get("messages", [])
         tools = request.get("tools", [])
+        fixture_history = json.dumps(messages) if ACTIVE_SCENARIO in {"native-offline", "native-recovery"} else ""
         log(
             {
                 "event": "request",
@@ -197,6 +202,10 @@ class Handler(BaseHTTPRequestHandler):
                 "message_count": len(messages),
                 "tool_names": [t.get("function", {}).get("name") for t in tools],
                 "has_tool_result": has_tool_result(messages),
+                **({
+                    "initial_prompt_present": "Run the offline coding check" in fixture_history,
+                    "recovery_prompt_present": "Check the saved conversation" in fixture_history,
+                } if fixture_history else {}),
             }
         )
 
@@ -213,7 +222,9 @@ class Handler(BaseHTTPRequestHandler):
         # tool (a tool result is in the conversation), answer finally instead.
         count = sum(message.get("role") == "tool" for message in messages)
         offered = {tool.get("function", {}).get("name") for tool in tools}
-        native_step = ACTIVE_SCENARIO == "native-offline" and count < 3
+        native_step = (ACTIVE_SCENARIO == "native-offline" and count < 3) or (
+            ACTIVE_SCENARIO == "native-recovery" and count < 2
+        )
         if native_step or (not has_tool_result(messages) and not tool_arguments_present(messages)):
             if native_step and count < 2:
                 chosen = "write" if "write" in offered else None

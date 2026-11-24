@@ -154,8 +154,16 @@ def main():
     parser.add_argument("--keep", action="store_true")
     args = parser.parse_args()
     report = Report(args.out)
-    archive = next(args.archive_dir.glob("*.tar.gz"))
     work = Path(tempfile.mkdtemp(prefix="bw-first-run-")).resolve()
+    try:
+        return run_stages(args, report, work)
+    finally:
+        if not args.keep:
+            shutil.rmtree(work, ignore_errors=True)
+
+
+def run_stages(args, report, work):
+    archive = next(args.archive_dir.glob("*.tar.gz"))
     home = work / "home"
     (home / "Downloads").mkdir(parents=True)
     env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(home), "TERM": "xterm-256color", "LANG": "en_US.UTF-8"}
@@ -412,8 +420,6 @@ def main():
     purge = subprocess.run([extracted / "uninstall.sh", "--purge-state"], cwd=home, env=env, input="delete\n", capture_output=True, text=True)
     purged = not (home / ".config/bashwink").exists() and not (home / ".local/share/bashwink").exists()
     report.stage("uninstall --purge-state removes state", "PASS" if purge.returncode == 0 and purged else "FAIL")
-    if not args.keep:
-        shutil.rmtree(work, ignore_errors=True)
     return 0
 
 

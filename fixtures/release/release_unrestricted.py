@@ -38,6 +38,13 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     work = Path(tempfile.mkdtemp(prefix="bw-unrestricted-")).resolve()
+    try:
+        return run_checks(args, work)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def run_checks(args, work):
     home = work / "home"
     home.mkdir()
     env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(home), "TERM": "xterm-256color"}
@@ -139,7 +146,6 @@ def main():
     finally:
         mock.terminate()
     args.out.write_text(json.dumps(results, indent=2) + "\n")
-    shutil.rmtree(work, ignore_errors=True)
     return 0 if all(r["verdict"] == "PASS" for r in results) else 1
 
 

@@ -166,3 +166,44 @@ before/after revisions must form a valid chain, final bytes must match the saved
 snapshot, and the processed receipt list is stored atomically with the checkpoint.
 Missing or malformed receipts fail closed. The scheme preserves per-file recovery;
 it does not make the multi-file apply atomic.
+
+## ADR-013 — v0.1.0-alpha.1: macOS-only scope, secure default and release build
+
+- **Date / owner:** 2026-11-24, Aldrin Joseph.
+- **Problem and context:** A fresh development installation lacked VM assets and an ordinary
+  launch could select host execution, so the strongest evidence (live VM coding, recovery,
+  reviewed export) did not describe what a first-time user would actually run.
+- **Scope decision (recorded explicitly).** The v0.1.0-alpha.1 candidate advertises macOS on
+  Apple Silicon only, and only macOS builds named in `release/qualified-hosts.json` (currently
+  27.0.1, build 26A434, tier "engineering-host"). Linux, Windows and Intel Macs are
+  unsupported for this candidate. **This narrows what the candidate advertises. It does not
+  complete BW-031 or BW-032 and removes none of their requirements:** the Ubuntu x86-64 rows,
+  the clean Docker-free host qualification, hosted CI for the exact candidate and the
+  remaining controls stay open in `BW-032_PLATFORM_QUALIFICATION.md`, and both tasks stay
+  `In progress` in the register.
+- **Decision.**
+  1. A release bundle is compiled with `__BASHWINK_RELEASE__`. No variable, flag or file turns
+     a development bundle into a release bundle or back. Release bundles ignore
+     `BASHWINK_BACKEND`, `BASHWINK_VM_PROVIDER` and `BASHWINK_OPENCODE_BIN`.
+  2. Bare `bashwink`, `--continue` and `--session` run in the VM or stop. A launch that cannot
+     start the VM stops before any model request or tool dispatch, prints a cause and a fix,
+     and appends to `startup-failures.jsonl`. There is no automatic host fallback.
+  3. Host execution is `--unsafe-local` only, after a typed phrase on an interactive terminal,
+     every time. Existing approvals and hard denials are unchanged. Mode is shown before the
+     UI, inside it (a 20-second TUI toast, not a persistent indicator), in `doctor` and in run
+     records (`execution.backend.mode`).
+  4. The CLI embeds the SHA-256 of the VM asset manifest and the qualified macOS builds. Every
+     launch re-hashes the kernel, initramfs and VM owner against that manifest.
+  5. The relay provider is the owner of the model chosen with `bashwink model use`. First
+     launch in a project asks for workspace approval, recorded in the existing trust store.
+  6. The VM session deadline is 30 minutes (owner cap 60). The guest ends at 29 minutes and
+     saves; a host-side kill discards unsaved work, so the guest limit must stay lower.
+  7. A release build removes the stage directory after its checkpoint is committed.
+  8. The release archive ships stock upstream OpenCode binaries. They embed LGPL FFmpeg
+     (ADR-009), so giving the archive to anyone else needs the owner's sign-off or a
+     rebuilt no-FFmpeg library. This candidate is not distributed.
+- **Evidence:** `releases/v0.1.0-alpha.1/QUALIFICATION_RESULTS.md`, `TEST_EVIDENCE.md`.
+- **Consequences and reversal conditions:** Unqualified macOS builds are refused until added to
+  the list with evidence. The list is compiled in, so extending it needs a new build. Reverse
+  decision 3 only with a persistent indicator and a new review.
+- **Status:** Accepted for the candidate; external distribution not approved.

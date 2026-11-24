@@ -26,11 +26,17 @@ bashwink/
 The pinned OpenCode foundation is **not** vendored here. It lives beside this repository at
 `~/Developer/bashwink-upstream/opencode` and is consumed by exact version.
 
-## v0.1.0-alpha
+## v0.1.0-alpha.1 (local release candidate)
 
-External release is blocked. macOS Apple Silicon is the initial target.
-See the [release decision](docs/bashwink/releases/v0.1.0-alpha/RELEASE_READINESS.md)
-and [quick-start draft](docs/bashwink/releases/v0.1.0-alpha/QUICK_START.md).
+A self-contained macOS Apple Silicon archive that runs the agent in an isolated VM by
+default. It is **not published**, and external distribution is **not approved**: it has not
+been qualified on a clean host, has no hosted CI run for its commit, and ships stock OpenCode
+binaries whose licensing needs the owner's sign-off. Build it with
+`python3 scripts/build_release.py --out build/release`; installation, the tester guide and
+the known limits are in [release/docs](release/docs). Verdicts and evidence:
+[release gate report](docs/bashwink/releases/v0.1.0-alpha.1/RELEASE_GATE_REPORT.md).
+The earlier [v0.1.0-alpha decision](docs/bashwink/releases/v0.1.0-alpha/RELEASE_READINESS.md)
+is superseded.
 
 ## Local development quick start
 

@@ -417,9 +417,16 @@ def run_stages(args, report, work):
     state_kept = any((home / p).exists() for p in (".config/bashwink", ".local/share/bashwink"))
     report.stage("uninstall removes the install and keeps state", "PASS" if removed.returncode == 0 and gone and state_kept else "FAIL",
                  f"{sizes_before} bytes removed")
-    purge = subprocess.run([extracted / "uninstall.sh", "--purge-state"], cwd=home, env=env, input="delete\n", capture_output=True, text=True)
-    purged = not (home / ".config/bashwink").exists() and not (home / ".local/share/bashwink").exists()
-    report.stage("uninstall --purge-state removes state", "PASS" if purge.returncode == 0 and purged else "FAIL")
+    # The shipped uninstaller's purge also removes every /private/tmp/bashwink-vm-* directory the
+    # user owns. Those belong to whoever made them, so only run the purge when none exist.
+    foreign = sorted(p.name for p in Path("/private/tmp").glob("bashwink-vm-*") if p.is_dir())
+    if foreign:
+        report.stage("uninstall --purge-state removes state", "NOT_RUN",
+                     f"{len(foreign)} pre-existing /private/tmp/bashwink-vm-* directories would also be deleted; not touched")
+    else:
+        purge = subprocess.run([extracted / "uninstall.sh", "--purge-state"], cwd=home, env=env, input="delete\n", capture_output=True, text=True)
+        purged = not (home / ".config/bashwink").exists() and not (home / ".local/share/bashwink").exists()
+        report.stage("uninstall --purge-state removes state", "PASS" if purge.returncode == 0 and purged else "FAIL")
     return 0
 
 

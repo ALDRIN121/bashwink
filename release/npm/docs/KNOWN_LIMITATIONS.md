@@ -19,14 +19,14 @@
   machine). Linux and Windows: **not yet run**. See `SUPPORTED_PLATFORMS.md` in the repository documents.
 - Windows on ARM64 is refused. Windows x64 is the intended Windows target and has **not been qualified**.
 - Node.js 18+ and network access to the public npm registry are needed to install (the pinned runtimes are downloaded).
-  `--omit=optional` and `--ignore-scripts` installs are not supported targets.
+  Installs with `--ignore-scripts` are untested (Bun's own package finishes its install in a script).
 
 ## Product
 
 - No running cost display, per-session spending limit, or retry budget yet; set a limit at your provider.
 - A live conversation with a real model, tool calls and edits has **not** been run on the installed package.
 - Large repositories, monorepos and non-Git folders are untested. Undo is Git.
-- Upgrades: reinstalling over an existing install is untested.
+- Upgrades: reinstalling the same version over an existing install was tested on macOS; upgrading from an earlier version has not been.
 
 ## Licensing
 

@@ -15,7 +15,7 @@ approve can do anything you can do. Work in a Git repository, keep a backup, and
 
 Requirements: Node.js 18 or newer (for `npm`), and one of macOS (Apple Silicon or Intel), Linux (x64 or arm64), or
 Windows 11 x64. **Windows on ARM64 is not supported.** The package installs its own pinned Bun and OpenCode runtimes
-(public packages `bun` and `@opencode/cli`); installing with `--omit=optional` removes them and Bashwink will say so.
+(public packages `bun` and `@opencode/cli`). If one of them is missing, Bashwink names it and exits with status 1.
 
 First steps: `bashwink --version`, `bashwink doctor`, then the guide in `share/doc/ALPHA_TESTER_GUIDE.md`
 (inside the installed package directory; `npm root -g` shows where). Known limits: `share/doc/KNOWN_LIMITATIONS.md`.

@@ -47,3 +47,6 @@ __pycache__/
 # Release candidate archives are build output, never committed
 docs/bashwink/releases/*/*.tar.gz
 build/
+
+# Private-alpha npm tarballs are distributed out of band; only their manifests and checksums are committed.
+release/standard/*/*.tgz

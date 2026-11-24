@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the macOS-only v0.1.0-alpha candidate without publishing anything."""
+"""Validate the macOS-only v0.1.0-alpha.1 candidate without publishing anything."""
 
 import argparse
 from collections import Counter
@@ -14,12 +14,13 @@ from verify_native_release import REPORT, validate as validate_native
 
 
 REPO_ROOT = REPORT.parents[2]
-MANIFEST = REPORT.parent / "releases/v0.1.0-alpha/RELEASE_MANIFEST.json"
-VERSION = "v0.1.0-alpha"
+VERSION = "v0.1.0-alpha.1"
+MANIFEST = REPORT.parent / f"releases/{VERSION}/RELEASE_MANIFEST.json"
 TARGET = "macos-arm64"
 BACKEND = "apple-virtualization"
 RUNTIME = "2.3.2"
-ARTIFACT = f"bashwink-{VERSION}-{TARGET}.tar.gz"
+# The archive carries the package version; the Git tag and manifest carry the leading "v".
+ARTIFACT = f"bashwink-{VERSION.removeprefix('v')}-{TARGET}.tar.gz"
 REPOSITORY = "ALDRIN121/bashwink"
 CHECKS = (
     "interactive-coding", "real-provider", "clean-install", "supported-platform",
@@ -93,7 +94,7 @@ def validate_ci(ci, root, revision):
 
 def validate(manifest, matrix, revision, manifest_root, evidence_root):
     if not isinstance(manifest, dict) or manifest.get("schema") != 1 or manifest.get("version") != VERSION:
-        return ["unrecognized v0.1.0-alpha release manifest"]
+        return ["unrecognized v0.1.0-alpha.1 release manifest"]
     errors = []
     if re.fullmatch(r"[0-9a-f]{40}", revision) is None or manifest.get("candidate") != revision:
         errors.append("release manifest has no matching candidate commit")
@@ -176,11 +177,11 @@ def main():
     except (KeyError, OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         errors = [str(error)]
     if errors:
-        print("External v0.1.0-alpha release FAIL", file=sys.stderr)
+        print("External v0.1.0-alpha.1 release FAIL", file=sys.stderr)
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print(f"External v0.1.0-alpha candidate PASS for {revision}")
+    print(f"External v0.1.0-alpha.1 candidate PASS for {revision}")
     return 0
 
 

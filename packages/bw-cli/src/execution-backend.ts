@@ -56,6 +56,11 @@ const localCapabilities: BackendCapabilities = {
   cancellation: "direct-child",
 }
 
+const unrestrictedCapabilities: BackendCapabilities = {
+  ...localCapabilities,
+  mode: "unrestricted-host",
+}
+
 export const makeBackend = (
   capabilities: BackendCapabilities,
   launcher?: RuntimeLauncher,
@@ -181,8 +186,12 @@ export const makeBackend = (
 
 export const localBackend = makeBackend(localCapabilities)
 
+/** Host execution that a release build offers only after a typed acknowledgment. */
+export const unrestrictedBackend = makeBackend(unrestrictedCapabilities)
+
 export function selectBackend(mode = "local"): ExecutionBackend {
   if (mode === "local") return localBackend
+  if (mode === "unrestricted-host") return unrestrictedBackend
   if (mode === "native")
     throw new Error(
       "native coding sessions are not qualified; use bashwink sandbox probe for offline checks",

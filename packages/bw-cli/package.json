@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "@bashwink/cli",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "type": "module",
   "description": "Bashwink CLI — a thin branded launcher over a pinned OpenCode runtime, plus plan, trust and evidence subcommands.",

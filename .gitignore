@@ -27,6 +27,8 @@ fixtures/*/
 !fixtures/scope-fence/
 !fixtures/interactive-entry/
 !fixtures/native-offline/
+!fixtures/release/
+fixtures/release/_generated_egress.ts
 
 # macOS
 .DS_Store
@@ -38,3 +40,10 @@ audit/
 .idea/
 .vscode/
 *.swp
+
+# Python bytecode from the fixtures and scripts
+__pycache__/
+
+# Release candidate archives are build output, never committed
+docs/bashwink/releases/*/*.tar.gz
+build/

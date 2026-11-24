@@ -210,7 +210,7 @@ if !stageLocks.isEmpty {
 }
 let timeoutMs = deadlines.first.flatMap { Int($0.dropFirst("--timeout-ms=".count)) }
 if !deadlines.isEmpty {
-    guard let timeoutMs, (1...120_000).contains(timeoutMs) else { exit(3) }
+    guard let timeoutMs, (1...3_600_000).contains(timeoutMs) else { exit(3) }
 }
 let lease = hostTerminal ? STDIN_FILENO : leaseOptions.first.flatMap(Int32.init)
 if let lease {

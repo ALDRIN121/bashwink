@@ -1,0 +1,43 @@
+
+
+==============================================================================
+COMPONENTS OF THE RELEASE ARCHIVE OUTSIDE THE OPENTUI LIBRARY
+==============================================================================
+
+This section lists the other third-party code in the archive. Every item is an unmodified
+upstream build, pinned by SHA-256 in share/doc/inputs.lock.json and RELEASE_MANIFEST.json.
+It is an inventory, not legal advice: the project owner must confirm that the notices and
+source pointers below satisfy each licence before the archive is given to anyone else.
+
+OpenCode 2.3.2 (host: libexec/opencode; guest: inside the VM image)
+  Licence: MIT, Copyright (c) 2025 opencode.
+  Source:  https://github.com/anomalyco/opencode  tag v2.3.2,
+           commit c0ad18b402eb2827fc1ee71c171b1177b3fc02d1
+  The binary embeds the OpenTUI library above. That library statically links FFmpeg, which is
+  licensed LGPL-2.1-or-later (see "FFmpeg" in the section above and its source pointer).
+  LGPL relinking: the OpenCode binary loads a replacement library from the path named by the
+  OPENTUI_LIB_PATH environment variable. A user may build a modified or FFmpeg-free libopentui
+  from OpenTUI v0.8.4 and run Bashwink's OpenCode against it.
+
+Bun 1.4.4 (host: libexec/bun; guest: inside the VM image)
+  Licence: MIT. Bun embeds JavaScriptCore (LGPL-2.0 and BSD) and other components; the list
+  is at https://bun.sh/docs/project/licensing .
+  Source:  https://github.com/oven-sh/bun  tag bun-v1.4.4
+
+Alpine Linux 3.23.8 aarch64 guest (inside the VM image)
+  Linux kernel 6.18.60 "virt" and its virtio_blk and vsock modules: GPL-2.0-only.
+  BusyBox, apk-tools: GPL-2.0-only.   musl libc, Alpine baselayout: MIT.
+  socat 1.8.1.3: GPL-2.0-only with an OpenSSL exception.
+  readline 8.3.1: GPL-3.0-or-later.
+  libgcc and libstdc++ 15.2.0: GPL-3.0-or-later with the GCC Runtime Library Exception.
+  ncurses terminfo and libncursesw 6.5: X11.
+  Source:  the corresponding source for each is the unmodified Alpine package source for
+           release 3.23.8, https://git.alpinelinux.org/aports (branch 3.23-stable), and the
+           upstream projects: https://www.kernel.org , https://busybox.net ,
+           http://www.dest-unreach.org/socat/ , https://tiswww.case.edu/php/chet/readline/rltop.html ,
+           https://gcc.gnu.org .
+  Full licence texts: https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt ,
+           https://www.gnu.org/licenses/gpl-3.0.txt , https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt
+
+Bashwink
+  Licence: MIT. See BASHWINK-LICENSE.

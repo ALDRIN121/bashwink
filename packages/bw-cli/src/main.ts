@@ -10,6 +10,7 @@
 
 import { VERSION, renderHelp } from "./help.js"
 import { diagnose, render as renderDoctor } from "./doctor.js"
+import { withReleaseChecks } from "./release-doctor.js"
 import { RuntimeNotFoundError, resolveRuntime } from "./runtime.js"
 import {
   EVIDENCE_PLUGIN_ID,
@@ -50,6 +51,18 @@ import {
   standaloneArguments,
 } from "./execution-policy.js"
 import { executionTimeout, runWithBackend, selectBackend } from "./execution-backend.js"
+import {
+  AcknowledgmentError,
+  GUEST_BUILD,
+  RELEASE_BUILD,
+  STARTUP_FAILURE_LOG,
+  StartupError,
+  UNRESTRICTED_FLAG,
+  acknowledgeUnrestricted,
+  describeMode,
+  recordStartupFailure,
+  type ExecutionMode,
+} from "./release.js"
 import { OFFLINE_USAGE, parseOffline, runNativeOffline } from "./native-offline.js"
 import { recoverClosedNativeStage } from "./native-lifetime.js"
 import { exportNativeStage, recoverNativeExport } from "./native-export.js"
@@ -59,6 +72,7 @@ import {
   offlineVmSelected,
   runOfflineVm,
   runOfflineVmVerification,
+  terminalIO,
 } from "./offline-vm.js"
 import { assertVmProjectRevision, openVmProject } from "./vm-project.js"
 import { recoverVmProject, reviewVmProject, vmProjectApplyPending } from "./vm-project-apply.js"
@@ -115,9 +129,56 @@ function err(text: string): void {
  * Returns rather than calling `process.exit`, so tests can assert the exit code instead of
  * killing the test runner. `bin.ts` is the only place that actually exits.
  */
-export async function main(argv: readonly string[]): Promise<MainResult> {
+/**
+ * Report a launch that did not start (or did not finish starting) and record it. Used for
+ * every release-mode failure so that the message, the exit status and the record agree.
+ */
+function startupFailure(error: unknown, mode: ExecutionMode): MainResult {
+  const message = error instanceof Error ? error.message : String(error)
+  err(`${mode === "isolated-vm" ? "isolated VM" : "bashwink"}: ${message}`)
+  if (RELEASE_BUILD) {
+    const code =
+      error instanceof StartupError
+        ? error.code
+        : error instanceof AcknowledgmentError
+          ? "acknowledgment-required"
+          : "vm-init-failed"
+    if (error instanceof StartupError || error instanceof AcknowledgmentError)
+      err("No model request was made and no tool was dispatched.")
+    let recorded = false
+    try {
+      const data = paths().data
+      recorded = recordStartupFailure(data, { code, mode, message })
+      if (recorded) err(`This failure was recorded in ${path.join(data, STARTUP_FAILURE_LOG)}.`)
+    } catch {
+      // Recording is best effort; the message above has already been shown.
+    }
+    if (!recorded) err("(the failure could not be written to the startup log)")
+  }
+  return { exitCode: 3, handled: true }
+}
+
+export async function main(input: readonly string[]): Promise<MainResult> {
+  let argv = input
+  let unrestricted = false
+  if (RELEASE_BUILD) {
+    const at = input.indexOf(UNRESTRICTED_FLAG)
+    if (at > 0) {
+      err(`${UNRESTRICTED_FLAG} must be the first argument`)
+      return { exitCode: 2, handled: true }
+    }
+    if (at === 0) {
+      try {
+        acknowledgeUnrestricted(terminalIO())
+      } catch (error) {
+        return startupFailure(error, "unrestricted-host")
+      }
+      unrestricted = true
+      argv = input.slice(1)
+    }
+  }
   const [first, ...rest] = argv
-  const offlineVm = offlineVmSelected(MODULE_DIR)
+  const offlineVm = RELEASE_BUILD ? !unrestricted : offlineVmSelected(MODULE_DIR)
 
   if (first === "--version" || first === "-v") {
     out(`bashwink ${VERSION}`)
@@ -140,8 +201,7 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
       try {
         return { exitCode: await runOfflineVm(MODULE_DIR), handled: true }
       } catch (error) {
-        err(`offline VM: ${error instanceof Error ? error.message : String(error)}`)
-        return { exitCode: 3, handled: true }
+        return startupFailure(error, "isolated-vm")
       }
     }
     // Either stream being a terminal is enough: `bashwink < /dev/null` from a real terminal
@@ -165,9 +225,19 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
   // forwards `--help` to the runtime where it means the runtime's help.
   switch (first) {
     case "sandbox": {
+      if (
+        RELEASE_BUILD &&
+        rest[0] !== "vm-review" &&
+        rest[0] !== "vm-recover" &&
+        rest[0] !== "vm-verify"
+      ) {
+        err("this sandbox command is a development experiment and is not part of release builds")
+        return { exitCode: 2, handled: true }
+      }
       if (rest[0] === "vm-review" || rest[0] === "vm-recover" || rest[0] === "vm-verify") {
         try {
-          if (!offlineVm) throw new Error("this installation has no offline VM selected")
+          if (!offlineVm && !RELEASE_BUILD)
+            throw new Error("this installation has no offline VM selected")
           if (rest[0] !== "vm-review" && rest.length !== 1)
             throw new Error("unexpected VM operation arguments")
           if (rest[0] === "vm-verify")
@@ -266,7 +336,14 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
       return { exitCode: result.exitCode, handled: true }
     }
     case "doctor": {
-      const report = diagnose({ offlineVm })
+      const base = diagnose({ offlineVm })
+      const report = RELEASE_BUILD
+        ? await withReleaseChecks(
+            base,
+            MODULE_DIR,
+            unrestricted ? "unrestricted-host" : "isolated-vm",
+          )
+        : base
       out(renderDoctor(report))
       return { exitCode: report.exitCode, handled: true }
     }
@@ -340,21 +417,26 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
           handled: true,
         }
       } catch (error) {
-        err(`offline VM: ${error instanceof Error ? error.message : String(error)}`)
-        return { exitCode: 3, handled: true }
+        return startupFailure(error, "isolated-vm")
       }
     }
     if (first === "backend") {
-      out(JSON.stringify(offlineVmCapabilities, null, 2))
+      out(JSON.stringify({ execution: "isolated-vm", ...offlineVmCapabilities }, null, 2))
       return { exitCode: 0, handled: true }
     }
-    err("the offline VM supports bare bashwink, --continue, and --session <id>")
-    return { exitCode: 3, handled: true }
+    return startupFailure(
+      new StartupError(
+        "unsupported-invocation",
+        "the isolated VM supports bare bashwink, --continue, and --session <id>. " +
+          `Other invocations would run on the host, so they are refused; ${UNRESTRICTED_FLAG} is the explicit host mode.`,
+      ),
+      "isolated-vm",
+    )
   }
   let backend
   let timeoutMs
   try {
-    backend = selectBackend(process.env["BASHWINK_BACKEND"])
+    backend = selectBackend(RELEASE_BUILD ? "unrestricted-host" : process.env["BASHWINK_BACKEND"])
     if (first === "backend") {
       out(JSON.stringify(backend.capabilities, null, 2))
       return { exitCode: 0, handled: true }
@@ -369,7 +451,11 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
   // Anything else belongs to the runtime.
   let runtime
   try {
-    runtime = resolveRuntime()
+    runtime = resolveRuntime(
+      RELEASE_BUILD
+        ? { bundled: path.join(MODULE_DIR, "..", "libexec", "opencode"), bundledOnly: true }
+        : {},
+    )
   } catch (error) {
     if (error instanceof RuntimeNotFoundError) {
       err(error.message)
@@ -491,6 +577,14 @@ export async function main(argv: readonly string[]): Promise<MainResult> {
     ...content,
     plugins: [...configuredPlugins, evidencePlugin.path],
   })
+  // Host execution is never silent: say so before the terminal UI takes the screen, and again
+  // in the title bar. The run record carries the same mode through `execution.backend.mode`.
+  const hostMode = GUEST_BUILD
+    ? describeMode("isolated-vm", "running inside the VM guest")
+    : describeMode(RELEASE_BUILD ? "unrestricted-host" : "development-host")
+  err(hostMode.banner)
+  if (process.stderr.isTTY) process.stderr.write(`\x1b]0;bashwink [${hostMode.short}]\x07`)
+  environment["BASHWINK_EXECUTION_MODE"] = hostMode.mode
   beginRun({
     resolved,
     runId,

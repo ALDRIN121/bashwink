@@ -154,11 +154,27 @@ export function vmProviderSelection(
   }
 }
 
-export function configuredVmProvider() {
-  const id = process.env["BASHWINK_VM_PROVIDER"]
-  return id === undefined
-    ? undefined
-    : vmProviderSelection(readRuntimeConfig(paths().config), id, process.env)
+/**
+ * The provider the VM relay serves.
+ *
+ * Development builds still honor `BASHWINK_VM_PROVIDER`. A release build never reads it: the
+ * provider is whichever one owns the model chosen with `bashwink model use`, so a first-time
+ * user configures a provider with `bashwink auth add` and a model, and nothing else.
+ */
+export function configuredVmProvider(release = false) {
+  if (!release) {
+    const id = process.env["BASHWINK_VM_PROVIDER"]
+    return id === undefined
+      ? undefined
+      : vmProviderSelection(readRuntimeConfig(paths().config), id, process.env)
+  }
+  const config = readRuntimeConfig(paths().config)
+  const selected = defaultModel(config)
+  if (!selected)
+    throw new Error(
+      "no model is selected. Add a provider with `bashwink auth add <id> --base-url <url> --env <VAR> --model <name>`, then run `bashwink model use <provider>/<model>`",
+    )
+  return vmProviderSelection(config, parseModelRef(selected).providerID, process.env)
 }
 
 export type VmProviderSelection = ReturnType<typeof vmProviderSelection>

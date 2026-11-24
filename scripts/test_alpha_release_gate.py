@@ -31,11 +31,11 @@ class AlphaReleaseGateTest(unittest.TestCase):
             "conclusion": "success", "repository": {"full_name": "ALDRIN121/bashwink"},
             "html_url": "https://github.com/ALDRIN121/bashwink/actions/runs/7",
         }))
-        artifact = "bashwink-v0.1.0-alpha-macos-arm64.tar.gz"
+        artifact = "bashwink-0.1.0-alpha.1-macos-arm64.tar.gz"
         (self.root / artifact).write_bytes(b"test stand-in for verified artifact")
         checksum = hashlib.sha256((self.root / artifact).read_bytes()).hexdigest()
         self.manifest = {
-            "schema": 1, "version": "v0.1.0-alpha", "candidate": SHA,
+            "schema": 1, "version": "v0.1.0-alpha.1", "candidate": SHA,
             "supported": [self.platform], "artifact": {
                 "path": artifact,
                 "sha256": checksum,

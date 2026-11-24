@@ -10,6 +10,7 @@ import {
   openSync,
   readSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from "node:fs"
 import path from "node:path"
@@ -29,9 +30,26 @@ import { vmProjectApplyPending } from "./vm-project-apply.js"
 import { startProviderRelay } from "./provider-relay.js"
 import { configuredVmProvider, type VmProviderSelection } from "./vm-provider.js"
 import { syncDirectory } from "./native-stage.js"
+import { paths } from "./paths.js"
+import {
+  RELEASE_BUILD,
+  StartupError,
+  builtInQualifiedHosts,
+  describeMode,
+  expectedAssetManifestDigest,
+  judgeHost,
+  readHostFacts,
+  type AcknowledgmentIO,
+} from "./release.js"
+import { requireWorkspaceApproval } from "./workspace-approval.js"
 
 const ASSETS = ["vm-owner", "Image", "initramfs"] as const
 const SECTOR_SIZE = 512
+/**
+ * Hard limit on one VM session, enforced by the VM owner. The guest ends its own session a
+ * minute earlier (see release/guest/run-user.sh) so that work is saved before this stops the VM.
+ */
+export const SESSION_DEADLINE_MS = 1_800_000
 const DISK_SIZE = 8 * 1024 * 1024
 
 export const offlineVmCapabilities = {
@@ -57,21 +75,121 @@ export function offlineVmSelected(moduleDirectory: string) {
   })
 }
 
-async function validateAssets(directory: string) {
-  const bytes = regularFile(path.join(directory, "offline-vm.json"), 4096).data
-  const manifest = JSON.parse(bytes.toString()) as {
-    version?: unknown
-    relay?: unknown
-    sha256?: Record<string, unknown>
+export interface AssetOptions {
+  /** Release bundles pin the manifest digest and require a relay-capable image. */
+  readonly release?: boolean
+  readonly expectedManifest?: string | undefined
+}
+
+function assetFailure(
+  release: boolean,
+  code: "vm-assets-missing" | "vm-assets-corrupt",
+  message: string,
+) {
+  return release ? new StartupError(code, message) : new Error(message)
+}
+
+const REINSTALL = "Reinstall Bashwink from the release archive (run its install.sh)."
+
+export async function validateAssets(directory: string, options: AssetOptions = {}) {
+  const release = options.release === true
+  let bytes: Buffer
+  try {
+    bytes = regularFile(path.join(directory, "offline-vm.json"), 4096).data
+  } catch (error) {
+    if (release && (error as NodeJS.ErrnoException).code === "ENOENT")
+      throw assetFailure(
+        release,
+        "vm-assets-missing",
+        `the VM asset manifest is missing (${path.join(directory, "offline-vm.json")}). ${REINSTALL}`,
+      )
+    throw release
+      ? assetFailure(
+          release,
+          "vm-assets-corrupt",
+          `the VM asset manifest is unreadable. ${REINSTALL}`,
+        )
+      : error
+  }
+  if (release) {
+    const pinned = options.expectedManifest
+    if (pinned === undefined)
+      throw assetFailure(
+        release,
+        "vm-assets-corrupt",
+        `this build carries no pinned VM asset digest. ${REINSTALL}`,
+      )
+    if (sha256(bytes) !== pinned)
+      throw assetFailure(
+        release,
+        "vm-assets-corrupt",
+        `the VM asset manifest does not match the one this Bashwink build was released with. ${REINSTALL}`,
+      )
+  }
+  let manifest: { version?: unknown; relay?: unknown; sha256?: Record<string, unknown> }
+  try {
+    manifest = JSON.parse(bytes.toString())
+  } catch {
+    throw assetFailure(
+      release,
+      "vm-assets-corrupt",
+      `invalid asset manifest. ${release ? REINSTALL : ""}`.trim(),
+    )
   }
   if ((manifest?.version !== 1 && manifest?.version !== 2) || !manifest.sha256)
-    throw new Error("invalid asset manifest")
+    throw assetFailure(
+      release,
+      "vm-assets-corrupt",
+      `invalid asset manifest. ${release ? REINSTALL : ""}`.trim(),
+    )
+  if (release && (manifest.version !== 2 || manifest.relay !== true))
+    throw assetFailure(
+      release,
+      "vm-assets-corrupt",
+      `the VM image does not include the provider relay. ${REINSTALL}`,
+    )
   const assets = path.join(directory, "offline-vm")
-  if (realpathSync(assets) !== assets) throw new Error("asset directory is a symlink")
+  try {
+    if (realpathSync(assets) !== assets) throw new Error("asset directory is a symlink")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      throw assetFailure(
+        release,
+        "vm-assets-missing",
+        `the VM asset directory is missing (${assets}). ${release ? REINSTALL : ""}`.trim(),
+      )
+    throw assetFailure(
+      release,
+      "vm-assets-corrupt",
+      `${(error as Error).message}. ${release ? REINSTALL : ""}`.trim(),
+    )
+  }
+  if (release) {
+    for (const entry of [directory, assets]) {
+      const metadata = lstatSync(entry)
+      if (metadata.uid !== process.getuid?.() || (metadata.mode & 0o022) !== 0)
+        throw assetFailure(
+          release,
+          "vm-assets-corrupt",
+          `${entry} must be owned by you and not writable by other users. ${REINSTALL}`,
+        )
+    }
+  }
   for (const name of ASSETS) {
     const filename = path.join(assets, name)
     const expected = manifest.sha256[name]
-    const before = lstatSync(filename)
+    let before: ReturnType<typeof lstatSync>
+    try {
+      before = lstatSync(filename)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT")
+        throw assetFailure(
+          release,
+          "vm-assets-missing",
+          `VM asset missing: ${name}. ${release ? REINSTALL : ""}`.trim(),
+        )
+      throw error
+    }
     if (
       !before.isFile() ||
       before.nlink !== 1 ||
@@ -80,7 +198,11 @@ async function validateAssets(directory: string) {
       typeof expected !== "string" ||
       !/^[a-f0-9]{64}$/.test(expected)
     )
-      throw new Error(`invalid VM asset: ${name}`)
+      throw assetFailure(
+        release,
+        "vm-assets-corrupt",
+        `invalid VM asset: ${name}. ${release ? REINSTALL : ""}`.trim(),
+      )
     const hash = createHash("sha256")
     for await (const chunk of Bun.file(filename).stream()) hash.update(chunk)
     const after = lstatSync(filename)
@@ -91,7 +213,11 @@ async function validateAssets(directory: string) {
       before.size !== after.size ||
       hash.digest("hex") !== expected
     )
-      throw new Error(`VM asset integrity check failed: ${name}`)
+      throw assetFailure(
+        release,
+        "vm-assets-corrupt",
+        `VM asset integrity check failed: ${name}. ${release ? REINSTALL : ""}`.trim(),
+      )
   }
   return {
     assets: ASSETS.map((name) => path.join(assets, name)),
@@ -119,27 +245,100 @@ function guestStatus(disk: string) {
   }
 }
 
+/** Prompts on the controlling terminal. Bun's global `prompt` reads one line from stdin. */
+export function terminalIO(): AcknowledgmentIO {
+  return {
+    interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
+    write: (text) => void process.stdout.write(text),
+    readLine: (message) => prompt(message),
+  }
+}
+
+function refusal(
+  release: boolean,
+  code: ConstructorParameters<typeof StartupError>[0],
+  message: string,
+) {
+  return release ? new StartupError(code, message) : new Error(message)
+}
+
 export async function runOfflineVm(
   moduleDirectory: string,
   resume?: string,
   startRelay: typeof startProviderRelay = startProviderRelay,
+  io: AcknowledgmentIO = terminalIO(),
 ): Promise<number> {
-  if (process.platform !== "darwin" || process.arch !== "arm64")
+  const release = RELEASE_BUILD
+  if (release) {
+    const verdict = judgeHost(readHostFacts(), builtInQualifiedHosts())
+    if (!verdict.supported)
+      throw new StartupError("unsupported-host", `the isolated VM cannot start: ${verdict.reason}`)
+  } else if (process.platform !== "darwin" || process.arch !== "arm64")
     throw new Error("the offline VM requires macOS Apple Silicon")
-  if (!process.stdin.isTTY || !process.stdout.isTTY)
+  if (!release && (!process.stdin.isTTY || !process.stdout.isTTY))
     throw new Error("the offline VM requires an interactive terminal")
 
-  const config = await validateAssets(moduleDirectory)
-  if (process.env["BASHWINK_VM_PROVIDER"] !== undefined && !config.relay)
+  const config = await validateAssets(moduleDirectory, {
+    release,
+    expectedManifest: expectedAssetManifestDigest(),
+  })
+  let provider: VmProviderSelection | undefined
+  try {
+    provider = configuredVmProvider(release)
+  } catch (error) {
+    if (!release) throw error
+    throw new StartupError(
+      "provider-unavailable",
+      `${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+  if (release && provider === undefined)
+    throw new StartupError("provider-unavailable", "no model provider is configured")
+  if (!release && process.env["BASHWINK_VM_PROVIDER"] !== undefined && !config.relay)
     throw new Error("this VM image does not support the configured provider relay")
-  const provider = configuredVmProvider()
   if (resume && config.version !== 2)
     throw new Error("this offline VM build does not support project sessions")
+  if (release && (!io.interactive || !process.stdin.isTTY || !process.stdout.isTTY))
+    throw new StartupError(
+      "no-terminal",
+      "the isolated VM needs an interactive terminal for its coding session",
+    )
   const project = config.version === 2 ? openVmProject(config.profile) : undefined
   try {
     if (project && vmProjectApplyPending(project.root))
-      throw new Error("reviewed apply is interrupted. Run bashwink sandbox vm-recover first")
+      throw refusal(
+        release,
+        "vm-init-failed",
+        "reviewed apply is interrupted. Run bashwink sandbox vm-recover first",
+      )
     if (project) bindVmProjectProvider(project.record, provider?.binding)
+    if (release && project && provider) {
+      const git = Bun.spawnSync(["/usr/bin/git", "-C", project.project, "ls-files", "--cached"], {
+        stdout: "pipe",
+        stderr: "ignore",
+      })
+      const tracked = git.stdout
+        .toString()
+        .split("\n")
+        .filter((line) => line !== "").length
+      const included = Object.entries(project.record.base).map(([name, file]) => ({
+        name,
+        bytes: Buffer.from(file.data, "base64").length,
+      }))
+      requireWorkspaceApproval({
+        configDirectory: paths().config,
+        summary: {
+          workspace: project.project,
+          included,
+          notStaged: Math.max(0, tracked - included.length),
+          provider: provider.provider,
+          model: provider.guest.defaultModel,
+          maxRequests: provider.maxRequests,
+        },
+        io,
+        user: process.env["USER"] ?? "unknown",
+      })
+    }
     const session =
       resume === "continue" && provider ? project?.record.snapshot?.sessions[0] : resume
     // Preserve the existing missing-session refusal even when resolving --continue on the host.
@@ -154,6 +353,7 @@ export async function runOfflineVm(
             startRelay,
           }
         : undefined
+    announceMode(provider, project?.project)
     const result = await launchOfflineVm(
       config.assets,
       (fd) => {
@@ -172,11 +372,29 @@ export async function runOfflineVm(
       project?.lifetime.fd,
       relay,
     )
-    if (project && seed && result.code === 0) commitVmProject(project, result.disk, seed.token)
+    if (project && seed && result.code === 0) {
+      commitVmProject(project, result.disk, seed.token)
+      // The checkpoint now holds everything worth keeping. A release build does not leave a
+      // copy of the project and its session state behind in the shared temporary directory.
+      // A failed or interrupted session keeps its stage for inspection and recovery.
+      if (RELEASE_BUILD) rmSync(path.dirname(result.disk), { recursive: true, force: true })
+    }
     return result.code
   } finally {
     project?.lifetime.close()
   }
+}
+
+/** Show the execution mode in the terminal before the VM takes the screen. */
+function announceMode(provider: VmProviderSelection | undefined, workspace: string | undefined) {
+  const detail =
+    provider === undefined
+      ? undefined
+      : `${provider.provider}, model ${provider.guest.defaultModel}, ${provider.maxRequests} request limit` +
+        (workspace === undefined ? "" : `, project ${workspace}`)
+  const mode = describeMode("isolated-vm", detail)
+  process.stdout.write(`${mode.banner}\n`)
+  if (process.stdout.isTTY) process.stdout.write(`\x1b]0;bashwink [${mode.short}]\x07`)
 }
 
 export async function runOfflineVmVerification(moduleDirectory: string) {
@@ -187,7 +405,15 @@ export async function runOfflineVmVerification(moduleDirectory: string) {
     !process.stdout.isTTY
   )
     throw new Error("offline VM verification requires an interactive macOS Apple Silicon terminal")
-  const config = await validateAssets(moduleDirectory)
+  if (RELEASE_BUILD) {
+    const verdict = judgeHost(readHostFacts(), builtInQualifiedHosts())
+    if (!verdict.supported)
+      throw new StartupError("unsupported-host", `the isolated VM cannot start: ${verdict.reason}`)
+  }
+  const config = await validateAssets(moduleDirectory, {
+    release: RELEASE_BUILD,
+    expectedManifest: expectedAssetManifestDigest(),
+  })
   if (config.version !== 2)
     throw new Error("this offline VM build does not support protected verification")
   const project = openVmProject(config.profile)
@@ -299,7 +525,7 @@ async function launchVmOwner(
       ...assets,
       disk,
       "--host-terminal",
-      socketPath === undefined ? "--timeout-ms=75000" : "--timeout-ms=120000",
+      socketPath === undefined ? "--timeout-ms=75000" : `--timeout-ms=${SESSION_DEADLINE_MS}`,
       ...(lifetime === undefined ? [] : ["--stage-lock-fd=3"]),
       ...(socketPath === undefined ? [] : [`--relay-socket=${socketPath}`]),
     ],

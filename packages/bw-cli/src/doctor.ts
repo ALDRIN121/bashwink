@@ -429,6 +429,11 @@ export function diagnose(options: DoctorOptions = {}): DoctorReport {
     detail: docker ? `found ${docker}` : "Docker is absent. Bashwink does not require it.",
   })
 
+  return summarize(checks)
+}
+
+/** Fold a list of checks into the report whose exit code `doctor` returns. */
+export function summarize(checks: readonly Check[]): DoctorReport {
   const failed = checks.filter((check) => check.status === "fail")
   const warned = checks.filter((check) => check.status === "warn")
   const ok = failed.length === 0

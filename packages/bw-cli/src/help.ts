@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { PINNED_RUNTIME_VERSION } from "./runtime.js"
+import { RELEASE_BUILD } from "./release.js"
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -151,6 +152,54 @@ function pathsHelp(kind: "config" | "data"): string {
   }
 }
 
+const RELEASE_HELP = `bashwink — an evidence-first coding agent (alpha, macOS Apple Silicon)
+
+USAGE
+  bashwink                  start a coding session in an isolated VM on a copy of the
+                            Git project in the current directory
+  bashwink --continue       resume this project's most recent saved session
+  bashwink --session <id>   resume a specific saved session
+  bashwink --unsafe-local   run on this Mac with your access (asks you to acknowledge the risks)
+  bashwink <command> [options]
+
+Plain \`bashwink\` never runs the agent on the host. If the VM cannot start it says why and
+stops before any model request.
+
+COMMANDS
+  doctor                    check the host, the VM image and the provider
+  auth add <id> ...         declare a provider (the key stays in a private file or variable)
+  auth status | check <id> | remove <id>
+  model list | use <provider>/<model> | current
+  sandbox vm-review [files...]
+                            review the agent's changes as a diff; type apply to write them
+  sandbox vm-recover        finish an interrupted apply
+  sandbox vm-verify         run the protected tests against your project in a fresh VM
+  trust <dir> --by <name> | trust --list | trust --revoke <dir>
+  plan ... | contract ... | evidence ... | resume    task plan and evidence tools
+  --version, -v | --help, -h
+
+PROVIDER SETUP
+  bashwink auth add commandcode --base-url https://api.commandcode.ai/provider/v1 \\
+    --key-file ~/.config/bashwink-commandcode.key \\
+    --model claude-sonnet-5:anthropic --model gpt-6.1-sol:openai
+  bashwink model use commandcode/claude-sonnet-5
+
+LIMITS
+  Staged: tracked top-level .ts, .js and .txt files of a Git checkout root (at most 64,
+  256 KiB each). The VM has no network. Sessions last about 30 minutes. Model requests per
+  session: 8 by default, BASHWINK_VM_MAX_REQUESTS=<1-40> to change.
+
+ENVIRONMENT
+  BASHWINK_HOME             relocate all configuration and data under one directory
+  BASHWINK_VM_MAX_REQUESTS  model requests allowed per session (1 to 40, default 8)
+
+EXIT CODES
+  0 success   1 a check failed or a command was refused   2 usage error
+  3 the session could not start (see the message and startup-failures.jsonl)
+
+See share/doc/ALPHA_TESTER_GUIDE.md and KNOWN_LIMITATIONS.md in the install directory.
+`
+
 export function renderHelp(): string {
-  return HELP
+  return RELEASE_BUILD ? RELEASE_HELP : HELP
 }

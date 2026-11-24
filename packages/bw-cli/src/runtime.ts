@@ -24,7 +24,7 @@ export class RuntimeNotFoundError extends Error {
 export interface RuntimeLocation {
   readonly command: string
   /** How it was found, for `bashwink doctor` to report honestly. */
-  readonly source: "env" | "package" | "path"
+  readonly source: "env" | "bundled" | "package" | "path"
   readonly version: string
 }
 
@@ -74,6 +74,10 @@ function fromPath(): string | undefined {
 export interface ResolveOptions {
   /** Repo/cwd to search upward from. */
   readonly cwd?: string
+  /** The runtime shipped beside a release bundle, preferred over discovery. */
+  readonly bundled?: string
+  /** Release builds never fall back to `node_modules` or `PATH`: only the pinned runtime. */
+  readonly bundledOnly?: boolean
 }
 
 /**
@@ -85,7 +89,7 @@ export interface ResolveOptions {
  * Throws a message a user can act on instead of a bare ENOENT.
  */
 export function resolveRuntime(options: ResolveOptions = {}): RuntimeLocation {
-  const override = process.env["BASHWINK_OPENCODE_BIN"]
+  const override = options.bundledOnly === true ? undefined : process.env["BASHWINK_OPENCODE_BIN"]
   if (override) {
     if (!isExecutable(override))
       throw new RuntimeNotFoundError(
@@ -93,6 +97,13 @@ export function resolveRuntime(options: ResolveOptions = {}): RuntimeLocation {
       )
     return { command: override, source: "env", version: PINNED_RUNTIME_VERSION }
   }
+
+  if (options.bundled !== undefined && isExecutable(options.bundled))
+    return { command: options.bundled, source: "bundled", version: PINNED_RUNTIME_VERSION }
+  if (options.bundledOnly === true)
+    throw new RuntimeNotFoundError(
+      "the pinned OpenCode runtime that ships with this release is missing. Reinstall Bashwink from the release archive.",
+    )
 
   const local = fromNodeModules(options.cwd ?? process.cwd())
   if (local) return { command: local, source: "package", version: PINNED_RUNTIME_VERSION }

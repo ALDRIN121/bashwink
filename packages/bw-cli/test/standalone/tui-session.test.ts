@@ -31,10 +31,14 @@ import {
   createKeyParserState,
   feedKeyParser,
   flushPendingEscape,
+  getTerminalLayout,
   stripAnsiSequences,
+  truncatePathMiddle,
   truncatePlain,
   visibleWidth,
+  wrapComposerLines,
   wrapPlainText,
+  wrapStyledLine,
 } from "../../src/standalone/tui-theme.ts"
 import { findSlashCommand, fuzzyFilter, SLASH_COMMANDS } from "../../src/standalone/tui-widgets.ts"
 import type { StandaloneConfig, TaskResult } from "../../src/standalone/types.ts"
@@ -234,6 +238,100 @@ test("session persistence, secret redaction, fork, rewind with checkpoints, comp
   }
 })
 
+type PtyStep =
+  | { readonly wait: string; readonly delay?: number; readonly send?: string }
+  | { readonly resize: readonly [number, number]; readonly delay?: number }
+  | { readonly delay?: number; readonly send: string }
+
+async function runPtyDriver(
+  ws: string,
+  home: string,
+  rows: number,
+  cols: number,
+  steps: readonly PtyStep[],
+): Promise<{ exitCode: number; output: string }> {
+  const binPath = path.resolve("packages/bw-cli/src/standalone/bin.ts")
+  const driver = `
+import fcntl, json, os, pty, select, struct, sys, termios, time
+spec = json.load(sys.stdin)
+m, s = pty.openpty()
+fcntl.ioctl(s, termios.TIOCSWINSZ, struct.pack("HHHH", spec["rows"], spec["cols"], 0, 0))
+pid = os.fork()
+if pid == 0:
+    os.setsid()
+    fcntl.ioctl(s, termios.TIOCSCTTY, 0)
+    os.dup2(s, 0); os.dup2(s, 1); os.dup2(s, 2)
+    os.close(m); os.close(s)
+    os.chdir(spec["cwd"])
+    os.execvpe(spec["argv"][0], spec["argv"], spec["env"])
+os.close(s)
+buf = bytearray(); cur = 0
+def pump(t):
+    end = time.monotonic() + t
+    while time.monotonic() < end:
+        r, _, _ = select.select([m], [], [], 0.05)
+        if r:
+            try: d = os.read(m, 4096)
+            except OSError: return False
+            if not d: return False
+            buf.extend(d); return True
+    return True
+def wait_for(sub, t=12.0):
+    global cur
+    end = time.monotonic() + t
+    tgt = sub.encode("utf-8")
+    while time.monotonic() < end:
+        idx = buf.find(tgt, cur)
+        if idx != -1: cur = idx + len(tgt); return
+        if not pump(0.1): break
+    raise RuntimeError(f"Timeout waiting for {sub!r}. Output:\\n{buf.decode('utf-8', 'replace')}")
+for step in spec["steps"]:
+    if "wait" in step: wait_for(step["wait"])
+    if "delay" in step: time.sleep(step["delay"])
+    if "resize" in step:
+        r, c = step["resize"]
+        fcntl.ioctl(m, termios.TIOCSWINSZ, struct.pack("HHHH", r, c, 0, 0))
+    if "send" in step: os.write(m, step["send"].encode("utf-8"))
+end = time.monotonic() + 10.0
+code = None
+while time.monotonic() < end:
+    pump(0.05)
+    wp, st = os.waitpid(pid, os.WNOHANG)
+    if wp == pid:
+        code = os.WEXITSTATUS(st) if os.WIFEXITED(st) else 128 + os.WTERMSIG(st)
+        break
+os.close(m)
+sys.stdout.write(json.dumps({"exitCode": code, "output": buf.decode("utf-8", "replace")}))
+`
+  const res = await new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn("python3", ["-c", driver], { stdio: ["pipe", "pipe", "pipe"] })
+    const outChunks: Buffer[] = []
+    const errChunks: Buffer[] = []
+    child.stdout.on("data", (d: Buffer) => outChunks.push(d))
+    child.stderr.on("data", (d: Buffer) => errChunks.push(d))
+    child.on("error", reject)
+    child.on("close", (code) => {
+      resolve({
+        status: code,
+        stdout: Buffer.concat(outChunks).toString("utf8"),
+        stderr: Buffer.concat(errChunks).toString("utf8"),
+      })
+    })
+    child.stdin.end(
+      JSON.stringify({
+        argv: [process.execPath, "--disable-warning=ExperimentalWarning", "--experimental-strip-types", binPath],
+        cwd: ws,
+        rows,
+        cols,
+        env: { ...process.env, BASHWINK_HOME: home, TERM: "xterm-256color" },
+        steps,
+      }),
+    )
+  })
+  assert.equal(res.status, 0, res.stderr)
+  return JSON.parse(res.stdout) as { exitCode: number; output: string }
+}
+
 test("real PTY interactive TUI supports multi-turn history, Ctrl+P palette, Ctrl+O sessions, Esc Esc rewind, and Ctrl+T transcript", async (t) => {
   const pyCheck = spawnSync("python3", ["-c", "import pty, termios"], { encoding: "utf8" })
   if (pyCheck.status !== 0) {
@@ -325,56 +423,6 @@ test("real PTY interactive TUI supports multi-turn history, Ctrl+P palette, Ctrl
     )
     grantWorkspaceTrust(resolved.config, ws, "pty-tester")
 
-    const binPath = path.resolve("packages/bw-cli/src/standalone/bin.ts")
-    const driver = `
-import fcntl, json, os, pty, select, struct, sys, termios, time
-spec = json.load(sys.stdin)
-m, s = pty.openpty()
-fcntl.ioctl(s, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
-pid = os.fork()
-if pid == 0:
-    os.setsid()
-    fcntl.ioctl(s, termios.TIOCSCTTY, 0)
-    os.dup2(s, 0); os.dup2(s, 1); os.dup2(s, 2)
-    os.close(m); os.close(s)
-    os.chdir(spec["cwd"])
-    os.execvpe(spec["argv"][0], spec["argv"], spec["env"])
-os.close(s)
-buf = bytearray(); cur = 0
-def pump(t):
-    end = time.monotonic() + t
-    while time.monotonic() < end:
-        r, _, _ = select.select([m], [], [], 0.05)
-        if r:
-            try: d = os.read(m, 4096)
-            except OSError: return False
-            if not d: return False
-            buf.extend(d); return True
-    return True
-def wait_for(sub, t=12.0):
-    global cur
-    end = time.monotonic() + t
-    tgt = sub.encode("utf-8")
-    while time.monotonic() < end:
-        idx = buf.find(tgt, cur)
-        if idx != -1: cur = idx + len(tgt); return
-        if not pump(0.1): break
-    raise RuntimeError(f"Timeout waiting for {sub!r}. Output:\\n{buf.decode('utf-8', 'replace')}")
-for step in spec["steps"]:
-    if "wait" in step: wait_for(step["wait"])
-    if "delay" in step: time.sleep(step["delay"])
-    if "send" in step: os.write(m, step["send"].encode("utf-8"))
-end = time.monotonic() + 10.0
-code = None
-while time.monotonic() < end:
-    pump(0.05)
-    wp, st = os.waitpid(pid, os.WNOHANG)
-    if wp == pid:
-        code = os.WEXITSTATUS(st) if os.WIFEXITED(st) else 128 + os.WTERMSIG(st)
-        break
-os.close(m)
-sys.stdout.write(json.dumps({"exitCode": code, "output": buf.decode("utf-8", "replace")}))
-`
     const steps = [
       { wait: "bashwink> ", send: "change note\r" },
       { wait: "Apply this change? [y/N]", send: "y\r" },
@@ -400,32 +448,7 @@ sys.stdout.write(json.dumps({"exitCode": code, "output": buf.decode("utf-8", "re
       { wait: "bashwink> ", send: "\x03" }, // clear restored draft from composer
       { delay: 0.05, send: "/exit\r" },
     ]
-
-    const res = await new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-      const child = spawn("python3", ["-c", driver], { stdio: ["pipe", "pipe", "pipe"] })
-      const outChunks: Buffer[] = []
-      const errChunks: Buffer[] = []
-      child.stdout.on("data", (d: Buffer) => outChunks.push(d))
-      child.stderr.on("data", (d: Buffer) => errChunks.push(d))
-      child.on("error", reject)
-      child.on("close", (code) => {
-        resolve({
-          status: code,
-          stdout: Buffer.concat(outChunks).toString("utf8"),
-          stderr: Buffer.concat(errChunks).toString("utf8"),
-        })
-      })
-      child.stdin.end(
-        JSON.stringify({
-          argv: [process.execPath, "--disable-warning=ExperimentalWarning", "--experimental-strip-types", binPath],
-          cwd: ws,
-          env: { ...process.env, BASHWINK_HOME: home, TERM: "xterm-256color" },
-          steps,
-        }),
-      )
-    })
-    assert.equal(res.status, 0, res.stderr)
-    const parsed = JSON.parse(res.stdout) as { exitCode: number; output: string }
+    const parsed = await runPtyDriver(ws, home, 30, 100, steps)
     assert.equal(parsed.exitCode, 0, parsed.output)
     // Verify multi-turn conversation history was carried into Turn 2 request!
     assert.ok(seenMessages[2]!.length > seenMessages[0]!.length, "Expected Turn 2 to include Turn 1 history")
@@ -433,6 +456,102 @@ sys.stdout.write(json.dumps({"exitCode": code, "output": buf.decode("utf-8", "re
     assert.equal(readFileSync(path.join(ws, "note.txt"), "utf8"), "initial\n")
   } finally {
     await new Promise((r) => server.close(() => r(undefined)))
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("responsive layout tiers, middle path truncation, styled wrapping, and composer cursor wrapping", () => {
+  const compact = getTerminalLayout(46, 16)
+  assert.equal(compact.tier, "compact")
+  assert.equal(compact.isCompact, true)
+  assert.equal(compact.isNarrow, true)
+  assert.equal(compact.isShort, true)
+  assert.equal(compact.isWide, false)
+  assert.equal(compact.boxWidth, 45)
+
+  const standard = getTerminalLayout(80, 24)
+  assert.equal(standard.tier, "standard")
+  assert.equal(standard.isCompact, false)
+  assert.equal(standard.isShort, false)
+  assert.equal(standard.boxWidth, 79)
+
+  const wide = getTerminalLayout(130, 36)
+  assert.equal(wide.tier, "wide")
+  assert.equal(wide.isWide, true)
+  assert.equal(wide.boxWidth, 100)
+
+  const shortened = truncatePathMiddle("/workspace/very/deep/nested/project/bashwink", 24)
+  assert.ok(visibleWidth(shortened) <= 24)
+  assert.ok(shortened.endsWith("bashwink"))
+
+  const wrappedStyled = wrapStyledLine("\x1b[32mhello world from a long line\x1b[39m", 14)
+  assert.ok(wrappedStyled.length >= 2)
+  assert.ok(wrappedStyled.every((l) => visibleWidth(l) <= 14))
+
+  const view = wrapComposerLines(
+    [{ line: "abcdefghijklmnopqrstuvwxyz" }],
+    0,
+    22,
+    "bw> ",
+    "  │ ",
+    "placeholder",
+    false,
+    18,
+  )
+  assert.equal(view.visualRows.length, 2)
+  assert.ok(view.visualRows.every((r) => visibleWidth(r) <= 18))
+  assert.equal(view.visualCursorRow, 1)
+  assert.equal(view.visualCursorCol, 4 + (22 - 14))
+})
+
+test("real PTY auto-adjusts composer and modals live across wide -> narrow -> wide window resizes", async (t) => {
+  const pyCheck = spawnSync("python3", ["-c", "import pty, termios"], { encoding: "utf8" })
+  if (pyCheck.status !== 0) {
+    t.skip("python3 pty module unavailable")
+    return
+  }
+
+  const root = mkdtempSync(path.join(tmpdir(), "bw-resize-pty-"))
+  const home = path.join(root, "home")
+  const ws = path.join(root, "ws")
+  mkdirSync(home, { recursive: true })
+  mkdirSync(ws, { recursive: true })
+
+  try {
+    const resolved = paths({ BASHWINK_HOME: home })
+    mkdirSync(resolved.config, { recursive: true })
+    writeFileSync(
+      path.join(resolved.config, "standalone.json"),
+      JSON.stringify({
+        version: 1,
+        providerId: "custom-local",
+        endpointType: "local",
+        baseURL: "http://127.0.0.1:11434/v1",
+        model: "resize-model",
+        credential: { kind: "none" },
+        updatedAt: "2026-11-26T00:00:00.000Z",
+      }),
+      "utf8",
+    )
+
+    const steps = [
+      { wait: "[120×32]" },
+      { wait: "Ask Bashwink to inspect, edit, or test" },
+      // Shrink live to compact pane (48x16) -> composer immediately switches to compact placeholder
+      { resize: [16, 48] as const, delay: 0.08 },
+      { wait: "Ask Bashwink (/ cmd, @ file)" },
+      // Open Command Palette while narrow -> compact hint bar renders without wrapping
+      { send: "\x10", delay: 0.05 },
+      { wait: "Type filter · Esc" },
+      // Resize palette live back to wide (110x28) -> palette expands to full hint bar
+      { resize: [28, 110] as const, delay: 0.08 },
+      { wait: "(Bashwink Command Palette)" },
+      { send: "\x1b", delay: 0.05 },
+      { wait: "bashwink> ", send: "/exit\r" },
+    ]
+    const parsed = await runPtyDriver(ws, home, 32, 120, steps)
+    assert.equal(parsed.exitCode, 0, parsed.output)
+  } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })

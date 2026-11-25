@@ -7,6 +7,7 @@ import {
   inspectLegacyOpenAiProviders,
   loadStandaloneConfig,
   normalizeBaseURL,
+  parseStandaloneConfig,
   saveStandaloneConfig,
   standaloneConfigFile,
 } from "../../src/standalone/config.ts"
@@ -132,4 +133,101 @@ test("legacy opencode.json is preserved untouched and only offered for opt-in pr
 test("sanitizeTerminalText strips ANSI escape sequences and unsafe control bytes", () => {
   const hostile = "safe \x1b]2;spoofed-title\x07\x1b[31mred\x1b[0m\x00\x07\nnext"
   assert.equal(sanitizeTerminalText(hostile), "safe red\nnext")
+})
+
+test("Hermes-integrated provider catalog validates all endpoints, aliases, env vars, and protocols", () => {
+  assert.equal(PROVIDER_CATALOG.length, 48)
+  const seenIds = new Set<string>()
+  PROVIDER_CATALOG.forEach((p, idx) => {
+    assert.equal(p.index, idx + 1)
+    assert.equal(seenIds.has(p.id), false, `duplicate provider id ${p.id}`)
+    seenIds.add(p.id)
+    assert.equal(findProviderPreset(String(p.index))?.id, p.id)
+    assert.equal(findProviderPreset(p.id)?.id, p.id)
+    if (p.defaultBaseURL) {
+      const normalized = normalizeBaseURL(p.defaultBaseURL, p.endpointType)
+      assert.ok(normalized.startsWith("http"))
+    }
+    if (p.defaultEnvVar) {
+      assert.match(p.defaultEnvVar, /^[A-Z_][A-Z0-9_]*$/)
+    }
+    for (const alt of p.alternateEnvVars ?? []) {
+      assert.match(alt, /^[A-Z_][A-Z0-9_]*$/)
+    }
+    if (p.wireProtocol !== undefined) {
+      assert.ok(p.wireProtocol === "openai-chat" || p.wireProtocol === "anthropic-messages")
+    }
+  })
+
+  const aliasCases: Array<[string, string]> = [
+    ["nous-portal", "nous"],
+    ["claude", "anthropic"],
+    ["ai-studio", "gemini"],
+    ["nim", "nvidia"],
+    ["hf", "huggingface"],
+    ["fw", "fireworks"],
+    ["glm", "zai"],
+    ["moonshot", "kimi"],
+    ["kimi-for-coding", "kimi-coding"],
+    ["dashscope", "alibaba"],
+    ["minimaxi", "minimax-cn"],
+    ["nebius-tf", "nebius"],
+    ["solar", "upstage"],
+    ["step", "stepfun"],
+    ["mimo", "xiaomi"],
+    ["kilo", "kilocode"],
+    ["vercel", "ai-gateway"],
+    ["zen", "opencode-zen"],
+    ["llama.cpp", "llamacpp"],
+  ]
+  for (const [alias, expectedId] of aliasCases) {
+    assert.equal(findProviderPreset(alias)?.id, expectedId, `alias ${alias} failed`)
+  }
+})
+
+test("interactive setup via alias saves wireProtocol and parseStandaloneConfig validates headers/protocol", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "bw-proto-"))
+  try {
+    const setup = scriptedIO(["claude", "", "1", "1", "", "y"])
+    const res = await runInteractiveSetup(setup.io, dir, {})
+    assert.equal(res.status, "saved")
+    const loaded = loadStandaloneConfig(dir)
+    assert.equal(loaded.status, "ok")
+    assert.equal(loaded.config.providerId, "anthropic")
+    assert.equal(loaded.config.wireProtocol, "anthropic-messages")
+    assert.equal(loaded.config.baseURL, "https://api.anthropic.com")
+    assert.deepEqual(loaded.config.credential, { kind: "env", variable: "ANTHROPIC_API_KEY" })
+
+    assert.throws(
+      () =>
+        parseStandaloneConfig(
+          JSON.stringify({
+            version: 1,
+            endpointType: "hosted",
+            wireProtocol: "unknown-proto",
+            baseURL: "https://api.anthropic.com",
+            model: "claude-sonnet-4-6",
+            credential: { kind: "env", variable: "ANTHROPIC_API_KEY" },
+          }),
+        ),
+      /wireProtocol/,
+    )
+    assert.throws(
+      () =>
+        parseStandaloneConfig(
+          JSON.stringify({
+            version: 1,
+            endpointType: "hosted",
+            wireProtocol: "anthropic-messages",
+            baseURL: "https://api.anthropic.com",
+            model: "claude-sonnet-4-6",
+            credential: { kind: "env", variable: "ANTHROPIC_API_KEY" },
+            headers: { "X-Api-Key": "spoof" },
+          }),
+        ),
+      /cannot be overridden/,
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

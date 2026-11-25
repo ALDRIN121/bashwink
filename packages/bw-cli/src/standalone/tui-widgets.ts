@@ -24,12 +24,16 @@ import {
   createKeyParserState,
   feedKeyParser,
   flushPendingEscape,
+  getTerminalLayout,
   padPlainRight,
   truncatePlain,
   visibleWidth,
+  wrapComposerLines,
   wrapPlainText,
+  wrapStyledLine,
   type KeyParserState,
   type ParsedKeyEvent,
+  type TerminalLayout,
   type TuiStyle,
 } from "./tui-theme.ts"
 import { listWorkspaceFiles, type SessionRecord, type SessionTurn } from "./session.ts"
@@ -201,29 +205,54 @@ export function formatRelativeTime(iso: string): string {
   return iso.slice(0, 10)
 }
 
+export interface TerminalResizeInfo {
+  readonly cols: number
+  readonly rows: number
+  readonly prevCols: number
+  readonly prevRows: number
+}
+
 /**
- * Raw-mode multiplexer around `process.stdin` + `process.stdout` resize events.
+ * Raw-mode multiplexer around `process.stdin`, `process.stdout` resize, `SIGWINCH`, and `SIGCONT`.
  * Restores cooked mode whenever idle/closed so child processes and terminal state stay clean.
  */
 export class RawTerminalSession {
   readonly isTTY: boolean
   private readonly parserState: KeyParserState = createKeyParserState()
   private keyListener: ((ev: ParsedKeyEvent) => void) | undefined
-  private resizeListener: (() => void) | undefined
+  private resizeListener: ((info: TerminalResizeInfo) => void) | undefined
   private escTimer: ReturnType<typeof setTimeout> | undefined
   private rawActive = false
   private attached = false
+  private lastCols: number
+  private lastRows: number
 
   constructor() {
     this.isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY)
+    const size = this.readTerminalSize()
+    this.lastCols = size.cols
+    this.lastRows = size.rows
+  }
+
+  private readTerminalSize(): { cols: number; rows: number } {
+    const rawCols = process.stdout.columns
+    const rawRows = process.stdout.rows
+    const cols = typeof rawCols === "number" && Number.isFinite(rawCols) && rawCols > 0 ? Math.max(20, rawCols) : 100
+    const rows = typeof rawRows === "number" && Number.isFinite(rawRows) && rawRows > 0 ? Math.max(8, rawRows) : 30
+    return { cols, rows }
   }
 
   cols(): number {
-    return Math.max(40, process.stdout.columns ?? 100)
+    return this.readTerminalSize().cols
   }
 
   rows(): number {
-    return Math.max(12, process.stdout.rows ?? 30)
+    return this.readTerminalSize().rows
+  }
+
+  layout(): TerminalLayout {
+    const { cols, rows } = this.readTerminalSize()
+    return getTerminalLayout(cols, rows)
   }
 
   write(text: string): void {
@@ -235,10 +264,35 @@ export class RawTerminalSession {
     this.attached = true
     process.stdin.on("data", this.onData)
     process.stdout.on("resize", this.onResize)
+    process.on("SIGWINCH", this.onResize)
+    process.on("SIGCONT", this.onResume)
   }
 
   private readonly onResize = (): void => {
-    this.resizeListener?.()
+    const next = this.readTerminalSize()
+    if (next.cols === this.lastCols && next.rows === this.lastRows) return
+    const info: TerminalResizeInfo = {
+      cols: next.cols,
+      rows: next.rows,
+      prevCols: this.lastCols,
+      prevRows: this.lastRows,
+    }
+    this.lastCols = next.cols
+    this.lastRows = next.rows
+    this.resizeListener?.(info)
+  }
+
+  private readonly onResume = (): void => {
+    const next = this.readTerminalSize()
+    const info: TerminalResizeInfo = {
+      cols: next.cols,
+      rows: next.rows,
+      prevCols: this.lastCols,
+      prevRows: this.lastRows,
+    }
+    this.lastCols = next.cols
+    this.lastRows = next.rows
+    this.resizeListener?.(info)
   }
 
   private readonly onData = (chunk: Buffer | string): void => {
@@ -264,9 +318,12 @@ export class RawTerminalSession {
 
   beginCapture(
     onKey: (ev: ParsedKeyEvent) => void,
-    onResize?: () => void,
+    onResize?: (info: TerminalResizeInfo) => void,
   ): () => void {
     this.ensureAttached()
+    const cur = this.readTerminalSize()
+    this.lastCols = cur.cols
+    this.lastRows = cur.rows
     this.keyListener = onKey
     this.resizeListener = onResize
     if (this.isTTY && !this.rawActive) {
@@ -307,6 +364,8 @@ export class RawTerminalSession {
     if (this.attached) {
       process.stdin.off("data", this.onData)
       process.stdout.off("resize", this.onResize)
+      process.off("SIGWINCH", this.onResize)
+      process.off("SIGCONT", this.onResume)
       this.attached = false
     }
     if (this.isTTY) {
@@ -334,6 +393,7 @@ export interface ComposerOptions {
   readonly style: TuiStyle
   readonly promptLabel: string
   readonly statusSummary: string
+  readonly getStatusSummary?: (layout: TerminalLayout) => string
   readonly workspace: string
   readonly history: readonly string[]
   readonly initialDraft?: string
@@ -409,8 +469,11 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
   let statusMessage = ""
   let renderedTotalLines = 0
   let renderedCursorRow = 0
+  let renderedCursorVisualCol = 0
+  let lastPaintedCols = raw.cols()
+  let lastPaintedRows: string[] = []
 
-  const getAutocomplete = (): { mode: "slash" | "file"; tokenStart: number; items: AutocompleteItem[] } | undefined => {
+  const getAutocomplete = (maxItems = 7): { mode: "slash" | "file"; tokenStart: number; items: AutocompleteItem[] } | undefined => {
     if (searchingHistory) return undefined
     const beforeCursor = buffer.slice(0, cursor)
     if (autoDismissedFor === buffer) return undefined
@@ -423,7 +486,7 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
       return {
         mode: "slash",
         tokenStart: 0,
-        items: matched.slice(0, 7).map((c) => ({
+        items: matched.slice(0, maxItems).map((c) => ({
           insertText: `/${c.name}`,
           label: `/${c.name}${c.argumentHint ? ` ${c.argumentHint}` : ""}`,
           detail: `${c.description}${c.shortcut ? ` [${c.shortcut}]` : ""}`,
@@ -443,7 +506,7 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
       return {
         mode: "file",
         tokenStart,
-        items: matched.slice(0, 7).map((f) => ({
+        items: matched.slice(0, maxItems).map((f) => ({
           insertText: `@${f} `,
           label: `@${f}`,
           detail: "workspace file",
@@ -469,73 +532,120 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
     return { match: matches[idx], total: matches.length }
   }
 
+  const physicalRowsAboveCursor = (colsNow: number): number => {
+    if (renderedTotalLines === 0) return 0
+    if (colsNow >= lastPaintedCols || lastPaintedRows.length === 0) {
+      return renderedCursorRow
+    }
+    // Account for terminal soft-reflow when width narrowed before clearing
+    let rowsAbove = 0
+    for (let i = 0; i < renderedCursorRow && i < lastPaintedRows.length; i += 1) {
+      const w = Math.max(1, visibleWidth(lastPaintedRows[i]!))
+      rowsAbove += Math.max(1, Math.ceil(w / colsNow))
+    }
+    rowsAbove += Math.floor(renderedCursorVisualCol / Math.max(1, colsNow))
+    return rowsAbove
+  }
+
   const clearRenderedBlock = () => {
     if (renderedTotalLines === 0) return
+    const upRows = physicalRowsAboveCursor(raw.cols())
     let seq = "\r"
-    if (renderedCursorRow > 0) seq += `\x1b[${renderedCursorRow}A`
+    if (upRows > 0) seq += `\x1b[${upRows}A`
     seq += "\x1b[J"
     raw.write(seq)
     renderedTotalLines = 0
     renderedCursorRow = 0
+    renderedCursorVisualCol = 0
+    lastPaintedRows = []
   }
 
-  const render = (firstPaint = false) => {
-    const cols = raw.cols()
+  const render = (firstPaint = false, reflowFromCols?: number) => {
+    const layout = raw.layout()
+    const cols = layout.cols
+    const rows = layout.rows
     const prefix = opts.promptLabel
     const contPrefix = " ".repeat(Math.max(0, prefix.length - 2)) + "│ "
     const { row: curRow, col: curCol, lines: bufLines } = cursorRowCol(buffer, cursor)
 
+    const placeholder =
+      layout.isCompact || layout.isShort
+        ? "Ask Bashwink (/ cmd, @ file)"
+        : "Ask Bashwink to inspect, edit, or test… (type / for commands, @ for files)"
+
+    const wrapped = wrapComposerLines(
+      bufLines,
+      curRow,
+      curCol,
+      prefix,
+      contPrefix,
+      placeholder,
+      searchingHistory,
+      cols,
+      (s) => style.accentBold(s),
+      (s) => style.dim(s),
+      (s) => style.muted(s),
+    )
+
     const outLines: string[] = []
-    outLines.push(style.dim("─".repeat(Math.max(20, cols))))
+    outLines.push(style.dim("─".repeat(Math.max(16, cols))))
 
     const promptLinesStart = outLines.length
-    for (let i = 0; i < bufLines.length; i += 1) {
-      const pfx = i === 0 ? style.accentBold(prefix) : style.dim(contPrefix)
-      const lineText = bufLines[i]!.line
-      if (i === 0 && lineText === "" && !searchingHistory) {
-        const placeholder = style.muted("Ask Bashwink to inspect, edit, or test… (type / for commands, @ for files)")
-        outLines.push(pfx + truncatePlain(placeholder, Math.max(10, cols - prefix.length)))
-      } else {
-        outLines.push(pfx + lineText)
-      }
-    }
+    outLines.push(...wrapped.visualRows)
 
-    const auto = getAutocomplete()
+    const maxAuto = Math.max(2, Math.min(7, rows - wrapped.visualRows.length - 4))
+    const auto = getAutocomplete(maxAuto)
     if (auto) {
       if (autoIndex >= auto.items.length) autoIndex = Math.max(0, auto.items.length - 1)
-      outLines.push(style.dim(auto.mode === "slash" ? "  Commands (Tab complete · Enter run · Esc dismiss):" : "  Files (Tab/Enter insert · Esc dismiss):"))
+      const autoHint =
+        layout.isCompact
+          ? auto.mode === "slash"
+            ? "  Commands (Tab/Enter):"
+            : "  Files (Tab/Enter):"
+          : auto.mode === "slash"
+            ? "  Commands (Tab complete · Enter run · Esc dismiss):"
+            : "  Files (Tab/Enter insert · Esc dismiss):"
+      outLines.push(style.dim(truncatePlain(autoHint, cols)))
       for (let i = 0; i < auto.items.length; i += 1) {
         const item = auto.items[i]!
         const selected = i === autoIndex
         const pointer = selected ? style.accentBold("❯ ") : "  "
-        const left = padPlainRight(item.label, Math.min(26, Math.floor(cols * 0.35)))
-        const rightMax = Math.max(10, cols - visibleWidth(left) - 6)
-        const rowStr = `  ${pointer}${left}  ${truncatePlain(item.detail, rightMax)}`
-        outLines.push(selected ? style.selectedRow(padPlainRight(rowStr, cols)) : style.muted(rowStr))
+        if (cols < 44) {
+          const rowStr = `  ${pointer}${truncatePlain(item.label, Math.max(8, cols - 5))}`
+          outLines.push(selected ? style.selectedRow(padPlainRight(rowStr, cols)) : style.muted(rowStr))
+        } else {
+          const leftW = Math.min(26, Math.floor(cols * 0.35))
+          const left = padPlainRight(item.label, leftW)
+          const rightMax = Math.max(8, cols - visibleWidth(left) - 6)
+          const rowStr = `  ${pointer}${left}  ${truncatePlain(item.detail, rightMax)}`
+          outLines.push(selected ? style.selectedRow(padPlainRight(rowStr, cols)) : style.muted(rowStr))
+        }
       }
     } else if (searchingHistory) {
       const { match, total } = findHistoryMatch()
-      const matchDisplay = match ? truncatePlain(match.replace(/\n/g, " ↵ "), Math.max(16, cols - 38)) : style.red("no match")
-      outLines.push(
-        style.cyan(`(reverse-i-search)`) +
-          ` '${searchQuery}': ${matchDisplay}` +
-          (total > 1 ? style.dim(`  (${total} matches · ctrl+r next)`) : ""),
-      )
+      const matchDisplay = match
+        ? truncatePlain(match.replace(/\n/g, " ↵ "), Math.max(12, cols - (layout.isCompact ? 22 : 38)))
+        : style.red("no match")
+      const label = layout.isCompact ? "(search)" : "(reverse-i-search)"
+      const countTag = total > 1 && !layout.isCompact ? style.dim(`  (${total} matches · ctrl+r next)`) : ""
+      outLines.push(truncatePlain(`${style.cyan(label)} '${searchQuery}': ${matchDisplay}${countTag}`, cols))
     }
 
+    const baseStatus = opts.getStatusSummary ? opts.getStatusSummary(layout) : opts.statusSummary
     const footerMsg =
       statusMessage !== ""
         ? style.yellow(truncatePlain(statusMessage, cols))
-        : style.muted(truncatePlain(opts.statusSummary, cols))
+        : style.muted(truncatePlain(baseStatus, cols))
     outLines.push(footerMsg)
 
-    const targetCursorRow = promptLinesStart + curRow
-    const targetCursorCol = (curRow === 0 ? prefix.length : contPrefix.length) + curCol
+    const targetCursorRow = promptLinesStart + wrapped.visualCursorRow
+    const targetCursorCol = Math.min(Math.max(0, cols - 1), wrapped.visualCursorCol)
 
     let frame = SYNC_START
     if (!firstPaint && renderedTotalLines > 0) {
+      const upRows = reflowFromCols !== undefined ? physicalRowsAboveCursor(cols) : renderedCursorRow
       frame += "\r"
-      if (renderedCursorRow > 0) frame += `\x1b[${renderedCursorRow}A`
+      if (upRows > 0) frame += `\x1b[${upRows}A`
       frame += "\x1b[J"
     }
     frame += outLines.join("\n")
@@ -549,12 +659,19 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
     raw.write(frame)
     renderedTotalLines = outLines.length
     renderedCursorRow = targetCursorRow
+    renderedCursorVisualCol = targetCursorCol
+    lastPaintedCols = cols
+    lastPaintedRows = outLines
   }
 
   const commitFinalPromptLine = (submittedText: string) => {
     clearRenderedBlock()
-    const preview = submittedText.split("\n").map((l, idx) => (idx === 0 ? `${opts.promptLabel}${l}` : `  ${l}`)).join("\n")
-    raw.write(`${style.dim("─".repeat(Math.min(66, raw.cols())))}\n${preview}\n`)
+    const cols = raw.cols()
+    const preview = submittedText
+      .split("\n")
+      .map((l, idx) => (idx === 0 ? `${opts.promptLabel}${l}` : `  ${l}`))
+      .join("\n")
+    raw.write(`${style.dim("─".repeat(Math.min(Math.max(20, cols), 80)))}\n${preview}\n`)
   }
 
   return await new Promise<ComposerAction>((resolve) => {
@@ -942,7 +1059,7 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
       }
     }
 
-    const cleanup = raw.beginCapture(onKey, () => render())
+    const cleanup = raw.beginCapture(onKey, (info) => render(false, info.prevCols))
     raw.write("\n")
     render(true)
   })
@@ -965,28 +1082,49 @@ export async function askHybridChoice(
 ): Promise<string | null> {
   if (!raw.isTTY || options.length === 0) return null
   let selected = 0
+  let scrollTop = 0
   let typed = ""
   let renderedRows = 0
+  let lastCols = raw.cols()
 
-  const render = (first = false) => {
+  const getMaxVisible = () => Math.min(options.length, Math.max(4, raw.rows() - 5))
+
+  const render = (first = false, reflowFromCols?: number) => {
     const cols = raw.cols()
+    const maxVisible = getMaxVisible()
+    if (selected < scrollTop) scrollTop = selected
+    if (selected >= scrollTop + maxVisible) scrollTop = selected - maxVisible + 1
+    scrollTop = Math.max(0, Math.min(scrollTop, Math.max(0, options.length - maxVisible)))
+    const end = Math.min(options.length, scrollTop + maxVisible)
+
     const lines: string[] = []
-    for (let i = 0; i < options.length; i += 1) {
+    for (let i = scrollTop; i < end; i += 1) {
       const opt = options[i]!
       const active = typed === "" && i === selected
-      const line = `${active ? style.accentBold("❯ ") : "  "}${opt.display}`
-      lines.push(active ? style.selectedRow(padPlainRight(line, Math.min(cols, 76))) : line)
+      const prefix = active ? style.accentBold("❯ ") : "  "
+      const body = truncatePlain(opt.display, Math.max(10, cols - 3))
+      const line = `${prefix}${body}`
+      lines.push(active ? style.selectedRow(padPlainRight(line, Math.min(cols, 84))) : line)
     }
-    lines.push(`${promptText}${typed}`)
+    if (options.length > maxVisible) {
+      const hint = `  Showing ${scrollTop + 1}-${end} of ${options.length} (↑/↓ scroll, or type number/id)`
+      lines.push(style.dim(truncatePlain(hint, cols)))
+    }
+    lines.push(truncatePlain(`${promptText}${typed}`, Math.max(16, cols)))
     let frame = SYNC_START
     if (!first && renderedRows > 0) {
+      const prevRows =
+        reflowFromCols !== undefined && cols < lastCols
+          ? Math.max(renderedRows - 1, Math.ceil((renderedRows - 1) * (lastCols / Math.max(1, cols))))
+          : renderedRows - 1
       frame += "\r"
-      if (renderedRows > 1) frame += `\x1b[${renderedRows - 1}A`
+      if (prevRows > 0) frame += `\x1b[${prevRows}A`
       frame += "\x1b[J"
     }
     frame += lines.join("\n") + CURSOR_SHOW + SYNC_END
     raw.write(frame)
     renderedRows = lines.length
+    lastCols = cols
   }
 
   return await new Promise<string | null>((resolve) => {
@@ -1028,6 +1166,16 @@ export async function askHybridChoice(
           render()
           return
         }
+        if (ev.name === "pageup" && typed === "") {
+          selected = Math.max(0, selected - Math.max(1, getMaxVisible() - 1))
+          render()
+          return
+        }
+        if (ev.name === "pagedown" && typed === "") {
+          selected = Math.min(options.length - 1, selected + Math.max(1, getMaxVisible() - 1))
+          render()
+          return
+        }
         if (ev.name === "backspace") {
           if (typed.length > 0) {
             typed = typed.slice(0, -1)
@@ -1041,7 +1189,7 @@ export async function askHybridChoice(
         }
       }
     }
-    const cleanup = raw.beginCapture(onKey, () => render())
+    const cleanup = raw.beginCapture(onKey, (info) => render(false, info.prevCols))
     render(true)
   })
 }
@@ -1060,10 +1208,12 @@ export async function askHybridConfirm(
   let rendered = false
 
   const render = () => {
+    const layout = raw.layout()
     const yesTag = highlighted === "yes" && typed === "" ? style.selectedRow(" Yes (y) ") : style.green("Yes (y)")
     const noTag = highlighted === "no" && typed === "" ? style.selectedRow(" No (n) ") : style.muted("No (n)")
     const hint = style.dim(`  [${yesTag}${style.dim(" / ")}${noTag}${style.dim("]")}] `)
-    const line = `${promptText}${typed === "" ? hint : ` ${typed}`}`
+    const safePrompt = truncatePlain(promptText, Math.max(12, layout.cols - (typed === "" ? 24 : typed.length + 2)))
+    const line = `${safePrompt}${typed === "" ? hint : ` ${typed}`}`
     raw.write(`${SYNC_START}${rendered ? "\r\x1b[2K" : ""}${line}${CURSOR_SHOW}${SYNC_END}`)
     rendered = true
   }
@@ -1145,42 +1295,58 @@ export async function openCommandPalette(
     fuzzyFilter(query, items, (i) => `${i.title} ${i.category} ${i.description} ${i.id}`)
 
   const render = () => {
-    const cols = raw.cols()
-    const rows = raw.rows()
+    const layout = raw.layout()
+    const cols = layout.cols
+    const rows = layout.rows
     const filtered = getFiltered()
     if (selected >= filtered.length) selected = Math.max(0, filtered.length - 1)
-    const listHeight = Math.max(4, rows - 7)
+    const listHeight = Math.max(3, rows - (layout.isShort ? 6 : 7))
     if (selected < scrollTop) scrollTop = selected
     if (selected >= scrollTop + listHeight) scrollTop = selected - listHeight + 1
 
     const lines: string[] = []
-    lines.push(style.accentBold("  Commands") + style.muted("  (Bashwink Command Palette)"))
-    lines.push(`  ${style.accent(">")} ${query}${style.inverse(" ")}`)
+    lines.push(
+      truncatePlain(
+        style.accentBold("  Commands") + (layout.isCompact ? "" : style.muted("  (Bashwink Command Palette)")),
+        cols,
+      ),
+    )
+    lines.push(`  ${style.accent(">")} ${truncatePlain(query, Math.max(8, cols - 6))}${style.inverse(" ")}`)
     lines.push(style.dim("  " + "─".repeat(Math.max(10, cols - 4))))
 
     if (filtered.length === 0) {
-      lines.push(style.muted("  No matching commands"))
+      lines.push(style.muted(truncatePlain("  No matching commands", cols)))
     } else {
       const visible = filtered.slice(scrollTop, scrollTop + listHeight)
       for (let i = 0; i < visible.length; i += 1) {
         const idx = scrollTop + i
         const item = visible[i]!
         const active = idx === selected
-        const badge = item.shortcut ? `[${item.shortcut}]` : ""
-        const cat = padPlainRight(item.category, 11)
-        const title = padPlainRight(item.title, Math.min(28, Math.floor(cols * 0.3)))
-        const descSpace = Math.max(8, cols - 48 - badge.length)
-        const desc = truncatePlain(item.description, descSpace)
-        const rowStr = `  ${active ? "❯" : " "} ${cat} ${title} ${desc}`
-        const rightPad = Math.max(1, cols - visibleWidth(rowStr) - badge.length - 2)
-        const full = `${rowStr}${" ".repeat(rightPad)}${badge}`
+        const showBadge = cols >= 54 && item.shortcut
+        const badge = showBadge ? `[${item.shortcut}]` : ""
+        let rowStr: string
+        if (layout.isCompact) {
+          const title = padPlainRight(item.title, Math.min(18, Math.floor(cols * 0.4)))
+          const descSpace = Math.max(6, cols - visibleWidth(title) - (showBadge ? badge.length + 7 : 6))
+          rowStr = `  ${active ? "❯" : " "} ${title} ${truncatePlain(item.description, descSpace)}`
+        } else {
+          const cat = padPlainRight(item.category, 11)
+          const title = padPlainRight(item.title, Math.min(28, Math.floor(cols * 0.3)))
+          const descSpace = Math.max(8, cols - 48 - badge.length)
+          rowStr = `  ${active ? "❯" : " "} ${cat} ${title} ${truncatePlain(item.description, descSpace)}`
+        }
+        const rightPad = badge ? Math.max(1, cols - visibleWidth(rowStr) - badge.length - 2) : 0
+        const full = badge ? `${rowStr}${" ".repeat(rightPad)}${badge}` : truncatePlain(rowStr, cols)
         lines.push(active ? style.selectedRow(padPlainRight(full, cols)) : full)
       }
     }
 
     while (lines.length < rows - 2) lines.push("")
     lines.push(style.dim("  " + "─".repeat(Math.max(10, cols - 4))))
-    lines.push(style.muted("  ↑/↓ navigate · Enter run · Type to filter · Esc close"))
+    const paletteHint = layout.isCompact
+      ? "  ↑/↓ · Enter · Type filter · Esc"
+      : "  ↑/↓ navigate · Enter run · Type to filter · Esc close"
+    lines.push(style.muted(truncatePlain(paletteHint, cols)))
 
     raw.write(`${SYNC_START}\x1b[H\x1b[2J${lines.join("\n")}${CURSOR_HIDE}${SYNC_END}`)
   }
@@ -1315,31 +1481,44 @@ export async function openSessionBrowser(
   }
 
   const render = () => {
-    const cols = raw.cols()
-    const rows = raw.rows()
+    const layout = raw.layout()
+    const cols = layout.cols
+    const rows = layout.rows
     const list = visibleList()
     if (selected >= list.length) selected = Math.max(0, list.length - 1)
     const activeItem = list[selected]
-    const previewLinesCount = showPreview && activeItem ? Math.min(9, Math.max(5, Math.floor(rows * 0.35))) : 0
-    const listHeight = Math.max(3, Math.floor((rows - 7 - previewLinesCount) / 2))
+    const showPreviewHere = showPreview && activeItem !== undefined && rows >= 18 && cols >= 52
+    const previewLinesCount = showPreviewHere ? Math.min(9, Math.max(5, Math.floor(rows * 0.35))) : 0
+    const listHeight = Math.max(2, Math.floor((rows - 6 - previewLinesCount) / 2))
     if (selected < scrollTop) scrollTop = selected
     if (selected >= scrollTop + listHeight) scrollTop = selected - listHeight + 1
 
     const lines: string[] = []
     const scopeLabel = allProjects ? "All projects" : `Workspace: ${path.basename(opts.currentWorkspace)}`
     lines.push(
-      style.accentBold("  Sessions") +
-        style.muted(`  · ${scopeLabel} (${list.length})`),
+      truncatePlain(
+        style.accentBold("  Sessions") + style.muted(`  · ${scopeLabel} (${list.length})`),
+        cols,
+      ),
     )
     if (renamingId) {
-      lines.push(`  ${style.yellow("Rename:")} ${renameDraft}${style.inverse(" ")}`)
+      lines.push(truncatePlain(`  ${style.yellow("Rename:")} ${renameDraft}`, Math.max(12, cols - 2)) + style.inverse(" "))
     } else {
-      lines.push(`  ${style.accent("/")} ${query || style.muted("Type to search sessions…")}`)
+      lines.push(truncatePlain(`  ${style.accent("/")} ${query || style.muted("Type to search sessions…")}`, cols))
     }
     lines.push(style.dim("  " + "─".repeat(Math.max(10, cols - 4))))
 
     if (list.length === 0) {
-      lines.push(style.muted("  No matching sessions found. Press Ctrl+A for all projects or Ctrl+N for a new session."))
+      lines.push(
+        style.muted(
+          truncatePlain(
+            layout.isCompact
+              ? "  No sessions. Ctrl+A all · Ctrl+N new"
+              : "  No matching sessions found. Press Ctrl+A for all projects or Ctrl+N for a new session.",
+            cols,
+          ),
+        ),
+      )
     } else {
       const slice = list.slice(scrollTop, scrollTop + listHeight)
       for (let i = 0; i < slice.length; i += 1) {
@@ -1348,17 +1527,15 @@ export async function openSessionBrowser(
         const isCurrent = s.id === opts.activeSessionId
         const isDeleting = confirmDeleteId === s.id
         const marker = isDeleting ? "!" : isCurrent ? "●" : s.pinned ? "★" : " "
-        const titleStr = isDeleting
-          ? "Press Ctrl+D again to confirm delete"
-          : s.title
+        const titleStr = isDeleting ? "Press Ctrl+D again to confirm delete" : s.title
         const metaParts = [
           formatRelativeTime(s.updatedAt),
           `${s.turns.length} turn${s.turns.length === 1 ? "" : "s"}`,
           ...(s.gitBranch ? [s.gitBranch] : []),
           ...(allProjects ? [path.basename(s.workspace)] : []),
         ]
-        const primary = `  ${isSel ? "❯" : " "} ${marker} ${truncatePlain(titleStr, Math.max(16, cols - 10))}`
-        const secondary = `      ${truncatePlain(metaParts.join(" · "), Math.max(16, cols - 10))}`
+        const primary = `  ${isSel ? "❯" : " "} ${marker} ${truncatePlain(titleStr, Math.max(14, cols - 10))}`
+        const secondary = `      ${truncatePlain(metaParts.join(" · "), Math.max(14, cols - 10))}`
         if (isDeleting && isSel) {
           lines.push(style.red(padPlainRight(primary, cols)))
           lines.push(style.muted(secondary))
@@ -1372,12 +1549,14 @@ export async function openSessionBrowser(
       }
     }
 
-    if (showPreview && activeItem) {
+    if (showPreviewHere && activeItem) {
       lines.push(style.dim("  " + "─".repeat(Math.max(10, cols - 4))))
-      lines.push(style.cyan(`  Preview: ${truncatePlain(activeItem.title, cols - 14)}`))
+      lines.push(style.cyan(`  Preview: ${truncatePlain(activeItem.title, Math.max(12, cols - 14))}`))
       const previewLines: string[] = []
       for (const turn of activeItem.turns.slice(-3)) {
-        previewLines.push(`  ${style.bold("User:")} ${truncatePlain(turn.userPrompt.replace(/\n/g, " "), cols - 10)}`)
+        previewLines.push(
+          `  ${style.bold("User:")} ${truncatePlain(turn.userPrompt.replace(/\n/g, " "), Math.max(12, cols - 10))}`,
+        )
         if (turn.assistantText) {
           previewLines.push(`  ${style.muted("Asst:")} ${truncatePlain(turn.assistantText.replace(/\n/g, " "), cols - 10)}`)
         }
@@ -1568,17 +1747,22 @@ export async function openTimelineRewind(
   let scrollTop = 0
 
   const render = () => {
-    const cols = raw.cols()
-    const rows = raw.rows()
-    const detailRows = 7
-    const listHeight = Math.max(3, Math.floor((rows - 6 - detailRows) / 2))
+    const layout = raw.layout()
+    const cols = layout.cols
+    const rows = layout.rows
+    const showDetail = rows >= 18 && turns.length > 0
+    const detailRows = showDetail ? 7 : 0
+    const listHeight = Math.max(2, Math.floor((rows - 5 - detailRows) / 2))
     if (selected < scrollTop) scrollTop = selected
     if (selected >= scrollTop + listHeight) scrollTop = selected - listHeight + 1
 
     const lines: string[] = []
     lines.push(
-      style.accentBold("  Timeline & Rewind") +
-        style.muted(`  · ${truncatePlain(session.title, Math.max(16, cols - 28))} (${turns.length} turns)`),
+      truncatePlain(
+        style.accentBold("  Timeline & Rewind") +
+          style.muted(`  · ${truncatePlain(session.title, Math.max(12, cols - 28))} (${turns.length} turns)`),
+        cols,
+      ),
     )
     lines.push(style.dim("  " + "─".repeat(Math.max(10, cols - 4))))
 
@@ -1592,7 +1776,7 @@ export async function openTimelineRewind(
         const isSel = idx === selected
         const tag = `[${idx + 1}]`
         const cpTag = turn.checkpoints.length > 0 ? ` · ${turn.checkpoints.length} file checkpoint(s)` : ""
-        const title = `  ${isSel ? "❯" : " "} ${tag} ${truncatePlain(turn.userPrompt.replace(/\n/g, " "), Math.max(16, cols - 14))}`
+        const title = `  ${isSel ? "❯" : " "} ${tag} ${truncatePlain(turn.userPrompt.replace(/\n/g, " "), Math.max(14, cols - 14))}`
         const sub = `      ${turn.outcome} · ${formatRelativeTime(turn.createdAt)} · ${turn.changedFiles.length} edited · ${turn.commands.length} cmd(s)${cpTag}`
         if (isSel) {
           lines.push(style.selectedRow(padPlainRight(title, cols)))
@@ -1604,25 +1788,30 @@ export async function openTimelineRewind(
       }
 
       const activeTurn = turns[selected]
-      if (activeTurn) {
+      if (showDetail && activeTurn) {
         lines.push(style.dim("  " + "─".repeat(Math.max(10, cols - 4))))
-        lines.push(style.cyan(`  Turn ${selected + 1} Snapshot (${activeTurn.runId})`))
-        lines.push(`  Prompt:    ${truncatePlain(activeTurn.userPrompt.replace(/\n/g, " "), Math.max(16, cols - 14))}`)
-        lines.push(`  Response:  ${truncatePlain((activeTurn.assistantText || "(no text)").replace(/\n/g, " "), Math.max(16, cols - 14))}`)
-        lines.push(`  Changed:   ${activeTurn.changedFiles.length > 0 ? activeTurn.changedFiles.join(", ") : "none"}`)
+        lines.push(style.cyan(truncatePlain(`  Turn ${selected + 1} Snapshot (${activeTurn.runId})`, cols)))
+        lines.push(`  Prompt:    ${truncatePlain(activeTurn.userPrompt.replace(/\n/g, " "), Math.max(12, cols - 14))}`)
+        lines.push(`  Response:  ${truncatePlain((activeTurn.assistantText || "(no text)").replace(/\n/g, " "), Math.max(12, cols - 14))}`)
+        lines.push(`  Changed:   ${truncatePlain(activeTurn.changedFiles.length > 0 ? activeTurn.changedFiles.join(", ") : "none", Math.max(12, cols - 14))}`)
         lines.push(
-          `  Restore:   ${activeTurn.checkpoints.length > 0 ? `${activeTurn.checkpoints.length} pre-edit file snapshot(s) ready` : "conversation only (no file edits in this turn)"}`,
+          truncatePlain(
+            `  Restore:   ${activeTurn.checkpoints.length > 0 ? `${activeTurn.checkpoints.length} pre-edit file snapshot(s) ready` : "conversation only (no file edits in this turn)"}`,
+            cols,
+          ),
         )
       }
     }
 
     while (lines.length < rows - 2) lines.push("")
     lines.push(style.dim("  " + "─".repeat(Math.max(10, cols - 4))))
-    lines.push(
-      style.muted(
-        "  ↑/↓ or j/k select · Enter inspect in transcript · f fork here · c rewind chat · r restore files+chat · Esc close",
-      ),
-    )
+    const timelineHint =
+      cols >= 106
+        ? "  ↑/↓ or j/k select · Enter inspect in transcript · f fork here · c rewind chat · r restore files+chat · Esc close"
+        : cols >= 68
+          ? "  ↑/↓ select · Enter inspect · f fork · c/r rewind · Esc close"
+          : "  ↑/↓ · Enter view · f fork · c/r rewind · Esc"
+    lines.push(style.muted(truncatePlain(timelineHint, cols)))
 
     raw.write(`${SYNC_START}\x1b[H\x1b[2J${lines.join("\n")}${CURSOR_HIDE}${SYNC_END}`)
   }
@@ -1782,8 +1971,11 @@ export async function openTranscriptViewer(
     const lines: string[] = []
     const pct = maxScroll === 0 ? 100 : Math.round((scrollTop / maxScroll) * 100)
     lines.push(
-      style.accentBold("  Transcript") +
-        style.muted(`  · ${truncatePlain(session.title, Math.max(16, cols - 34))} · ${pct}%`),
+      truncatePlain(
+        style.accentBold("  Transcript") +
+          style.muted(`  · ${truncatePlain(session.title, Math.max(12, cols - 30))} · ${pct}%`),
+        cols,
+      ),
     )
     lines.push(style.dim("  " + "─".repeat(Math.max(10, cols - 4))))
     const slice = body.slice(scrollTop, scrollTop + viewportHeight)
@@ -1791,13 +1983,20 @@ export async function openTranscriptViewer(
     while (lines.length < rows - 2) lines.push("")
     lines.push(style.dim("  " + "─".repeat(Math.max(10, cols - 4))))
     if (searchMode) {
-      lines.push(style.cyan(`  Search: `) + `${searchQuery}${style.inverse(" ")}` + style.muted("  (Enter jump · Esc cancel)"))
-    } else {
       lines.push(
-        style.muted(
-          `  ↑/↓ j/k scroll · PgUp/PgDn page · n/p next/prev turn · g/G top/end · e ${expandDetails ? "collapse" : "expand"} tools · / search · q/Esc close`,
+        truncatePlain(
+          style.cyan("  Search: ") + `${searchQuery}${style.inverse(" ")}` + style.muted("  (Enter jump · Esc cancel)"),
+          cols,
         ),
       )
+    } else {
+      const txHint =
+        cols >= 108
+          ? `  ↑/↓ j/k scroll · PgUp/PgDn page · n/p next/prev turn · g/G top/end · e ${expandDetails ? "collapse" : "expand"} tools · / search · q/Esc close`
+          : cols >= 70
+            ? `  ↑/↓ scroll · PgUp/PgDn · n/p turn · e ${expandDetails ? "less" : "more"} · / search · Esc close`
+            : "  ↑/↓ · n/p turn · / find · Esc close"
+      lines.push(style.muted(truncatePlain(txHint, cols)))
     }
 
     raw.write(`${SYNC_START}\x1b[H\x1b[2J${lines.join("\n")}${CURSOR_HIDE}${SYNC_END}`)
@@ -1980,20 +2179,26 @@ export async function openScrollableModal(
   bodyLines: readonly string[],
 ): Promise<void> {
   let scrollTop = 0
+  const getWrappedLines = (cols: number) => bodyLines.flatMap((l) => wrapStyledLine(l, Math.max(16, cols - 2)))
   const render = () => {
-    const cols = raw.cols()
-    const rows = raw.rows()
+    const layout = raw.layout()
+    const cols = layout.cols
+    const rows = layout.rows
+    const wrapped = getWrappedLines(cols)
     const viewportHeight = Math.max(4, rows - 5)
-    const maxScroll = Math.max(0, bodyLines.length - viewportHeight)
+    const maxScroll = Math.max(0, wrapped.length - viewportHeight)
     scrollTop = Math.max(0, Math.min(scrollTop, maxScroll))
     const lines: string[] = [
-      style.accentBold(`  ${title}`),
+      style.accentBold(truncatePlain(`  ${title}`, cols)),
       style.dim("  " + "─".repeat(Math.max(10, cols - 4))),
-      ...bodyLines.slice(scrollTop, scrollTop + viewportHeight),
+      ...wrapped.slice(scrollTop, scrollTop + viewportHeight),
     ]
     while (lines.length < rows - 2) lines.push("")
     lines.push(style.dim("  " + "─".repeat(Math.max(10, cols - 4))))
-    lines.push(style.muted("  ↑/↓ j/k scroll · PgUp/PgDn page · g/G top/end · q/Esc close"))
+    const hint = layout.isCompact
+      ? "  ↑/↓ · PgUp/Dn · q/Esc"
+      : "  ↑/↓ j/k scroll · PgUp/PgDn page · g/G top/end · q/Esc close"
+    lines.push(style.muted(truncatePlain(hint, cols)))
     raw.write(`${SYNC_START}\x1b[H\x1b[2J${lines.join("\n")}${CURSOR_HIDE}${SYNC_END}`)
   }
 
@@ -2008,9 +2213,11 @@ export async function openScrollableModal(
       resolve()
     }
     const onKey = (ev: ParsedKeyEvent) => {
+      const cols = raw.cols()
       const rows = raw.rows()
+      const wrapped = getWrappedLines(cols)
       const viewportHeight = Math.max(4, rows - 5)
-      const maxScroll = Math.max(0, bodyLines.length - viewportHeight)
+      const maxScroll = Math.max(0, wrapped.length - viewportHeight)
       if (ev.kind === "ctrl" && ev.key === "c") return finish()
       if (ev.kind === "char") {
         if (ev.text === "q") return finish()

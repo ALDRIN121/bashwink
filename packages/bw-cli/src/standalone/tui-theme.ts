@@ -208,6 +208,153 @@ export function wrapPlainText(text: string, maxCols: number): string[] {
   return out
 }
 
+export type TerminalSizeTier = "compact" | "standard" | "wide"
+
+export interface TerminalLayout {
+  readonly cols: number
+  readonly rows: number
+  readonly tier: TerminalSizeTier
+  readonly isCompact: boolean
+  readonly isNarrow: boolean
+  readonly isShort: boolean
+  readonly isWide: boolean
+  readonly boxWidth: number
+  readonly contentWidth: number
+}
+
+/** Compute responsive terminal breakpoints modeled on adaptive CLI TUI layout tiers. */
+export function getTerminalLayout(colsInput: number, rowsInput: number): TerminalLayout {
+  const cols = Math.max(20, Math.floor(Number.isFinite(colsInput) ? colsInput : 100))
+  const rows = Math.max(8, Math.floor(Number.isFinite(rowsInput) ? rowsInput : 30))
+  const isCompact = cols < 60
+  const isNarrow = cols < 72
+  const isShort = rows < 22
+  const isWide = cols >= 108
+  const tier: TerminalSizeTier =
+    cols < 60 || rows < 18 ? "compact" : cols >= 108 && rows >= 24 ? "wide" : "standard"
+  const boxWidth = Math.max(24, Math.min(cols - 1, 100))
+  const contentWidth = Math.max(18, boxWidth - 4)
+  return {
+    cols,
+    rows,
+    tier,
+    isCompact,
+    isNarrow,
+    isShort,
+    isWide,
+    boxWidth,
+    contentWidth,
+  }
+}
+
+/** Preserve leading anchor & trailing filename/segment when truncating narrow paths. */
+export function truncatePathMiddle(text: string, maxCols: number): string {
+  const plain = stripAnsiSequences(text)
+  if (maxCols <= 0) return ""
+  if (visibleWidth(plain) <= maxCols) return plain
+  if (maxCols <= 5) return truncatePlain(plain, maxCols)
+  const chars = Array.from(plain)
+  const keepHead = Math.max(2, Math.floor((maxCols - 1) * 0.35))
+  const keepTail = Math.max(3, maxCols - 1 - keepHead)
+  return `${chars.slice(0, keepHead).join("")}…${chars.slice(-keepTail).join("")}`
+}
+
+/** Wrap a single possibly-ANSI-styled line to <= `maxCols` display cells cleanly. */
+export function wrapStyledLine(line: string, maxCols: number): string[] {
+  const width = Math.max(12, maxCols)
+  if (line === "") return [""]
+  if (visibleWidth(line) <= width) return [line]
+  return wrapPlainText(stripAnsiSequences(line), width)
+}
+
+export interface WrappedComposerView {
+  readonly visualRows: readonly string[]
+  readonly visualCursorRow: number
+  readonly visualCursorCol: number
+}
+
+/**
+ * Wrap logical composer lines into physical rows fitting strictly within `maxCols`
+ * so terminal resize or long inputs never desync cursor-up positioning.
+ */
+export function wrapComposerLines(
+  bufLines: readonly { readonly line: string }[],
+  cursorRow: number,
+  cursorCol: number,
+  firstPrefix: string,
+  contPrefix: string,
+  placeholder: string,
+  searchingHistory: boolean,
+  maxCols: number,
+  formatFirstPrefix: (s: string) => string = (s) => s,
+  formatContPrefix: (s: string) => string = (s) => s,
+  formatPlaceholder: (s: string) => string = (s) => s,
+): WrappedComposerView {
+  const visualRows: string[] = []
+  let visualCursorRow = 0
+  let visualCursorCol = visibleWidth(firstPrefix)
+  const limit = Math.max(16, maxCols)
+
+  if (bufLines.length === 1 && bufLines[0]!.line === "" && !searchingHistory) {
+    const pfxW = visibleWidth(firstPrefix)
+    const msg = truncatePlain(placeholder, Math.max(6, limit - pfxW))
+    visualRows.push(`${formatFirstPrefix(firstPrefix)}${formatPlaceholder(msg)}`)
+    return { visualRows, visualCursorRow: 0, visualCursorCol: pfxW }
+  }
+
+  for (let i = 0; i < bufLines.length; i += 1) {
+    const rawPfx = i === 0 ? firstPrefix : contPrefix
+    const fmtPfx = i === 0 ? formatFirstPrefix : formatContPrefix
+    const pfxW = visibleWidth(rawPfx)
+    const avail = Math.max(6, limit - pfxW)
+    const lineStr = bufLines[i]!.line
+    const chars = Array.from(lineStr)
+
+    if (chars.length === 0) {
+      if (i === cursorRow) {
+        visualCursorRow = visualRows.length
+        visualCursorCol = pfxW
+      }
+      visualRows.push(fmtPfx(rawPfx))
+      continue
+    }
+
+    let chunk = ""
+    let chunkW = 0
+    let segmentStartIdx = 0
+    let firstSeg = true
+
+    for (let idx = 0; idx < chars.length; idx += 1) {
+      const ch = chars[idx]!
+      const w = charDisplayWidth(ch)
+      if (chunkW + w > avail && chunk.length > 0) {
+        if (i === cursorRow && cursorCol >= segmentStartIdx && cursorCol < idx) {
+          visualCursorRow = visualRows.length
+          visualCursorCol = pfxW + visibleWidth(chars.slice(segmentStartIdx, cursorCol).join(""))
+        }
+        const segPfx = firstSeg ? fmtPfx(rawPfx) : formatContPrefix(contPrefix)
+        visualRows.push(`${segPfx}${chunk}`)
+        chunk = ch
+        chunkW = w
+        segmentStartIdx = idx
+        firstSeg = false
+      } else {
+        chunk += ch
+        chunkW += w
+      }
+    }
+
+    if (i === cursorRow && cursorCol >= segmentStartIdx) {
+      visualCursorRow = visualRows.length
+      visualCursorCol = pfxW + visibleWidth(chars.slice(segmentStartIdx, Math.min(cursorCol, chars.length)).join(""))
+    }
+    const segPfx = firstSeg ? fmtPfx(rawPfx) : formatContPrefix(contPrefix)
+    visualRows.push(`${segPfx}${chunk}`)
+  }
+
+  return { visualRows, visualCursorRow, visualCursorCol }
+}
+
 export type ParsedKeyEvent =
   | { readonly kind: "char"; readonly text: string }
   | { readonly kind: "paste"; readonly text: string }

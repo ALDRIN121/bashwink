@@ -348,7 +348,7 @@ try {
     $s1.WaitFor("Model    none configured", 15000)
     $s1.WaitFor("bashwink (no model)> ", 15000)
     $s1.Send("/model`r`n")
-    $s1.WaitFor("Select provider [1-10 or id] (or 'cancel'):", 15000)
+    $s1.WaitFor("Select provider [1-48 or id] (or 'cancel'):", 15000)
     $s1.Send("cancel`r`n")
     $s1.WaitFor("bashwink (no model)> ", 15000)
     $s1.Send("/exit`r`n")
@@ -367,7 +367,7 @@ try {
   try {
     $s2.WaitFor("bashwink (no model)> ", 15000)
     $s2.Send("`r`n")
-    $s2.WaitFor("Select provider [1-10 or id] (or 'cancel'):", 15000)
+    $s2.WaitFor("Select provider [1-48 or id] (or 'cancel'):", 15000)
     $s2.Send("10`r`n")
     $s2.WaitFor("Endpoint URL", 15000)
     $s2.Send("http://127.0.0.1:$Port/v1`r`n")

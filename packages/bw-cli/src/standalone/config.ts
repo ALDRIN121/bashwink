@@ -173,6 +173,14 @@ export function parseStandaloneConfig(raw: string): StandaloneConfig {
     providerId = obj["providerId"]
   }
 
+  let wireProtocol: StandaloneConfig["wireProtocol"]
+  if (obj["wireProtocol"] !== undefined) {
+    if (obj["wireProtocol"] !== "openai-chat" && obj["wireProtocol"] !== "anthropic-messages") {
+      throw new StandaloneConfigError("Config wireProtocol must be 'openai-chat' or 'anthropic-messages'.")
+    }
+    wireProtocol = obj["wireProtocol"]
+  }
+
   let headers: Record<string, string> | undefined
   if (obj["headers"] !== undefined) {
     if (typeof obj["headers"] !== "object" || obj["headers"] === null || Array.isArray(obj["headers"])) {
@@ -183,7 +191,7 @@ export function parseStandaloneConfig(raw: string): StandaloneConfig {
       if (typeof v !== "string" || /[\r\n\0]/.test(k) || /[\r\n\0]/.test(v)) {
         throw new StandaloneConfigError(`Config header '${k}' is invalid.`)
       }
-      if (/^(authorization|content-type|host)$/i.test(k)) {
+      if (/^(authorization|content-type|host|x-api-key)$/i.test(k)) {
         throw new StandaloneConfigError(`Config header '${k}' cannot be overridden.`)
       }
       headers[k] = v
@@ -194,6 +202,7 @@ export function parseStandaloneConfig(raw: string): StandaloneConfig {
     version: STANDALONE_CONFIG_VERSION,
     ...(providerId === undefined ? {} : { providerId }),
     endpointType,
+    ...(wireProtocol === undefined ? {} : { wireProtocol }),
     baseURL,
     model,
     credential,
@@ -224,6 +233,7 @@ export function saveStandaloneConfig(configDirectory: string, config: Standalone
     version: STANDALONE_CONFIG_VERSION,
     ...(config.providerId === undefined ? {} : { providerId: config.providerId }),
     endpointType: config.endpointType,
+    ...(config.wireProtocol === undefined ? {} : { wireProtocol: config.wireProtocol }),
     baseURL: normalizeBaseURL(config.baseURL, config.endpointType),
     model: validateModelID(config.model),
     credential: config.credential,

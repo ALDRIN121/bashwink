@@ -502,7 +502,7 @@ async function main() {
         { wait: "bashwink (no model)> ", send: "/model\n" },
         { wait: "OpenAI" },
         { wait: "Ollama (local)" },
-        { wait: "Select provider [1-10 or id] (or 'cancel'):", send: "cancel\n" },
+        { wait: "Select provider [1-48 or id] (or 'cancel'):", send: "cancel\n" },
         { wait: "bashwink (no model)> ", send: "/exit\n" },
       ],
     );
@@ -524,7 +524,7 @@ async function main() {
       { ...env, NODE_OPTIONS: probeImportFlag, BW_EGRESS_LOG: preSubmitLog, BW_EGRESS_BLOCK_BEFORE_SUBMIT: "1" },
       [
         { wait: "bashwink (no model)> ", send: "\n" },
-        { wait: "Select provider [1-10 or id] (or 'cancel'):", send: "10\n" },
+        { wait: "Select provider [1-48 or id] (or 'cancel'):", send: "10\n" },
         { wait: "Endpoint URL", send: `${target.url}\n` },
         { wait: "Model ID", send: "local-test-model\n" },
         { wait: "Choose [1/2/3] (or 'cancel'):", send: "3\n" },
@@ -585,7 +585,7 @@ async function main() {
       [bashwinkBin, "setup"],
       plainDir,
       { ...env, NODE_OPTIONS: probeImportFlag, BW_EGRESS_LOG: setupCancelLog, BW_EGRESS_BLOCK_BEFORE_SUBMIT: "1" },
-      [{ wait: "Select provider [1-10 or id] (or 'cancel'):", send: "cancel\n" }],
+      [{ wait: "Select provider [1-48 or id] (or 'cancel'):", send: "cancel\n" }],
     );
     assert.equal(setupCancelRes.exitCode, 0);
     assert.deepEqual(readEgressLog(setupCancelLog), [], "`bashwink setup` cancel must make 0 outbound connections");

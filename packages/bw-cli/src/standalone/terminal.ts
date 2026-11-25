@@ -55,8 +55,12 @@ import {
   SYNC_START,
   colorsEnabled,
   createStyle,
+  getTerminalLayout,
+  padPlainRight,
+  truncatePathMiddle,
   truncatePlain,
   type ParsedKeyEvent,
+  type TerminalLayout,
   type TuiStyle,
 } from "./tui-theme.ts"
 import {
@@ -134,10 +138,22 @@ export function sanitizeTerminalText(text: string): string {
 
 export interface TerminalIO {
   readonly isTTY: boolean
+  cols?(): number
+  rows?(): number
   write(text: string): void
   writeError(text: string): void
   ask(prompt: string, signal?: AbortSignal): Promise<string | null>
   close(): void
+}
+
+function terminalCols(io: TerminalIO): number {
+  const v = io.cols?.() ?? process.stdout.columns ?? 100
+  return Math.max(20, Number.isFinite(v) && v > 0 ? v : 100)
+}
+
+function terminalRows(io: TerminalIO): number {
+  const v = io.rows?.() ?? process.stdout.rows ?? 30
+  return Math.max(8, Number.isFinite(v) && v > 0 ? v : 30)
 }
 
 class NodeTerminalIO implements TerminalIO {
@@ -146,6 +162,14 @@ class NodeTerminalIO implements TerminalIO {
 
   constructor() {
     this.isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY)
+  }
+
+  cols(): number {
+    return Math.max(20, process.stdout.columns ?? 100)
+  }
+
+  rows(): number {
+    return Math.max(8, process.stdout.rows ?? 30)
   }
 
   private ensureRl(): ReadlineInterface {
@@ -198,6 +222,14 @@ class RawTerminalIO implements TerminalIO {
   constructor(env: NodeJS.ProcessEnv) {
     this.raw = new RawTerminalSession()
     this.style = createStyle(colorsEnabled(env, true))
+  }
+
+  cols(): number {
+    return this.raw.cols()
+  }
+
+  rows(): number {
+    return this.raw.rows()
   }
 
   write(text: string): void {
@@ -413,28 +445,58 @@ function renderCliHeader(
   session?: SessionRecord,
 ): void {
   const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+  const layout = getTerminalLayout(terminalCols(io), terminalRows(io))
   const modelLine = config
     ? `${config.providerId ? `${config.providerId} / ` : ""}${config.model} (${formatDestination(config.baseURL)})`
     : "none configured"
   const trustLine = trusted
-    ? style.green("trusted (edits & commands confirm)")
-    : style.yellow("not trusted (read-only until /trust)")
+    ? style.green(layout.isCompact ? "trusted" : "trusted (edits & commands confirm)")
+    : style.yellow(layout.isCompact ? "read-only (/trust)" : "not trusted (read-only until /trust)")
+  const branchTag = session?.gitBranch ? `, ${session.gitBranch}` : ""
   const sessionLine = session
-    ? `${session.title} (${session.id}, ${session.turns.length} turn${session.turns.length === 1 ? "" : "s"}${session.gitBranch ? `, ${session.gitBranch}` : ""})`
+    ? layout.isCompact
+      ? `${session.title} (${session.turns.length}t${branchTag})`
+      : `${session.title} (${session.id}, ${session.turns.length} turn${session.turns.length === 1 ? "" : "s"}${branchTag})`
     : "new session"
 
-  io.write(`\n${style.dim("╭──────────────────────────────────────────────────────────────────╮")}\n`)
-  io.write(
-    `${style.dim("│")} ${style.accentBold(`Bashwink ${STANDALONE_VERSION}`)}  ${style.muted("(standalone TUI)")}                                ${style.dim("│")}\n`,
-  )
-  io.write(`${style.dim("│")} Project  ${sanitizeTerminalText(workspace)}\n`)
-  io.write(`${style.dim("│")} Session  ${sanitizeTerminalText(sessionLine)}\n`)
-  io.write(`${style.dim("│")} Trust    ${trustLine}\n`)
-  io.write(`${style.dim("│")} Model    ${sanitizeTerminalText(modelLine)}\n`)
-  io.write(`${style.dim("╰──────────────────────────────────────────────────────────────────╯")}\n`)
-  io.write(
-    `${style.muted("Commands: /sessions  /timeline  /transcript  /model  /connect  /trust  /help  /exit")}\n`,
-  )
+  if (layout.isCompact || layout.isShort) {
+    const bar = style.dim("─".repeat(Math.max(16, Math.min(layout.cols, 76))))
+    const headerTitle = style.accentBold(`Bashwink ${STANDALONE_VERSION}`)
+    io.write(`\n${headerTitle} ${style.muted(`(${layout.cols}×${layout.rows})`)}\n`)
+    io.write(`${bar}\n`)
+    const maxVal = Math.max(14, layout.cols - 10)
+    io.write(`Project  ${truncatePathMiddle(sanitizeTerminalText(workspace), maxVal)}\n`)
+    io.write(`Session  ${truncatePlain(sanitizeTerminalText(sessionLine), maxVal)}\n`)
+    io.write(`Trust    ${truncatePlain(trustLine, maxVal)}\n`)
+    io.write(`Model    ${truncatePlain(sanitizeTerminalText(modelLine), maxVal)}\n`)
+    io.write(`${bar}\n`)
+    io.write(`${style.muted(truncatePlain("Commands: /sessions /timeline /transcript /model /help /exit", layout.cols))}\n`)
+    return
+  }
+
+  const innerW = layout.contentWidth
+  const topBorder = style.dim(`╭${"─".repeat(layout.boxWidth - 2)}╮`)
+  const bottomBorder = style.dim(`╰${"─".repeat(layout.boxWidth - 2)}╯`)
+  const boxRow = (styledContent: string) =>
+    `${style.dim("│")} ${padPlainRight(styledContent, innerW)} ${style.dim("│")}\n`
+  const valW = Math.max(18, innerW - 9)
+
+  const titleLeft = `${style.accentBold(`Bashwink ${STANDALONE_VERSION}`)}  ${style.muted("(standalone TUI)")}`
+  const titleStr = layout.isWide
+    ? `${titleLeft}  ${style.dim(`[${layout.cols}×${layout.rows}]`)}`
+    : titleLeft
+
+  io.write(`\n${topBorder}\n`)
+  io.write(boxRow(titleStr))
+  io.write(boxRow(`Project  ${truncatePathMiddle(sanitizeTerminalText(workspace), valW)}`))
+  io.write(boxRow(`Session  ${truncatePlain(sanitizeTerminalText(sessionLine), valW)}`))
+  io.write(boxRow(`Trust    ${trustLine}`))
+  io.write(boxRow(`Model    ${truncatePlain(sanitizeTerminalText(modelLine), valW)}`))
+  io.write(`${bottomBorder}\n`)
+  const cmdHint = layout.isWide
+    ? "Commands: /sessions (Ctrl+O) · /timeline (Esc×2) · /transcript (Ctrl+T) · /model · /connect · /trust · /help · /exit"
+    : "Commands: /sessions  /timeline  /transcript  /model  /connect  /trust  /help  /exit"
+  io.write(`${style.muted(truncatePlain(cmdHint, layout.cols))}\n`)
 }
 
 export async function runInteractiveSetup(
@@ -494,25 +556,26 @@ export async function runInteractiveSetup(
   let preset: ProviderPreset | undefined
   while (preset === undefined) {
     let choice: string | null
+    const rangeHint = `1-${PROVIDER_CATALOG.length}`
     if (io instanceof RawTerminalIO) {
       io.write("\nProviders (Hosted HTTPS & Local loopback):\n")
       const opts: HybridChoiceOption[] = PROVIDER_CATALOG.map((p) => ({
         value: String(p.index),
-        display: `${String(p.index).padStart(2, " ")}) ${p.name.padEnd(23, " ")} ${p.endpointType === "hosted" ? "HTTPS" : "local"}  ${p.defaultBaseURL ?? p.note}`,
+        display: `${String(p.index).padStart(2, " ")}) ${p.name.padEnd(25, " ")} ${p.endpointType === "hosted" ? "HTTPS" : "local"}  ${p.defaultBaseURL ?? p.note}`,
       }))
-      choice = await io.askChoice("Select provider [1-10 or id] (or 'cancel'): ", opts)
+      choice = await io.askChoice(`Select provider [${rangeHint} or id] (or 'cancel'): `, opts)
     } else {
       io.write("\nHosted providers (HTTPS):\n")
       for (const p of PROVIDER_CATALOG.filter((c) => c.endpointType === "hosted")) {
         const tag = p.defaultBaseURL ?? p.note
-        io.write(`  ${String(p.index).padStart(2, " ")}) ${p.name.padEnd(23, " ")} ${tag}\n`)
+        io.write(`  ${String(p.index).padStart(2, " ")}) ${p.name.padEnd(25, " ")} ${tag}\n`)
       }
       io.write("\nLocal servers (loopback HTTP/HTTPS):\n")
       for (const p of PROVIDER_CATALOG.filter((c) => c.endpointType === "local")) {
         const tag = p.defaultBaseURL ?? p.note
-        io.write(`  ${String(p.index).padStart(2, " ")}) ${p.name.padEnd(23, " ")} ${tag}\n`)
+        io.write(`  ${String(p.index).padStart(2, " ")}) ${p.name.padEnd(25, " ")} ${tag}\n`)
       }
-      choice = await io.ask("Select provider [1-10 or id] (or 'cancel'): ")
+      choice = await io.ask(`Select provider [${rangeHint} or id] (or 'cancel'): `)
     }
     if (choice === null) return { status: "cancelled" }
     const t = choice.trim().toLowerCase()
@@ -521,7 +584,9 @@ export async function runInteractiveSetup(
     if (matched) {
       preset = matched
     } else {
-      io.write("  Please enter a number 1-10, a provider id (e.g. openai, ollama), or 'cancel'.\n")
+      io.write(
+        `  Please enter a number ${rangeHint}, a provider id/alias (e.g. openai, anthropic, nvidia, ollama), or 'cancel'.\n`,
+      )
     }
   }
 
@@ -593,7 +658,12 @@ export async function runInteractiveSetup(
   let credential: CredentialConfig | undefined
   while (credential === undefined) {
     let mode: string | null
-    const envLabel = `1) Environment variable name${preset.defaultEnvVar ? ` (e.g. ${preset.defaultEnvVar})` : ""}`
+    const envHint = preset.defaultEnvVar
+      ? preset.alternateEnvVars && preset.alternateEnvVars.length > 0
+        ? ` (e.g. ${preset.defaultEnvVar}; alt: ${preset.alternateEnvVars.join(", ")})`
+        : ` (e.g. ${preset.defaultEnvVar})`
+      : ""
+    const envLabel = `1) Environment variable name${envHint}`
     if (io instanceof RawTerminalIO) {
       io.write("\nAuthentication:\n")
       mode = await io.askChoice("Choose [1/2/3] (or 'cancel'): ", [
@@ -642,6 +712,9 @@ export async function runInteractiveSetup(
   io.write("\nReview connection (zero requests sent during setup):\n")
   io.write(`  Provider    ${preset.name} (${preset.id})\n`)
   io.write(`  Type        ${endpointType}\n`)
+  if (preset.wireProtocol && preset.wireProtocol !== "openai-chat") {
+    io.write(`  Protocol    ${preset.wireProtocol}\n`)
+  }
   io.write(`  Endpoint    ${baseURL}\n`)
   io.write(`  Model       ${model}\n`)
   io.write(`  Credentials ${credCheck.summary}\n`)
@@ -658,6 +731,9 @@ export async function runInteractiveSetup(
     version: 1,
     providerId: preset.id,
     endpointType,
+    ...(preset.wireProtocol && preset.wireProtocol !== "openai-chat"
+      ? { wireProtocol: preset.wireProtocol }
+      : {}),
     baseURL,
     model,
     credential,
@@ -783,10 +859,11 @@ function renderResumedSessionContext(io: TerminalIO, session: SessionRecord): vo
   if (session.turns.length > recent.length) {
     io.write(style.muted(`  … ${session.turns.length - recent.length} earlier turn(s) — press Ctrl+T for full transcript\n`))
   }
+  const maxMsgW = Math.max(18, terminalCols(io) - 10)
   for (const turn of recent) {
-    io.write(`  ${style.bold("You:")} ${sanitizeTerminalText(truncatePlain(turn.userPrompt.replace(/\n/g, " "), 76))}\n`)
+    io.write(`  ${style.bold("You:")} ${sanitizeTerminalText(truncatePlain(turn.userPrompt.replace(/\n/g, " "), maxMsgW))}\n`)
     if (turn.assistantText.trim() !== "") {
-      io.write(`  ${style.green("Asst:")} ${sanitizeTerminalText(truncatePlain(turn.assistantText.replace(/\n/g, " "), 76))}\n`)
+      io.write(`  ${style.green("Asst:")} ${sanitizeTerminalText(truncatePlain(turn.assistantText.replace(/\n/g, " "), maxMsgW))}\n`)
     }
   }
 }
@@ -795,11 +872,18 @@ function buildStatusSummary(
   session: SessionRecord,
   trusted: boolean,
   config?: StandaloneConfig,
+  layout?: TerminalLayout,
 ): string {
   const modelText = config ? config.model : "no model"
   const trustText = trusted ? "trusted" : "read-only"
   const costText =
     session.usageTotals.costUsd !== undefined ? ` · $${session.usageTotals.costUsd.toFixed(4)}` : ""
+  if (layout?.isCompact) {
+    return `${truncatePlain(session.title, 18)} (${session.turns.length}t) · ${modelText} · ${trustText}`
+  }
+  if (layout && !layout.isWide) {
+    return `${truncatePlain(session.title, 28)} (${session.turns.length}t) · ${modelText} · ${trustText}${costText} · ctrl+p palette · ctrl+o sessions`
+  }
   return `${session.title} (${session.turns.length}t) · ${modelText} · ${trustText}${costText} · ctrl+p palette · ctrl+o sessions · ctrl+t transcript · esc×2 rewind`
 }
 
@@ -1309,7 +1393,8 @@ export async function runStandalone(
             raw: io.raw,
             style: io.style,
             promptLabel,
-            statusSummary: buildStatusSummary(activeSession, trusted, activeConfig),
+            statusSummary: buildStatusSummary(activeSession, trusted, activeConfig, io.raw.layout()),
+            getStatusSummary: (layout) => buildStatusSummary(activeSession, trusted, activeConfig, layout),
             workspace: canonical,
             history: promptHistory,
             initialDraft: draftBuffer,

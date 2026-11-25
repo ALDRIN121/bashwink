@@ -259,3 +259,79 @@ test("provider handles 302 redirect, 429 rate limit, malformed JSON, timeout, ov
     await srv.close()
   }
 })
+
+test("provider supports anthropic-messages framing, tool calls, coalesced tool results, and usage", async () => {
+  const srv = await startFakeServer((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" })
+    res.end(
+      JSON.stringify({
+        id: "msg_1",
+        type: "message",
+        role: "assistant",
+        content: [
+          { type: "text", text: "Checking file now." },
+          { type: "tool_use", id: "toolu_1", name: "read_file", input: { path: "README.md" } },
+        ],
+        stop_reason: "tool_use",
+        usage: { input_tokens: 20, cache_read_input_tokens: 5, output_tokens: 12 },
+      }),
+    )
+  })
+  try {
+    const baseRoot = srv.baseURL.replace(/\/v1$/, "")
+    const completion = await complete({
+      config: {
+        ...makeConfig(`${baseRoot}/anthropic`, { kind: "env", variable: "ANTHROPIC_KEY_TEST" }),
+        wireProtocol: "anthropic-messages",
+        model: "claude-sonnet-4-6",
+      },
+      messages: [
+        { role: "system", content: "Be concise." },
+        { role: "user", content: "Inspect README" },
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: [{ id: "toolu_0", name: "list_files", input: { path: "." } }],
+        },
+        { role: "tool", callId: "toolu_0", name: "list_files", content: "README.md" },
+        { role: "tool", callId: "toolu_0b", name: "list_files", content: "package.json" },
+      ],
+      tools: BUILTIN_TOOL_DEFINITIONS,
+      env: { ANTHROPIC_KEY_TEST: "ant-test-secret-001" },
+    })
+
+    assert.equal(completion.text, "Checking file now.")
+    assert.equal(completion.finishReason, "tool_calls")
+    assert.equal(completion.toolCalls.length, 1)
+    assert.equal(completion.toolCalls[0]!.id, "toolu_1")
+    assert.equal(completion.toolCalls[0]!.name, "read_file")
+    assert.deepEqual(completion.toolCalls[0]!.input, { path: "README.md" })
+    assert.equal(completion.usage?.inputTokens, 25)
+    assert.equal(completion.usage?.outputTokens, 12)
+    assert.equal(completion.usage?.totalTokens, 37)
+
+    assert.equal(srv.requests.length, 1)
+    const req = srv.requests[0]!
+    assert.equal(req.url, "/anthropic/v1/messages")
+    assert.equal(req.headers["x-api-key"], "ant-test-secret-001")
+    assert.equal(req.headers["anthropic-version"], "2023-06-01")
+    assert.equal(req.headers["authorization"], undefined)
+
+    const body = JSON.parse(req.body) as {
+      system?: string
+      max_tokens: number
+      messages: Array<{ role: string; content: unknown }>
+      tools: Array<{ name: string; input_schema: unknown }>
+    }
+    assert.equal(body.system, "Be concise.")
+    assert.equal(body.max_tokens > 0, true)
+    assert.equal(body.tools[0]!.name, "list_files")
+    assert.ok(body.tools[0]!.input_schema)
+    // Consecutive tool results are coalesced into a single user turn with 2 tool_result blocks
+    assert.equal(body.messages.length, 3)
+    assert.equal(body.messages[2]!.role, "user")
+    assert.equal((body.messages[2]!.content as unknown[]).length, 2)
+  } finally {
+    await srv.close()
+  }
+})

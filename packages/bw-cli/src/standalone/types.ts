@@ -10,6 +10,8 @@ export type CredentialConfig =
   | { readonly kind: "env"; readonly variable: string }
   | { readonly kind: "file"; readonly path: string }
 
+export type WireProtocol = "openai-chat" | "anthropic-messages"
+
 export interface ModelPrice {
   readonly inputUsdPer1M: number
   readonly outputUsdPer1M: number
@@ -19,6 +21,7 @@ export interface StandaloneConfig {
   readonly version: 1
   readonly providerId?: string
   readonly endpointType: "local" | "hosted"
+  readonly wireProtocol?: WireProtocol
   readonly baseURL: string
   readonly model: string
   readonly credential: CredentialConfig

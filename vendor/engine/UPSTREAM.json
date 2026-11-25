@@ -1,0 +1,51 @@
+{
+  "engine": {
+    "name": "OpenCode",
+    "url": "https://github.com/anomalyco/opencode",
+    "tag": "v2.3.2",
+    "commit": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2025 opencode"
+  },
+  "ptyHelper": {
+    "name": "process-daemon",
+    "url": "https://github.com/anomalyco/opencode",
+    "tag": "process-daemon-v0.6.0",
+    "commit": "03d848f7b8d71d31d3e56f2abd8b337efbc1bc32",
+    "path": "packages/process-daemon",
+    "license": "MIT"
+  },
+  "importedWorkspaces": {
+    "cli": "packages/cli",
+    "client": "packages/client",
+    "server": "packages/server",
+    "tui": "packages/tui",
+    "core": "packages/core",
+    "ai": "packages/ai",
+    "plugin": "packages/plugin",
+    "plugins/browser": "packages/plugin-browser",
+    "protocol": "packages/protocol",
+    "schema": "packages/schema",
+    "util": "packages/util",
+    "theme": "packages/theme",
+    "ui": "packages/ui",
+    "simulation": "packages/simulation",
+    "codemode": "packages/codemode",
+    "latex": "packages/latex",
+    "merman": "packages/merman",
+    "script (build input)": "packages/script",
+    "http-recorder (transitive build dependency)": "packages/http-recorder",
+    "httpapi-codegen (transitive build dependency)": "packages/httpapi-codegen"
+  },
+  "notImported": [
+    "packages/app (standalone web app)",
+    "packages/desktop (desktop app)",
+    "packages/gui-plugins, packages/session-ui, packages/nav-menus, packages/stories",
+    "services/*",
+    "packages/data/*",
+    "packages/cli/dist (untracked build output)",
+    ".github/* (upstream CI and release assets)",
+    "docs/*, README.*.md (upstream documentation and translations)"
+  ],
+  "localPatches": []
+}

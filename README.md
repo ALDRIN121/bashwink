@@ -13,7 +13,11 @@ and [BW-030](docs/bashwink/BW-030_EXECUTION_BACKEND_DESIGN.md). See `docs/bashwi
 
 ## v0.1.0-alpha.1 private npm candidate
 
-The `npm-rc2` qualification files are `bashwink-0.1.0-alpha.1.tgz` and its `SHA256SUMS` file.
+The `npm-rc2` installer, `bashwink-0.1.0-alpha.1.tgz`, is supplied directly by the maintainer.
+The maintainer's local copy is in `release/standard/0.1.0-alpha.1-npm-rc2/` with its checksum.
+If you're starting from GitHub, get the tarball from the maintainer and use the
+[candidate's SHA256SUMS file](release/standard/0.1.0-alpha.1-npm-rc2/SHA256SUMS) to verify it.
+
 npm fetches the pinned Bun and OpenCode runtimes during installation. The CLI runs in standard
 native mode, where approved shell commands run with your user account's access. Use a disposable
 Git project and review each approval.
@@ -24,8 +28,7 @@ The optional VM is a separate Apple Silicon candidate with its own distribution 
 ### Install on Windows 11 x64
 
 Use Node.js 22 with npm, Git, PowerShell, and access to the npm registry. Windows ARM64 is
-unsupported. Get `bashwink-0.1.0-alpha.1.tgz` and `SHA256SUMS` from the maintainer, put them
-in the same folder, and open PowerShell there.
+unsupported. Put the tarball and `SHA256SUMS` in the same folder and open PowerShell there.
 
 1. Verify the tarball. Stop if the two hashes differ, ignoring letter case.
 
@@ -48,11 +51,12 @@ The install checks need no model key. To help qualify Windows, follow the tester
 the generated JSON and completed checklist. Live coding checks use your own provider key and a
 spending limit set with your provider. [Windows tester kit](release/tester-kit/README.md)
 
-**Windows invited alpha is blocked.** An earlier revision ran most automated checks on a hosted
-Windows Server 2025 x64 runner. The exact candidate still needs hosted CI, a clean Windows 11 x64
-run and a live model test on Windows. Licensing acceptance is also outstanding for the private
-alpha. Live headless testing passed on one Apple Silicon Mac.
-[Qualification report](docs/bashwink/FINAL_ALPHA_QUALIFICATION_REPORT.md)
+**Windows invited alpha is blocked.** A later revision on `main` passed the hosted Windows
+package checks with a build produced in CI. The local `npm-rc2` tarball passed live headless
+testing on one Apple Silicon Mac. Hosted CI on the exact candidate, a clean Windows 11 x64 run,
+a live Windows model test, and licensing acceptance for the private alpha are still pending.
+[Hosted CI results](https://github.com/ALDRIN121/bashwink/actions/runs/45578123343)
+· [Qualification report](docs/bashwink/FINAL_ALPHA_QUALIFICATION_REPORT.md)
 · [Platform results](docs/bashwink/SUPPORTED_PLATFORMS.md)
 
 ## Layout

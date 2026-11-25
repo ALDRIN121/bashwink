@@ -244,7 +244,7 @@ export function shellPathTokens(command: string): string[] {
   const tokens = command.match(/(?:[^\s"'`;&|<>()]+)/g) ?? []
   return tokens.filter(
     (token) =>
-      // A backslash counts too: on Windows `C:\Users\me\secret` and `..\..\x` are the obvious paths, and with only "/"
+      // A backslash counts too: on Windows `D:\data\secret` and `..\..\x` are the obvious paths, and with only "/"
       // they went unseen. On POSIX such a token resolves inside the working directory, so it is allowed there anyway.
       (token.includes("/") || token.includes("\\")) &&
       !token.startsWith("-") &&

@@ -1689,3 +1689,29 @@ Host: macOS 27.0.1, Apple M1; the developer's machine, not a clean host. Nothing
 | startup benchmark, 7 alternating runs | 0 | bashwink median 2.07 s; raw `opencode --standalone` 1.76 s |
 
 Result files: `release/standard/0.1.0-alpha.1-npm-rc1/*.json`. Hosted CI, live provider runs, Windows and Linux: NOT_RUN.
+
+## 2026-11-25: final alpha qualification (candidate `npm-rc2`, commit `cf76323`)
+
+Every command ran on the developer's Mac (macOS 27 arm64, Bun 1.4.4, Node 22.23.2) unless marked hosted. Exit codes are the real ones.
+
+| Command | Exit | Result |
+| --- | --- | --- |
+| `bun test packages` | 0 | 571 pass, 0 fail (+30 over npm-rc1: usage guard, test-change disclosure, Windows path checks, redaction, PATHEXT) |
+| `bun run typecheck` / `bun run lint` / `bun fmt --check packages` | 0 / 0 / 0 | clean |
+| mutation check of `usage-guard.ts` (4 broken limit rules) | n/a | each mutant failed the suite, original restored: 22 pass |
+| `python3 scripts/build_npm_package.py --out <dir>` twice from the clean commit | 0 | identical SHA-256 `486a1da4…a5b2`, 196,505 bytes, 19 files |
+| `python3 scripts/npm_install_check.py <tgz>` | 0 | 10/10 PASS |
+| `python3 fixtures/release/npm_qual.py <tgz>` (installed package, scripted provider) | 0 | **71 passed, 0 failed, 1 NOT_RUN** (foreign-listener test: port held by a foreign process on this Mac) |
+| `fixtures/release/npm_smoke.py <tgz>` (PTY, with `pyte`) | 0 | 17/17 PASS |
+| `npm audit --json` over the tarball's resolved tree | 0 | 0 vulnerabilities, 27 dependencies (`DEPENDENCY_AUDIT.json`) |
+| startup benchmark, 7 alternating runs | 0 | bashwink median 2.10 s; raw `opencode --standalone` 1.75 s (+0.35 s; npm-rc1 was +0.31 s) |
+| `python3 scripts/verify_bashwink_docs.py` | 0 | Audit: PASS |
+| `fixtures/release/npm_live.py` against the scripted provider with a **synthetic** key | 0 | 16/16: validates the script's logic; **not a live result**; the synthetic key is in 0 report lines |
+
+Hosted CI (private repository, branch `release-candidate/v0.1.0-alpha.1-standard`), result files in `release/standard/0.1.0-alpha.1-npm-rc2/hosted-ci-run-45537295390/`
+(run `45537295390`, commit `6cb1e87`, the last that executed): macOS 15 arm64 install 10/10 and qualification 68/68; Ubuntu x64 install 10/10 and qualification 68/68 (including the
+foreign-listener test); Windows Server 2025 x64 (build 26100) install 9/10 and qualification 61/64, tester-kit script 16 PASS / 1 NOT_RUN / 0 FAIL under Windows PowerShell 5.1.
+The next run (`b6d06d7`, run `45538173450`) did not execute: every job was refused with "recent account payments have failed or your spending limit needs to be increased".
+**The candidate commit has no hosted CI result.**
+
+Defects found and fixed this stretch are F-8 to F-17 in `FINAL_ALPHA_AUDIT.md`. Live provider, Windows 11 desktop, Linux desktop, macOS Intel, Windows ARM64: NOT_RUN.

@@ -1,0 +1,300 @@
+{
+  "schema": 1,
+  "tool": "npm audit --json (npm 10.9.8, npm registry advisory data)",
+  "date": "2026-11-25",
+  "tarball_sha256": "486a1da4f571494263af99ddf4806c1367ad5273b031e1034de2b0df2a32a5b2",
+  "scope_note": "covers JavaScript packages against the npm advisory database only; native code embedded in the bun and OpenCode binaries is NOT covered",
+  "vulnerabilities": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 0,
+    "critical": 0,
+    "total": 0
+  },
+  "dependencies_total": 27,
+  "advisories": {},
+  "resolved_packages": {
+    "@opencode/cli": {
+      "version": "2.3.2",
+      "license": "MIT",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "cpu": [
+        "arm64",
+        "x64"
+      ]
+    },
+    "@opencode/cli-darwin-arm64": {
+      "version": "2.3.2",
+      "license": "MIT",
+      "os": [
+        "darwin"
+      ],
+      "cpu": [
+        "arm64"
+      ]
+    },
+    "@opencode/cli-darwin-x64": {
+      "version": "2.3.2",
+      "license": "MIT",
+      "os": [
+        "darwin"
+      ],
+      "cpu": [
+        "x64"
+      ]
+    },
+    "@opencode/cli-darwin-x64-baseline": {
+      "version": "2.3.2",
+      "license": "MIT",
+      "os": [
+        "darwin"
+      ],
+      "cpu": [
+        "x64"
+      ]
+    },
+    "@opencode/cli-linux-arm64": {
+      "version": "2.3.2",
+      "license": "MIT",
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "arm64"
+      ]
+    },
+    "@opencode/cli-linux-arm64-musl": {
+      "version": "2.3.2",
+      "license": "MIT",
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "arm64"
+      ]
+    },
+    "@opencode/cli-linux-x64": {
+      "version": "2.3.2",
+      "license": "MIT",
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "x64"
+      ]
+    },
+    "@opencode/cli-linux-x64-baseline": {
+      "version": "2.3.2",
+      "license": "MIT",
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "x64"
+      ]
+    },
+    "@opencode/cli-linux-x64-baseline-musl": {
+      "version": "2.3.2",
+      "license": "MIT",
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "x64"
+      ]
+    },
+    "@opencode/cli-linux-x64-musl": {
+      "version": "2.3.2",
+      "license": "MIT",
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "x64"
+      ]
+    },
+    "@opencode/cli-windows-arm64": {
+      "version": "2.3.2",
+      "license": "MIT",
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "arm64"
+      ]
+    },
+    "@opencode/cli-windows-x64": {
+      "version": "2.3.2",
+      "license": "MIT",
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "x64"
+      ]
+    },
+    "@opencode/cli-windows-x64-baseline": {
+      "version": "2.3.2",
+      "license": "MIT",
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "x64"
+      ]
+    },
+    "@oven/bun-darwin-aarch64": {
+      "version": "1.4.4",
+      "license": "MIT",
+      "os": [
+        "darwin"
+      ],
+      "cpu": [
+        "arm64"
+      ]
+    },
+    "@oven/bun-darwin-x64": {
+      "version": "1.4.4",
+      "license": "MIT",
+      "os": [
+        "darwin"
+      ],
+      "cpu": [
+        "x64"
+      ]
+    },
+    "@oven/bun-freebsd-aarch64": {
+      "version": "1.4.4",
+      "license": "MIT",
+      "os": [
+        "freebsd"
+      ],
+      "cpu": [
+        "arm64"
+      ]
+    },
+    "@oven/bun-freebsd-x64": {
+      "version": "1.4.4",
+      "license": "MIT",
+      "os": [
+        "freebsd"
+      ],
+      "cpu": [
+        "x64"
+      ]
+    },
+    "@oven/bun-linux-aarch64": {
+      "version": "1.4.4",
+      "license": "MIT",
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "arm64"
+      ]
+    },
+    "@oven/bun-linux-aarch64-android": {
+      "version": "1.4.4",
+      "license": "MIT",
+      "os": [
+        "android"
+      ],
+      "cpu": [
+        "arm64"
+      ]
+    },
+    "@oven/bun-linux-aarch64-musl": {
+      "version": "1.4.4",
+      "license": "MIT",
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "arm64"
+      ]
+    },
+    "@oven/bun-linux-x64": {
+      "version": "1.4.4",
+      "license": "MIT",
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "x64"
+      ]
+    },
+    "@oven/bun-linux-x64-android": {
+      "version": "1.4.4",
+      "license": "MIT",
+      "os": [
+        "android"
+      ],
+      "cpu": [
+        "x64"
+      ]
+    },
+    "@oven/bun-linux-x64-musl": {
+      "version": "1.4.4",
+      "license": "MIT",
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "x64"
+      ]
+    },
+    "@oven/bun-windows-aarch64": {
+      "version": "1.4.4",
+      "license": "MIT",
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "arm64"
+      ]
+    },
+    "@oven/bun-windows-x64": {
+      "version": "1.4.4",
+      "license": "MIT",
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "x64"
+      ]
+    },
+    "bashwink": {
+      "version": "0.1.0-alpha.1",
+      "license": "MIT",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "cpu": [
+        "x64",
+        "arm64"
+      ]
+    },
+    "bun": {
+      "version": "1.4.4",
+      "license": "MIT",
+      "os": [
+        "darwin",
+        "linux",
+        "android",
+        "freebsd",
+        "win32"
+      ],
+      "cpu": [
+        "arm64",
+        "x64"
+      ]
+    }
+  }
+}

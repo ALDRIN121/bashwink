@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "flavor": "standard",
+  "package": "bashwink",
+  "version": "0.1.0-alpha.1",
+  "candidate_commit": "cf76323f3962ce7d30dcd885cc89e8934438acb4",
+  "artifact": {
+    "name": "bashwink-0.1.0-alpha.1.tgz",
+    "sha256": "486a1da4f571494263af99ddf4806c1367ad5273b031e1034de2b0df2a32a5b2",
+    "bytes": 196505
+  },
+  "dependencies": {
+    "bun": "1.4.4",
+    "@opencode/cli": "2.3.2"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "contents": [
+    "package/LICENSE",
+    "package/README.md",
+    "package/bin/bashwink.js",
+    "package/lib/bashwink.js",
+    "package/lib/evidence/package.json",
+    "package/lib/evidence/src/cli.ts",
+    "package/lib/evidence/src/index.ts",
+    "package/lib/evidence/src/opencode-plugin.d.ts",
+    "package/lib/evidence/src/readiness.ts",
+    "package/lib/evidence/src/recorder.ts",
+    "package/lib/evidence/src/scope.ts",
+    "package/lib/evidence/src/tui-mode.ts",
+    "package/lib/evidence/src/tui.tsx",
+    "package/lib/version.json",
+    "package/package.json",
+    "package/share/doc/ALPHA_TESTER_GUIDE.md",
+    "package/share/doc/KNOWN_LIMITATIONS.md",
+    "package/share/doc/SECURITY.md",
+    "package/share/licenses/THIRD_PARTY_NOTICES.txt"
+  ],
+  "audit": "passed",
+  "bundled_third_party": {
+    "@opencode/plugin": "2.3.2",
+    "effect": "4.1.0",
+    "@opencode/schema": "2.3.2"
+  },
+  "built_with": {
+    "bun": "1.4.4",
+    "npm": "10.9.8",
+    "node": "v22.23.2"
+  }
+}

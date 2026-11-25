@@ -103,3 +103,6 @@ BW-031 and BW-032 remain `In progress`.
 
 Permission negative tests against the installed package; bounded retries and a request/cost cap with display; the
 systematic 25-question audit; `npm audit` and transitive licence listing; update the task register and status files.
+
+---
+*Later record (2026-11-25):* the candidate `npm-rc2` and the final qualification are in `FINAL_ALPHA_QUALIFICATION_REPORT.md` and `FINAL_ALPHA_AUDIT.md`. This report is kept unchanged as the record of `npm-rc1`.

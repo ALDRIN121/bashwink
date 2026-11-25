@@ -21,8 +21,10 @@ defect the review itself flagged.
 | 2026-11-23 | ADR-008 | Licensing governed by per-package recorded decisions, not a blanket GPL scan | `DEPENDENCY_LICENSES.json` + `check_license_scope.py`; 48/48 decided, 1 OPEN blocking | Accepted | Aldrin Joseph |
 | 2026-11-23 | ADR-009 | Two distribution models (PM-0 plugin-only, PM-1 no-FFmpeg binary); stock LGPL binary is not a release artifact | No-FFmpeg OpenTUI build verified (796 FFmpeg symbols → 0 genuine), ABI + TUI render, `check_license_scope.py --fail-on-open` exit 0 | Accepted | Aldrin Joseph |
 | 2026-11-23 | ADR-010 | Evidence health is proven per run (boot entry + run record + exit 3); staging mirrors runtime resolution; TaskContract is an execution gate with non-deletable criteria | `fixtures/runtime-health` 17/17 on the real binary; `fixtures/contract` 14/14; 252 unit/integration tests | Accepted | Aldrin Joseph |
+| 2026-11-25 | ADR-013 | Standard native mode is the default; the isolated VM is optional and fails closed; distribution is a private npm tarball with exact-pinned runtimes | installed-package harness on macOS, Ubuntu and Windows runners; `STANDARD_PACKAGE_LICENSING.md` | Accepted (owner direction) | Aldrin Joseph |
+| 2026-11-25 | ADR-014 | Keep future engines and a later Rust port possible; build neither now | measured seams and code sizes recorded in the ADR | Accepted as direction only | Aldrin Joseph |
 
-Full text: `ADR-001` … `ADR-010` in this directory.
+Full text: `ADR-001` … `ADR-014` in this directory.
 
 ## Review decisions on the independent review's findings
 

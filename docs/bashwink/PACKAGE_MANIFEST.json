@@ -35,8 +35,8 @@
       "size_bytes": 3292
     },
     "ALPHA_RELEASE_CHECKLIST.md": {
-      "sha256": "1c5eddbf96f0315e60b79dda3339eacd1be9e9e848d9b81554a54b2c83d4e861",
-      "size_bytes": 12482
+      "sha256": "18ddbfcdfbda273d5fb998a1f00bb176a09a37214668844fe6575a14f3041b74",
+      "size_bytes": 15682
     },
     "ALPHA_TESTER_GUIDE.md": {
       "sha256": "9980d44cc33c0bf791388b5c54e6dcc511699a38b39c8fdf1b072d315e0bc054",
@@ -59,7 +59,7 @@
       "size_bytes": 43879
     },
     "BASHWINK_TASKS_90.csv": {
-      "sha256": "113f6f54cfe4b204a837d8d2183d36d477df1a886bcc677fd9faead6b1d530b6",
+      "sha256": "1aaef2a2c13c34b28246ce41585caaa899877024b0b1a5998f87eed564dc9669",
       "size_bytes": 38826
     },
     "BASHWINK_V2_FEATURE_BACKLOG.md": {

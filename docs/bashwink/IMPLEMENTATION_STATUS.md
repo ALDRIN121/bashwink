@@ -318,3 +318,12 @@ standard help, Node launcher, deterministic tarball builder with a content audit
 `node_modules` and on Windows, `USERPROFILE` home fallback, portable install check, PTY smoke. Written but never run:
 `npm-package` and `windows-full-suite` CI jobs. Not implemented: bounded retries, cost/request cap and display. Not
 verified: any live model session, Windows, Linux, macOS Intel. See `FINAL_ALPHA_RELEASE_REPORT.md`.
+
+## 2026-11-25: final alpha qualification (standard npm package, candidate `npm-rc2`)
+
+Implemented and verified locally (macOS arm64): usage safeguards (`usage-guard.ts`: bounded retries, request/token/cost limits, summary, exit 4; price declaration `auth add --price`),
+credential containment (provider variables removed from shell environments, literal values masked in evidence), changed-test disclosure (`test-changes.ts`), Windows-correct path and PATH handling,
+bundled-licence notices enforced by the builder, the installed-package harness (`npm_qual.py`, `script_provider.py`) and the live script (`npm_live.py`, never run live), the Windows tester kit.
+**BW-075 and BW-076 are now In progress**: the minimum for the standard alpha exists and is tested; BW-075's acceptance ("never launch another paid model call once the cap is hit") is **not met** (a request in flight is not
+recalled) and BW-076's no-progress detector is not built. BW-031 and BW-032 remain In progress. Not done: any live-model result, a Windows 11 run, hosted CI on the candidate (billing block), legal sign-off.
+Documents: `FINAL_ALPHA_QUALIFICATION_REPORT.md`, `FINAL_ALPHA_AUDIT.md`, `STANDARD_PACKAGE_LICENSING.md`, `SUPPORTED_PLATFORMS.md`, `SUPPORTED_PROVIDERS.md`, ADR-013, ADR-014.

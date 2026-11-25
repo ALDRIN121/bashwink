@@ -134,3 +134,13 @@ candidate branch for hosted CI; licensing decision; Apple Developer account for 
 
 Anything about Windows behaviour; live coding on the current HEAD; hosted CI; that the npm-packaged standard path works
 (not built yet).
+
+## 2026-11-25: final alpha qualification
+
+Candidate `npm-rc2` (`v0.1.0-alpha.1-npm-rc2`, commit `cf76323`, SHA-256 `486a1da4…a5b2`), byte-reproducible. Done: usage safeguards, credential containment (F-8), Windows defects found by hosted runs
+and fixed (F-9, F-10, F-11, F-13, F-14, F-16, F-17), changed-test disclosure, bundled-licence notices (F-12), installed-package harness on macOS/Ubuntu/Windows runners, tester kit, ADR-013/014,
+licensing and dependency audit, 25-question audit. Failed experiments: first CI runs failed on VM tests that assumed macOS and on tests that assumed POSIX (fixed by explicit platform markers, not by removing checks);
+my own new PATHEXT test failed on Ubuntu and Windows (host-dependent, fixed); a `cd` into a package directory changed the working directory mid-session (no effect on files). Decisions: shell stays a best-effort guard
+and is never called a sandbox; limits are described as not a hard ceiling; a cost limit without a price refuses to run. **Blocked: hosted CI (billing), the key file, a Windows 11 machine, legal sign-off.**
+Unverified (do not repeat as fact): any live-model behaviour; the Anthropic protocol path; Windows behaviour after commit `6cb1e87`; Windows desktop rendering; hosted CI on the candidate.
+Report: `FINAL_ALPHA_QUALIFICATION_REPORT.md`.

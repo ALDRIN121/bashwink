@@ -200,3 +200,32 @@ An external (invited, other people's machines) alpha needs every row PASS. Today
 | 12 | Independent review of the security model and the claims in the docs | **NOT_RUN** | |
 | 13 | Tester kit: README, guide, limitations, security notes, checksum procedure | **PASS** (written; not yet used by a person other than the author) | |
 | 14 | Public npm release | **NOT AUTHORIZED** | `prepublishOnly` blocks `npm publish` |
+
+## Standard npm package: external-alpha gate, candidate `npm-rc2` (2026-11-25)
+
+Supersedes the status of the `npm-rc1` section above; that section is kept as the record of what was true then.
+
+| # | Gate item | Status | Evidence |
+| --- | --- | --- | --- |
+| 1 | Installable private npm package | **PASS** | byte-reproducible tarball; install check 10/10 (Mac), hosted macOS/Ubuntu 10/10, hosted Windows 9/10 (script decoding, fixed) |
+| 2 | No unpublished-dependency resolution failures | **PASS** | exact pins resolved from the public registry on 4 environments |
+| 3 | Verified Windows x64 installation | **CONDITIONAL**: hosted Windows Server 2025 only | no Windows 11 machine; fixes after `6cb1e87` not re-run on Windows |
+| 4 | Other advertised architectures independently verified | **NOT_RUN** | macOS Intel, Linux arm64/musl/baseline, Windows ARM64 (refused) |
+| 5 | Plain `bashwink` launches; correct workspace | **PARTIAL** | PTY 17/17 on the Mac; workspace resolution on 4 environments; no Linux/Windows screen |
+| 6 | Supported provider authentication; real-model coding task; actual test execution verified | **BLOCKED** | no key file; scripted-provider results only |
+| 7 | Appropriate permission controls; explicit denials; readiness failures stop execution | **PASS** (scripted, advertised guarantees only) | `FINAL_ALPHA_QUALIFICATION_REPORT.md` section 6 |
+| 8 | Safe credential handling | **PASS with limits** | F-8 fixed; shell guard best-effort; Windows variant (F-11) not re-run on Windows |
+| 9 | Session persistence and recovery | **PARTIAL** | continuation and model switch PASS; crash recovery not run on the installed package |
+| 10 | Cancellation and owned-resource cleanup | **PASS** (Mac, Ubuntu, Windows hosted) | real Windows console Ctrl+C and closing a terminal: NOT_RUN |
+| 11 | Safe reinstall and uninstall | **PASS** | 3 hosted OSes + Mac |
+| 12 | Minimum cost and execution safeguards | **PASS as a minimum, not a ceiling** | BW-075/076 In progress; acceptance not met |
+| 13 | Accurate evidence and completion claims | **PASS** after F-15/F-16 corrections | changed-test disclosure added; shell-made changes undetected |
+| 14 | Applicable CI and regression checks passed | **BLOCKED** | last executed hosted run `6cb1e87` had 3 failing jobs (since fixed); the candidate has no hosted run (billing) |
+| 15 | Applicable licensing blockers resolved | **OPEN** | notices corrected (F-12); no legal sign-off |
+| 16 | Dependency security reviewed | **PARTIAL** | `npm audit` 0 findings; native code not assessable |
+| 17 | Clean-host installation evidence | **PARTIAL** | hosted clean images (not desktops); no tester other than the author |
+| 18 | Complete tester documentation | **PASS** (written; not yet used by another person) | guide, limitations, security notes, Windows kit and checklist |
+| 19 | Candidate checksum verified | **PASS** | `shasum -c` on `SHA256SUMS` |
+| 20 | No unresolved critical or high defect on the advertised path | **CONDITIONAL** | F-8, F-9 fixed and verified; F-23 (hosted CI unavailable) open |
+
+Result: **external alpha NOT approved.** A Windows x64 invited alpha is BLOCKED on items 3, 6, 14. Public npm release: NOT AUTHORIZED.

@@ -135,3 +135,10 @@ Eligible now: permission negative tests against the installed package; bounded r
 display (BW-075 minimum); the 25-question audit; `npm audit` and transitive licences. Blocked on the owner: the key
 file, Windows 11 x64 and Linux hosts, permission to push for hosted CI, the licensing decision. BW-031 and BW-032 stay
 In progress. Full list: `FINAL_ALPHA_RELEASE_REPORT.md` section G.
+
+## 2026-11-25: after candidate `npm-rc2`
+
+Blocked on the owner, in this order: (1) fix GitHub Actions billing and re-dispatch `verify.yml` on `release-candidate/v0.1.0-alpha.1-standard`; (2) create the key file and run `npm_live.py`;
+(3) a Windows 11 x64 machine for `release/tester-kit/`; (4) the licensing decision (`STANDARD_PACKAGE_LICENSING.md` section 5); (5) a tester other than the author. Eligible without the owner:
+surface a limit stop inside the terminal UI (F-19); a no-progress detector (BW-076); a recovery test (`bashwink resume`) against the installed package; selecting the `-baseline` runtime on CPUs without AVX2;
+investigating the one `runtime health (ubuntu)` flake (F-24). BW-031 and BW-032 stay In progress. Full list: `FINAL_ALPHA_QUALIFICATION_REPORT.md` section 12.

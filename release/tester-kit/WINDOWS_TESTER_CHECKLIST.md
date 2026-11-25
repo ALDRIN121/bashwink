@@ -5,11 +5,12 @@ and the terminal. Mark each line **OK**, **PROBLEM** (say what you saw) or **SKI
 Windows security feature for this test. If Windows SmartScreen or antivirus blocks something, stop and report exactly
 what it said; do not work around it.
 
-Use a **throwaway Git project** (the script prints how). Never run this against work you cannot restore.
+The script removes its temporary project. Create a separate throwaway Git repository for these checks. For checks that
+need a live model, connect your own provider and set a spending limit, or mark those checks **SKIPPED**.
 
 ## A. Install and start
-- [ ] `npm install -g .\bashwink-0.1.0-alpha.1.tgz` finishes without errors (note any warning text).
-- [ ] In **Windows Terminal (PowerShell)**, `cd` into the throwaway project and run `bashwink`. The interactive screen appears.
+- [ ] `npm.cmd install -g .\bashwink-0.1.0-alpha.1.tgz` finishes without errors (note any warning text).
+- [ ] In **Windows Terminal (PowerShell)**, `cd` into the throwaway project and run `bashwink.cmd`. The interactive screen appears.
 - [ ] Repeat in **cmd.exe** and, if you use it, **VS Code's terminal**.
 - [ ] The first screen asks whether to trust the folder and states that standard mode is **not a sandbox**.
 - [ ] After you answer, the mode label `[STANDARD - native, not a sandbox]` is visible and stays visible while you work.
@@ -34,15 +35,15 @@ Use a **throwaway Git project** (the script prints how). Never run this against 
       after about 10 seconds. (If one does, note its name and PID; do not leave it running.)
 
 ## E. Sessions
-- [ ] Quit, start `bashwink --continue` in the same folder: the previous conversation is there.
-- [ ] `bashwink session list` lists it.
+- [ ] Quit and start `bashwink.cmd --continue` in the same folder. The previous conversation is there.
+- [ ] `bashwink.cmd session list` lists it.
 
 ## F. Paths
 - [ ] Run from a folder whose path contains a **space** and one with a **non-ASCII character**: both work.
 - [ ] If you have a project on another drive letter (`D:\`) or reached through a **junction/symlink**, run there: edits land in the real folder.
 
 ## G. Remove
-- [ ] `npm uninstall -g bashwink` removes the `bashwink` command. Your project and the folders under
+- [ ] `npm.cmd uninstall -g bashwink` removes the `bashwink` command. Your project and the folders under
       `%USERPROFILE%\.config\bashwink` and `%USERPROFILE%\.local\share\bashwink` are untouched (they are yours to delete).
 
 ## What to send back

@@ -6,10 +6,35 @@ have done.
 
 **Status:** Phase 0 and Phase 1 are complete and gate-passed with hosted CI evidence. Phase 2
 is in progress with 3/16 tasks Done (BW-055, BW-059 and BW-091). The Phase 2 gate remains open.
-Supervised internal alpha is conditional. External alpha is blocked on OS containment.
+Supervised internal alpha is conditional. External distribution remains blocked.
 The local execution foundation is tracked in [BW-018](docs/bashwink/BW-018_IMPLEMENTATION_REPORT.md)
 and [BW-030](docs/bashwink/BW-030_EXECUTION_BACKEND_DESIGN.md). See `docs/bashwink/IMPLEMENTATION_STATUS.md` and
 `docs/bashwink/NEXT_STEPS.md`.
+
+## v0.1.0-alpha.1 private npm candidate
+
+The `npm-rc2` qualification files are `bashwink-0.1.0-alpha.1.tgz` and its `SHA256SUMS` file.
+npm fetches the pinned Bun and OpenCode runtimes during installation. The CLI runs in standard
+native mode, where approved shell commands run with your user account's access. Use a disposable
+Git project and review each approval.
+
+The optional VM is a separate Apple Silicon candidate with its own distribution gate.
+[macOS VM qualification report](docs/bashwink/releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md)
+
+### Windows 11 x64 qualification
+
+Use Node.js 22 with npm, Git and PowerShell on Windows 11 x64. Windows ARM64 is unsupported.
+Get the tarball, `SHA256SUMS` and the tester kit from the maintainer. Start with the kit's
+checksum and install checks, which need no model key. Then complete the manual checklist and
+return it with the generated qualification JSON. A live check uses your own provider key and
+provider spending limit. [Windows tester kit](release/tester-kit/README.md)
+
+**Windows invited alpha is blocked.** An earlier revision ran most automated checks on a hosted
+Windows Server 2025 x64 runner. The exact candidate still needs hosted CI, a clean Windows 11 x64
+run and a live model test on Windows. Licensing acceptance is also outstanding for the private
+alpha. Live headless testing passed on one Apple Silicon Mac.
+[Qualification report](docs/bashwink/FINAL_ALPHA_QUALIFICATION_REPORT.md)
+· [Platform results](docs/bashwink/SUPPORTED_PLATFORMS.md)
 
 ## Layout
 
@@ -25,18 +50,6 @@ bashwink/
 
 The pinned OpenCode foundation is **not** vendored here. It lives beside this repository at
 `~/Developer/bashwink-upstream/opencode` and is consumed by exact version.
-
-## v0.1.0-alpha.1 (local release candidate)
-
-A self-contained macOS Apple Silicon archive that runs the agent in an isolated VM by
-default. It is **not published**, and external distribution is **not approved**: it has not
-been qualified on a clean host, has no hosted CI run for its commit, and ships stock OpenCode
-binaries whose licensing needs the owner's sign-off. Build it with
-`python3 scripts/build_release.py --out build/release`; installation, the tester guide and
-the known limits are in [release/docs](release/docs). Verdicts and evidence:
-[release gate report](docs/bashwink/releases/v0.1.0-alpha.1/RELEASE_GATE_REPORT.md).
-The earlier [v0.1.0-alpha decision](docs/bashwink/releases/v0.1.0-alpha/RELEASE_READINESS.md)
-is superseded.
 
 ## Local development quick start
 
@@ -172,7 +185,6 @@ runtime and tool lifecycle.
 - **Tool-level scope only.** BW-059 enforces `allowedPaths` at the loaded plugin for
   recognized file calls. Permitted shells inherit host access. OS containment is required
   before external alpha (BW-031).
-- Verified on macOS arm64 and Linux; Windows was never run.
 - **One paid provider verified end to end.** A second independently credentialed provider was
   blocked on credit — see `docs/bashwink/TEST_EVIDENCE.md` for the matrix.
 - No model aliases, fallback chains or auxiliary-model routing. Deliberate: each multiplies the
@@ -180,10 +192,10 @@ runtime and tool lifecycle.
   without the evidence saying so.
 - The evidence chain is tamper-**evident**, not tamper-proof: it cannot detect tail truncation,
   and anyone with write access can recompute a consistent chain.
-- No cost ceiling. `session.usage.updated` carries cost, but nothing stops a run (BW-075).
+- The standard candidate stops work when usage limits are reached, but a request already in flight
+  can exceed the threshold. Token limits exclude cached reads and writes. Set a spending limit
+  with your provider. [Usage evidence](docs/bashwink/FINAL_ALPHA_QUALIFICATION_REPORT.md)
 - The evidence log has no concurrency control; one writer per log.
-- `bun add` of the packed packages fails because `@bashwink/evidence` is private with a
-  `workspace:*` dependency. The supported alpha path is the bundled build, not npm publish.
 - LGPL/FFmpeg distribution compliance is documented but not yet packaged —
   `docs/bashwink/THIRD_PARTY_NOTICES.md` §6.
 

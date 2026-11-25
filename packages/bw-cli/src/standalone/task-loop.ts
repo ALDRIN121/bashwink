@@ -206,12 +206,15 @@ function buildSystemPrompt(
   trusted: boolean,
   permissionMode: PermissionMode,
   untrustedContext: readonly { source: string; content: string }[],
+  canUnlockEdits = false,
 ): string {
   const approvalGuidance =
     permissionMode === "ask"
       ? "Workspace mode is 'ask' (read-only): list_files and read_file are available; edit_file and run_command are disabled."
       : !trusted
-        ? "Workspace trust is NOT granted (read-only mode): list_files and read_file are available; edit_file and run_command are disabled."
+        ? canUnlockEdits
+          ? "Workspace trust is not yet granted: list_files and read_file run immediately; proposing edit_file will ask the user interactively to trust the workspace and apply (run_command remains disabled until trusted)."
+          : "Workspace trust is NOT granted (read-only mode): list_files and read_file are available; edit_file and run_command are disabled."
         : permissionMode === "accept-edits"
           ? "Workspace trust is granted (accept-edits mode): file edits auto-apply inside the workspace; commands require user approval."
           : permissionMode === "smart"
@@ -380,7 +383,16 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
 
   const priorHistory = (input.history ?? []).filter((msg) => msg.role !== "system")
   const messages: ChatMessage[] = [
-    { role: "system", content: buildSystemPrompt(boundary.workspace, boundary.trusted, permissionMode, extraContext) },
+    {
+      role: "system",
+      content: buildSystemPrompt(
+        boundary.workspace,
+        boundary.trusted,
+        permissionMode,
+        extraContext,
+        Boolean(deps.requestWorkspaceTrust),
+      ),
+    },
     ...priorHistory,
     { role: "user", content: input.prompt },
   ]

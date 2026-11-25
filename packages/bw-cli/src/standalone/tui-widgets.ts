@@ -1409,10 +1409,10 @@ export async function askHybridConfirm(
 
   const render = () => {
     const layout = raw.layout()
-    const yesTag = highlighted === "yes" && typed === "" ? style.selectedRow(" Yes (y) ") : style.green("Yes (y)")
-    const noTag = highlighted === "no" && typed === "" ? style.selectedRow(" No (n) ") : style.muted("No (n)")
+    const yesTag = highlighted === "yes" && typed === "" ? style.selectedRow(" ▸ Yes (y) ") : style.green("Yes (y)")
+    const noTag = highlighted === "no" && typed === "" ? style.selectedRow(" ▸ No (n) ") : style.muted("No (n)")
     const hint = `${style.dim("  [")}${yesTag}${style.dim(" / ")}${noTag}${style.dim("]")} `
-    const safePrompt = truncatePlain(promptText, Math.max(12, layout.cols - (typed === "" ? 24 : typed.length + 2)))
+    const safePrompt = truncatePlain(promptText, Math.max(12, layout.cols - (typed === "" ? 27 : typed.length + 2)))
     const line = `${safePrompt}${typed === "" ? hint : ` ${typed}`}`
     raw.write(`${SYNC_START}${rendered ? "\r\x1b[2K" : ""}${line}${CURSOR_SHOW}${SYNC_END}`)
     rendered = true

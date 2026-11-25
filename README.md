@@ -13,10 +13,10 @@ and [BW-030](docs/bashwink/BW-030_EXECUTION_BACKEND_DESIGN.md). See `docs/bashwi
 
 ## v0.1.0-alpha.1 private npm candidate
 
-The `npm-rc2` installer, `bashwink-0.1.0-alpha.1.tgz`, is supplied directly by the maintainer.
-The maintainer's local copy is in `release/standard/0.1.0-alpha.1-npm-rc2/` with its checksum.
-If you're starting from GitHub, get the tarball from the maintainer and use the
-[candidate's SHA256SUMS file](release/standard/0.1.0-alpha.1-npm-rc2/SHA256SUMS) to verify it.
+If you have access to this repository, you can [build the installer from source](#build-the-installer-from-source).
+You can also use the maintainer's `npm-rc2` installer, `bashwink-0.1.0-alpha.1.tgz`. The
+maintainer's local copy is in `release/standard/0.1.0-alpha.1-npm-rc2/`. Verify that copy with
+the [candidate's SHA256SUMS file](release/standard/0.1.0-alpha.1-npm-rc2/SHA256SUMS).
 
 npm fetches the pinned Bun and OpenCode runtimes during installation. The CLI runs in standard
 native mode, where approved shell commands run with your user account's access. Use a disposable
@@ -24,6 +24,25 @@ Git project and review each approval.
 
 The optional VM is a separate Apple Silicon candidate with its own distribution gate.
 [macOS VM qualification report](docs/bashwink/releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md)
+
+### Build the installer from source
+
+On Windows 11 x64, install Node.js 22 with npm, Git, Python 3.12, and Bun 1.4.4. Make sure
+`python` and `bun` are on your PATH. In PowerShell, clone the private repository and build
+from the clean checkout.
+
+```powershell
+git clone https://github.com/ALDRIN121/bashwink.git
+Set-Location bashwink
+bun install --frozen-lockfile
+$packageDir = Join-Path $env:TEMP ("bashwink-build-" + [guid]::NewGuid())
+python scripts/build_npm_package.py --out $packageDir
+Set-Location $packageDir
+```
+
+The build writes `bashwink-0.1.0-alpha.1.tgz` and `SHA256SUMS` to that folder. Follow the
+installation steps below using both files from your own build. The manifest in that folder
+records the Git commit you built.
 
 ### Install on Windows 11 x64
 

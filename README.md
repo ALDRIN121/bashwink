@@ -21,13 +21,32 @@ Git project and review each approval.
 The optional VM is a separate Apple Silicon candidate with its own distribution gate.
 [macOS VM qualification report](docs/bashwink/releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md)
 
-### Windows 11 x64 qualification
+### Install on Windows 11 x64
 
-Use Node.js 22 with npm, Git and PowerShell on Windows 11 x64. Windows ARM64 is unsupported.
-Get the tarball, `SHA256SUMS` and the tester kit from the maintainer. Start with the kit's
-checksum and install checks, which need no model key. Then complete the manual checklist and
-return it with the generated qualification JSON. A live check uses your own provider key and
-provider spending limit. [Windows tester kit](release/tester-kit/README.md)
+Use Node.js 22 with npm, Git, PowerShell, and access to the npm registry. Windows ARM64 is
+unsupported. Get `bashwink-0.1.0-alpha.1.tgz` and `SHA256SUMS` from the maintainer, put them
+in the same folder, and open PowerShell there.
+
+1. Verify the tarball. Stop if the two hashes differ, ignoring letter case.
+
+   ```powershell
+   Get-FileHash -Algorithm SHA256 .\bashwink-0.1.0-alpha.1.tgz
+   Get-Content .\SHA256SUMS
+   ```
+
+2. Install Bashwink and check that the version and diagnostics commands run.
+
+   ```powershell
+   npm.cmd install -g .\bashwink-0.1.0-alpha.1.tgz
+   bashwink.cmd --version
+   bashwink.cmd doctor
+   ```
+
+3. Open a disposable Git project in PowerShell and run `bashwink.cmd`.
+
+The install checks need no model key. To help qualify Windows, follow the tester kit and return
+the generated JSON and completed checklist. Live coding checks use your own provider key and a
+spending limit set with your provider. [Windows tester kit](release/tester-kit/README.md)
 
 **Windows invited alpha is blocked.** An earlier revision ran most automated checks on a hosted
 Windows Server 2025 x64 runner. The exact candidate still needs hosted CI, a clean Windows 11 x64

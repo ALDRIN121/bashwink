@@ -207,7 +207,7 @@ async function main() {
         ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", installedBin, "--version"], { env: scrubbedEnv, encoding: "utf8" })
         : spawnSync(installedBin, ["--version"], { env: scrubbedEnv, encoding: "utf8" });
     assert.equal(ver.status, 0, ver.stderr);
-    assert.equal(ver.stdout.trim(), "bashwink 0.2.0-alpha.1");
+    assert.equal(ver.stdout.trim(), "bashwink 0.2.0-alpha.2");
 
     const doc =
       process.platform === "win32"

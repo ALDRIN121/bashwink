@@ -1,4 +1,4 @@
-Bashwink 0.2.0-alpha.1 (standalone Node.js package): third-party notices
+Bashwink 0.2.0-alpha.2 (standalone Node.js package): third-party notices
 
 Bashwink itself is licensed under the MIT License (see LICENSE).
 

@@ -159,6 +159,8 @@ export interface RecorderOptions {
   readonly maxText?: number
   /** Injected clock, for deterministic tests. */
   readonly now?: () => Date
+  /** Per-instance literal secrets (minimum 4 characters) scrubbed by this recorder only. */
+  readonly secretValues?: readonly string[]
 }
 
 const GENESIS = "0".repeat(64)
@@ -203,22 +205,26 @@ export function clearSecretValues(): void {
   LITERAL_SECRETS.clear()
 }
 
-export function redact(value: unknown, depth = 0): unknown {
+export function redact(value: unknown, depth = 0, extraSecrets?: readonly string[]): unknown {
   if (depth > 12) return "[DEPTH_LIMIT]"
   if (typeof value === "string") {
     let text = value
     for (const secret of LITERAL_SECRETS)
       if (text.includes(secret)) text = text.split(secret).join(REDACTED)
+    if (extraSecrets !== undefined) {
+      for (const secret of extraSecrets)
+        if (secret.length >= 4 && text.includes(secret)) text = text.split(secret).join(REDACTED)
+    }
     for (const pattern of SECRET_VALUE) text = text.replace(pattern, REDACTED)
     return text
   }
   if (typeof value === "number" || typeof value === "boolean" || value === null) return value
   if (value === undefined) return undefined
-  if (Array.isArray(value)) return value.map((item) => redact(item, depth + 1))
+  if (Array.isArray(value)) return value.map((item) => redact(item, depth + 1, extraSecrets))
   if (typeof value === "object") {
     const out: Record<string, unknown> = {}
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = SECRET_KEY.test(key) ? REDACTED : redact(item, depth + 1)
+      out[key] = SECRET_KEY.test(key) ? REDACTED : redact(item, depth + 1, extraSecrets)
     }
     return out
   }
@@ -245,8 +251,12 @@ export interface Normalised {
  *   let a 10,025-character payload through. Objects and arrays are now reduced to a
  *   bounded, still-valid JSON prefix rather than being returned whole.
  */
-export function normalise(value: unknown, maxText: number): Normalised {
-  const safe = redact(value)
+export function normalise(
+  value: unknown,
+  maxText: number,
+  extraSecrets?: readonly string[],
+): Normalised {
+  const safe = redact(value, 0, extraSecrets)
   const text = typeof safe === "string" ? safe : canonical(safe)
   const fullDigest = sha256(text)
   const size = byteLength(text)
@@ -287,11 +297,13 @@ export class EvidenceRecorder {
   private degraded: string | undefined
   /** Number of entries the recorder failed to write since construction. */
   private writeFailures = 0
+  private readonly instanceSecrets: readonly string[]
 
   constructor(options: RecorderOptions) {
     this.file = path.join(options.directory, options.file ?? "evidence.jsonl")
     this.maxText = options.maxText ?? DEFAULT_MAX_TEXT
     this.now = options.now ?? (() => new Date())
+    this.instanceSecrets = (options.secretValues ?? []).filter((value) => value.length >= 4)
     mkdirSync(options.directory, { recursive: true })
     this.resume()
   }
@@ -349,14 +361,14 @@ export class EvidenceRecorder {
   private sanitisePayload(payload: EvidencePayload): EvidencePayload {
     const out: Record<string, unknown> = {}
     if (payload.input !== undefined) {
-      const n = normalise(payload.input, this.maxText)
+      const n = normalise(payload.input, this.maxText, this.instanceSecrets)
       out.input = n.value
       out.fullDigest = n.fullDigest
       out.truncated = n.truncated
     }
     if (payload.status !== undefined) out.status = payload.status
     if (payload.output !== undefined) {
-      const n = normalise(payload.output, this.maxText)
+      const n = normalise(payload.output, this.maxText, this.instanceSecrets)
       out.output = n.value
       if (!("fullDigest" in out)) out.fullDigest = n.fullDigest
       else out.outputDigest = n.fullDigest
@@ -365,7 +377,7 @@ export class EvidenceRecorder {
     if (payload.exit !== undefined) out.exit = payload.exit
     if (payload.model !== undefined) {
       // A model id is not a secret, but it is caller-supplied text and is bounded like one.
-      const safe = redact(payload.model) as Record<string, unknown>
+      const safe = redact(payload.model, 0, this.instanceSecrets) as Record<string, unknown>
       out.model = {
         id: truncateBytes(String(safe.id ?? ""), 128),
         providerID: truncateBytes(String(safe.providerID ?? ""), 128),
@@ -375,7 +387,7 @@ export class EvidenceRecorder {
     if (payload.note !== undefined) {
       // Redact, then bound. A note is short by intent but must not be a smuggling route
       // for an unbounded payload.
-      const n = normalise(String(payload.note), this.maxText)
+      const n = normalise(String(payload.note), this.maxText, this.instanceSecrets)
       out.note = n.value
       if (n.truncated) {
         out.noteDigest = n.fullDigest
@@ -396,15 +408,19 @@ export class EvidenceRecorder {
       at: this.now().toISOString(),
       phase,
       // Call metadata is caller-controlled too, so it is sanitised on the same boundary.
-      call: redact({
-        id: call.id,
-        tool: call.tool,
-        sessionID: call.sessionID,
-        ...(call.agent === undefined ? {} : { agent: call.agent }),
-        ...(call.messageID === undefined ? {} : { messageID: call.messageID }),
-        ...(call.taskID === undefined ? {} : { taskID: call.taskID }),
-        ...(call.unassignedReason === undefined ? {} : { unassignedReason: call.unassignedReason }),
-      }) as ToolCallRef,
+      call: redact(
+        {
+          id: call.id,
+          tool: call.tool,
+          sessionID: call.sessionID,
+          ...(call.agent === undefined ? {} : { agent: call.agent }),
+          ...(call.messageID === undefined ? {} : { messageID: call.messageID }),
+          ...(call.taskID === undefined ? {} : { taskID: call.taskID }),
+          ...(call.unassignedReason === undefined ? {} : { unassignedReason: call.unassignedReason }),
+        },
+        0,
+        this.instanceSecrets,
+      ) as ToolCallRef,
       payload: this.sanitisePayload(payload),
       prevHash: this.prevHash,
     }

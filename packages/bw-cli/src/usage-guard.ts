@@ -33,6 +33,8 @@ export interface UsageLimits {
   readonly costUsd: number | undefined
   /** Retries of one failed request before the work is stopped. */
   readonly retries: number
+  /** Optional wall-clock milliseconds limit per launch (BASHWINK_MAX_TIME_MS). */
+  readonly timeMs?: number | undefined
 }
 
 export class LimitConfigError extends Error {}
@@ -76,7 +78,10 @@ export function parseLimits(env: Readonly<Record<string, string | undefined>>): 
       )
     retries = Number(rawRetries)
   }
-  return { requests, tokens, costUsd, retries }
+  const timeMs = positive("BASHWINK_MAX_TIME_MS", env["BASHWINK_MAX_TIME_MS"], undefined)
+  return timeMs === undefined
+    ? { requests, tokens, costUsd, retries }
+    : { requests, tokens, costUsd, retries, timeMs }
 }
 
 interface SessionUsage {
@@ -119,8 +124,11 @@ export class UsageLedger {
   private retries = 0
   private gaps = 0
   private stopReason: string | undefined
+  private readonly limits: UsageLimits
 
-  constructor(private readonly limits: UsageLimits) {}
+  constructor(limits: UsageLimits) {
+    this.limits = limits
+  }
 
   get stopped(): string | undefined {
     return this.stopReason
@@ -286,6 +294,8 @@ export interface GuardOptions {
  */
 export class UsageGuard {
   readonly ledger: UsageLedger
+  readonly limits: UsageLimits
+  private readonly options: GuardOptions
   private readonly doFetch: typeof fetch
   private target: GuardTarget | undefined
   private closed = false
@@ -294,10 +304,9 @@ export class UsageGuard {
   private interrupting: Promise<void> | undefined
   private interruptAgain = false
 
-  constructor(
-    readonly limits: UsageLimits,
-    private readonly options: GuardOptions = {},
-  ) {
+  constructor(limits: UsageLimits, options: GuardOptions = {}) {
+    this.limits = limits
+    this.options = options
     this.ledger = new UsageLedger(limits)
     this.doFetch = options.fetch ?? fetch
   }

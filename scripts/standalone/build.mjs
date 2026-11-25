@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Build, audit, pack, and optionally globally install standalone Bashwink (0.2.0-alpha.1).
+ * Build, audit, pack, and optionally globally install standalone Bashwink (0.2.0-alpha.2).
  *
  * Uses only Node.js 22+ built-ins (`node:module` `stripTypeScriptTypes`) and `npm` —
  * zero Bun, Python, Rust, Zig, OpenCode, Hermes, Pi, or third-party build packages.

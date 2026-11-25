@@ -134,13 +134,37 @@ export function createSession(workspace: string, gitBranch?: string): SessionRec
   }
 }
 
+function sanitizeUnknownSecret(value: unknown, activeSecret?: string, depth = 0): unknown {
+  if (depth > 12) return "[DEPTH_LIMIT]"
+  if (typeof value === "string") return sanitizeSecretText(value, activeSecret)
+  if (Array.isArray(value)) return value.map((item) => sanitizeUnknownSecret(item, activeSecret, depth + 1))
+  if (typeof value === "object" && value !== null) {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = sanitizeUnknownSecret(v, activeSecret, depth + 1)
+    }
+    return out
+  }
+  return value
+}
+
 function sanitizeChatMessages(messages: readonly ChatMessage[], activeSecret?: string): ChatMessage[] {
   return messages.map((msg) => {
     if (msg.role === "assistant") {
       return {
         role: "assistant",
         content: sanitizeSecretText(msg.content, activeSecret),
-        ...(msg.toolCalls ? { toolCalls: msg.toolCalls } : {}),
+        ...(msg.toolCalls
+          ? {
+              toolCalls: msg.toolCalls.map((tc) => ({
+                ...tc,
+                input: sanitizeUnknownSecret(tc.input, activeSecret) as Record<string, unknown>,
+                ...(tc.rawArguments !== undefined
+                  ? { rawArguments: sanitizeSecretText(tc.rawArguments, activeSecret) }
+                  : {}),
+              })),
+            }
+          : {}),
       }
     }
     if (msg.role === "tool") {
@@ -180,6 +204,19 @@ export function saveSession(
       ...t,
       userPrompt: sanitizeSecretText(t.userPrompt, activeSecret),
       assistantText: sanitizeSecretText(t.assistantText, activeSecret),
+      commands: t.commands.map((c) => ({
+        ...c,
+        command: sanitizeSecretText(c.command, activeSecret),
+        args: c.args.map((a) => sanitizeSecretText(a, activeSecret)),
+      })),
+      ...(t.actions
+        ? {
+            actions: t.actions.map((a) => ({
+              ...a,
+              summary: sanitizeSecretText(a.summary, activeSecret),
+            })),
+          }
+        : {}),
       ...(t.diffPreviews
         ? {
             diffPreviews: t.diffPreviews.map((d) => ({

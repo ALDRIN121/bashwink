@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Packaging, install, upgrade, corrupt-tarball recovery, and uninstall checks
- * against the real standalone tarball (`build/standalone/bashwink-0.2.0-alpha.1.tgz`).
+ * against the real standalone tarball (`build/standalone/bashwink-0.2.0-alpha.2.tgz`).
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -48,7 +48,7 @@ function runInstalled(binPath, args, env, cwd) {
 
 function main() {
   const built = buildStandalone();
-  assert.equal(built.version, "0.2.0-alpha.1");
+  assert.equal(built.version, "0.2.0-alpha.2");
   assert.ok(existsSync(built.tarballPath));
 
   // Verify SHA256SUMS file matches tarball
@@ -108,7 +108,7 @@ function main() {
     // 2. Installed CLI diagnostics and fail-closed exits
     const ver = runInstalled(bin, ["--version"], env, workspace);
     assert.equal(ver.status, 0, ver.stderr);
-    assert.equal(ver.stdout.trim(), "bashwink 0.2.0-alpha.1");
+    assert.equal(ver.stdout.trim(), "bashwink 0.2.0-alpha.2");
 
     const doc = runInstalled(bin, ["doctor"], env, workspace);
     assert.equal(doc.status, 0, `doctor failed:\n${doc.stderr}\n${doc.stdout}`);
@@ -156,20 +156,20 @@ function main() {
     assert.notEqual(badInst.status, 0, "Expected corrupt tarball install to fail");
     const postBadVer = runInstalled(bin, ["--version"], env, workspace);
     assert.equal(postBadVer.status, 0);
-    assert.equal(postBadVer.stdout.trim(), "bashwink 0.2.0-alpha.1");
+    assert.equal(postBadVer.stdout.trim(), "bashwink 0.2.0-alpha.2");
 
     // 5. Negative controls on staged package auditor
     const badPkgRoot = path.join(root, "bad-stage");
     mkdirSync(path.join(badPkgRoot, "bin"), { recursive: true });
     writeFileSync(
       path.join(badPkgRoot, "package.json"),
-      JSON.stringify({ name: "bashwink", type: "module", version: "0.2.0-alpha.1", dependencies: { "@opencode/plugin": "2.3.2" } }),
+      JSON.stringify({ name: "bashwink", type: "module", version: "0.2.0-alpha.2", dependencies: { "@opencode/plugin": "2.3.2" } }),
     );
     assert.throws(() => auditStagedPackage(badPkgRoot), /zero runtime dependencies/);
 
     writeFileSync(
       path.join(badPkgRoot, "package.json"),
-      JSON.stringify({ name: "bashwink", type: "module", version: "0.2.0-alpha.1", dependencies: {} }),
+      JSON.stringify({ name: "bashwink", type: "module", version: "0.2.0-alpha.2", dependencies: {} }),
     );
     writeFileSync(path.join(badPkgRoot, "bin", "bashwink.js"), 'import { x } from "bun"; console.log(x);\n');
     assert.throws(() => auditStagedPackage(badPkgRoot), /Forbidden non-node external import 'bun'/);

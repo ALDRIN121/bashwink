@@ -5,10 +5,11 @@
  * communicates with `runTask` through plain `TaskInput`, `ApprovalRequest`, and `TaskEvent`s.
  */
 
-import { existsSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { createInterface, type Interface as ReadlineInterface } from "node:readline/promises"
 import { ensurePaths } from "../paths.ts"
+import { LimitConfigError, parseLimits } from "../usage-guard.ts"
 import {
   formatDestination,
   inspectLegacyOpenAiProviders,
@@ -24,6 +25,19 @@ import {
   validateModelID,
 } from "./config.ts"
 import {
+  approveActiveContract,
+  createStandaloneContract,
+  loadActiveContract,
+  rejectActiveContract,
+  renderContractSummary,
+  reviseActiveContract,
+} from "./contract-store.ts"
+import {
+  exportProofBundle,
+  renderProofSummary,
+  verifyProofPack,
+} from "./proof.ts"
+import {
   probeModels,
   testProviderConnection,
   type TestConnectionResult,
@@ -36,9 +50,12 @@ import {
   grantWorkspaceTrust,
   isValidPermissionMode,
   isWorkspaceTrusted,
+  loadRunRecord,
   loadWorkspacePermissions,
   nextPermissionMode,
   permissionModeLabel,
+  purgeExpiredArtifacts,
+  sanitizeSecretText,
   saveAlwaysPermissionRule,
   setWorkspacePermissionMode,
   verifyEvidenceFile,
@@ -105,13 +122,15 @@ import type {
   ApprovalDecision,
   CredentialConfig,
   PermissionMode,
+  ProofPackManifest,
   SavedPermissionRule,
   StandaloneConfig,
+  TaskBudgets,
   TaskEvent,
   TaskResult,
 } from "./types.ts"
 
-export const STANDALONE_VERSION = "0.2.0-alpha.1"
+export const STANDALONE_VERSION = "0.2.0-alpha.2"
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const
 
@@ -419,6 +438,11 @@ export function renderHelp(configDir: string, dataDir: string): string {
     "  bashwink trust [dir] --by <name>",
     "                           Grant interactive write/command trust to a workspace",
     "  bashwink evidence verify Verify the hash-chained evidence.jsonl log",
+    "  bashwink evidence export [--run <id>] [--out <file>] [--format json|md]",
+    "  bashwink evidence purge --ttl-days <n>",
+    "  bashwink contract new|show|approve|reject|edit|revise|status",
+    "  bashwink proof show [runId] | proof verify [file|runId]",
+    "  bashwink --require-contract --max-requests <n> --max-tokens <n> --max-cost-usd <amt> --max-time-ms <ms>",
     "  bashwink --version       Print version",
     "  bashwink --help          Print this help",
     "",
@@ -432,6 +456,7 @@ export function renderHelp(configDir: string, dataDir: string): string {
     "  /test, /status           Test saved model connection or view session & budget status",
     "  /diff, /compact          Inspect edits or compact conversation context",
     "  /mode, /trust, /evidence Switch mode (accept-edits/smart/auto/manual/ask) or verify log",
+    "  /contract, /proof [id]   Inspect active IntentLock contract or ProofPack verification",
     "  /help, /exit             Show help or quit",
     "",
     "KEYBOARD SHORTCUTS",
@@ -1017,6 +1042,20 @@ function renderTaskOutcome(result: TaskResult, io: TerminalIO): void {
         ? style.yellow(outcomeLine)
         : style.red(outcomeLine)
   io.write(`${outcomeColored}\n`)
+  if (result.claimStatus !== undefined) {
+    const claimLine = `  Claim     ${result.claimStatus}`
+    const claimColored =
+      result.claimStatus === "verified"
+        ? style.green(claimLine)
+        : result.claimStatus === "done_unverified" || result.claimStatus === "cancelled"
+          ? style.yellow(claimLine)
+          : style.red(claimLine)
+    io.write(`${claimColored}\n`)
+    const reasons = result.proofPack?.unverifiedReasons ?? []
+    for (const reason of reasons.slice(0, 3)) {
+      io.write(`  ${style.yellow(`Note      ${sanitizeTerminalText(reason)}`)}\n`)
+    }
+  }
   if (result.diffPreviews && result.diffPreviews.length > 0) {
     const fileSummaries = result.diffPreviews.map((d) => {
       const c = countDiffChanges(d.patch)
@@ -1198,6 +1237,313 @@ function buildHelpModalLines(configDir: string, dataDir: string, style: TuiStyle
     .map((l) => (l === l.toUpperCase() && l.trim() !== "" ? style.accentBold(`  ${l}`) : `  ${l}`))
 }
 
+function parseCriterionSpec(raw: string, index: number): {
+  readonly id: string
+  readonly statement: string
+  readonly command?: string
+} {
+  const parts = raw.split(":")
+  if (parts.length === 1) {
+    return { id: `c_${index + 1}`, statement: raw.trim() }
+  }
+  const id = parts[0]!.trim() || `c_${index + 1}`
+  if (parts.length === 2) {
+    return { id, statement: parts[1]!.trim() || id }
+  }
+  const statement = parts[1]!.trim() || id
+  const command = parts.slice(2).join(":").trim()
+  return { id, statement, ...(command ? { command } : {}) }
+}
+
+function handleContractCli(
+  subArgs: readonly string[],
+  cwd: string,
+  dataDir: string,
+  io: TerminalIO,
+): number {
+  const action = subArgs[0] ?? "show"
+  const canonical = canonicalWorkspace(cwd)
+
+  const readFlagList = (flag: string): string[] => {
+    const values: string[] = []
+    for (let i = 1; i < subArgs.length; i += 1) {
+      const a = subArgs[i]!
+      if (a === flag && subArgs[i + 1] !== undefined) {
+        values.push(subArgs[i + 1]!)
+        i += 1
+      } else if (a.startsWith(`${flag}=`)) {
+        values.push(a.slice(flag.length + 1))
+      }
+    }
+    return values
+  }
+  const readFlagOne = (flag: string): string | undefined => readFlagList(flag).at(-1)
+  const hasFlag = (flag: string): boolean => subArgs.includes(flag)
+
+  if (action === "show" || action === "status") {
+    const active = loadActiveContract(dataDir, canonical)
+    if (!active) {
+      io.writeError(`No active contract for ${canonical}.\n`)
+      return 1
+    }
+    io.write(`${renderContractSummary(active)}\n`)
+    return 0
+  }
+
+  if (action === "new") {
+    const objective = readFlagOne("--objective")
+    if (!objective || objective.trim() === "") {
+      io.writeError("bashwink contract new requires --objective <text>.\n")
+      return 2
+    }
+    const allowedPaths = readFlagList("--allow")
+    const forbiddenPaths = readFlagList("--forbid")
+    const negativeRequirements = readFlagList("--negative")
+    const rawCriteria = readFlagList("--criterion")
+    const criteria =
+      rawCriteria.length > 0
+        ? rawCriteria.map((raw, idx) => parseCriterionSpec(raw, idx))
+        : [{ id: "checks.pass", statement: "Verify changes with test/check run" }]
+    const maxFilesRaw = readFlagOne("--max-files")
+    let maxFiles: number | undefined
+    if (maxFilesRaw !== undefined) {
+      if (!/^[0-9]+$/.test(maxFilesRaw)) {
+        io.writeError(`Invalid --max-files value '${maxFilesRaw}'.\n`)
+        return 2
+      }
+      maxFiles = Number(maxFilesRaw)
+    }
+    const allowedCommands = readFlagList("--allow-cmd")
+    const forbiddenCommands = readFlagList("--forbid-cmd")
+    const requireCleanBase = hasFlag("--clean-base")
+    const constraints = {
+      ...(maxFiles !== undefined ? { maxFiles } : {}),
+      ...(hasFlag("--allow-cmd") ? { allowedCommands } : {}),
+      ...(forbiddenCommands.length > 0 ? { forbiddenCommands } : {}),
+      ...(requireCleanBase ? { requireCleanBase: true } : {}),
+    }
+    const created = createStandaloneContract(dataDir, canonical, {
+      objective: objective.trim(),
+      allowedPaths,
+      forbiddenPaths,
+      negativeRequirements,
+      criteria,
+      constraints,
+    })
+    io.write(`${renderContractSummary(created)}\n`)
+    return 0
+  }
+
+  if (action === "approve") {
+    const by = readFlagOne("--by")
+    if (!by || by.trim() === "") {
+      io.writeError("bashwink contract approve requires --by <name>.\n")
+      return 2
+    }
+    const approved = approveActiveContract(dataDir, canonical, by.trim())
+    io.write(`${renderContractSummary(approved)}\n`)
+    return 0
+  }
+
+  if (action === "reject") {
+    const rejected = rejectActiveContract(dataDir, canonical)
+    io.write(`${renderContractSummary(rejected)}\n`)
+    return 0
+  }
+
+  if (action === "edit" || action === "revise") {
+    const reason = readFlagOne("--reason")
+    if (!reason || reason.trim() === "") {
+      io.writeError(`bashwink contract ${action} requires --reason <text>.\n`)
+      return 2
+    }
+    const allow = readFlagList("--allow")
+    const forbid = readFlagList("--forbid")
+    const addCriteria = readFlagList("--add-criterion").map((raw, idx) => parseCriterionSpec(raw, idx))
+    const dropCriteriaIds = readFlagList("--drop-criterion")
+    const resolveAssumptionIds = readFlagList("--resolve-assumption")
+    const resolveQuestionIds = readFlagList("--resolve-question")
+    const objective = readFlagOne("--objective")
+    const revised = reviseActiveContract(dataDir, canonical, {
+      reason: reason.trim(),
+      ...(objective !== undefined ? { objective: objective.trim() } : {}),
+      ...(allow.length > 0 ? { allowedPaths: allow } : {}),
+      ...(forbid.length > 0 ? { forbiddenPaths: forbid } : {}),
+      ...(addCriteria.length > 0 ? { addCriteria } : {}),
+      ...(dropCriteriaIds.length > 0 ? { dropCriteriaIds } : {}),
+      ...(resolveAssumptionIds.length > 0 ? { resolveAssumptionIds } : {}),
+      ...(resolveQuestionIds.length > 0 ? { resolveQuestionIds } : {}),
+    })
+    io.write(`${renderContractSummary(revised)}\n`)
+    return 0
+  }
+
+  io.writeError(`Unknown contract subcommand '${action}'. Use: new, show, approve, reject, edit, revise, status.\n`)
+  return 2
+}
+
+function handleProofCli(
+  subArgs: readonly string[],
+  cwd: string,
+  dataDir: string,
+  io: TerminalIO,
+): number {
+  const action = subArgs[0] ?? "show"
+  const target = subArgs[1]
+  if (action === "show") {
+    const run = loadRunRecord(dataDir, target)
+    if (!run) {
+      io.writeError(target ? `Run '${target}' not found.\n` : "No recorded runs found.\n")
+      return 1
+    }
+    const syntheticResult: TaskResult = {
+      runId: run.runId,
+      outcome: run.outcome,
+      ...(run.claimStatus !== undefined ? { claimStatus: run.claimStatus } : {}),
+      finalText: "",
+      ...(run.stopReason !== undefined ? { stopReason: run.stopReason } : {}),
+      changedFiles: run.changedFiles,
+      changedTests: run.changedTests,
+      commands: run.commands,
+      requests: run.requests,
+      usage: run.usage,
+      ...(run.proofPack ? { proofPack: run.proofPack } : {}),
+      evidenceFile: run.evidenceFile,
+      runRecordFile: path.join(dataDir, "runs", `${run.runId}.json`),
+    }
+    io.write(`${renderProofSummary(syntheticResult)}\n`)
+    return 0
+  }
+
+  if (action === "verify") {
+    let manifest: ProofPackManifest | undefined
+    if (target && existsSync(path.resolve(cwd, target))) {
+      try {
+        const parsed = JSON.parse(readFileSync(path.resolve(cwd, target), "utf8")) as Record<string, unknown>
+        if (parsed["proofPack"] && typeof parsed["proofPack"] === "object") {
+          manifest = parsed["proofPack"] as ProofPackManifest
+        } else {
+          manifest = parsed as unknown as ProofPackManifest
+        }
+      } catch {
+        io.writeError(`Could not parse ProofPack JSON file '${target}'.\n`)
+        return 1
+      }
+    } else {
+      const run = loadRunRecord(dataDir, target)
+      manifest = run?.proofPack
+    }
+    if (!manifest) {
+      io.writeError("No ProofPack manifest found to verify.\n")
+      return 1
+    }
+    const check = verifyProofPack(manifest)
+    if (!check.ok) {
+      for (const issue of check.issues) io.writeError(`ProofPack verification failed: ${issue}\n`)
+      return 1
+    }
+    io.write(
+      `ProofPack OK: ${manifest.runId} (claim=${manifest.claimStatus}, checks=${manifest.checks.length}, evidence=${manifest.evidenceEntries}).\n`,
+    )
+    return 0
+  }
+
+  io.writeError(`Unknown proof subcommand '${action}'. Use: show, verify.\n`)
+  return 2
+}
+
+interface ParsedCliRunOptions {
+  readonly cliBudgets: Partial<TaskBudgets>
+  readonly requireContract: boolean
+  readonly positional: readonly string[]
+}
+
+function parseTopLevelRunOptions(
+  argv: readonly string[],
+  env: NodeJS.ProcessEnv,
+): ParsedCliRunOptions {
+  const positional: string[] = []
+  let maxRequests: number | undefined
+  let maxTokens: number | undefined
+  let maxCostUsd: number | undefined
+  let maxTimeMs: number | undefined
+  let requireContract = false
+
+  const envMap: Record<string, string | undefined> = { ...env }
+
+  const readVal = (idx: number, flag: string): { readonly val: string; readonly step: number } => {
+    const arg = argv[idx]!
+    if (arg.startsWith(`${flag}=`)) return { val: arg.slice(flag.length + 1), step: 0 }
+    const next = argv[idx + 1]
+    if (next === undefined) throw new LimitConfigError(`${flag} requires a value`)
+    return { val: next, step: 1 }
+  }
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i]!
+    if (a === "--require-contract") {
+      requireContract = true
+      continue
+    }
+    if (a === "--max-requests" || a.startsWith("--max-requests=")) {
+      const { val, step } = readVal(i, "--max-requests")
+      i += step
+      envMap["BASHWINK_MAX_REQUESTS"] = val
+      const parsed = parseLimits(envMap)
+      maxRequests = parsed.requests ?? 1_000_000
+      continue
+    }
+    if (a === "--max-tokens" || a.startsWith("--max-tokens=")) {
+      const { val, step } = readVal(i, "--max-tokens")
+      i += step
+      envMap["BASHWINK_MAX_TOKENS"] = val
+      maxTokens = parseLimits(envMap).tokens
+      continue
+    }
+    if (a === "--max-cost-usd" || a.startsWith("--max-cost-usd=")) {
+      const { val, step } = readVal(i, "--max-cost-usd")
+      i += step
+      envMap["BASHWINK_MAX_COST_USD"] = val
+      maxCostUsd = parseLimits(envMap).costUsd
+      continue
+    }
+    if (a === "--max-time-ms" || a.startsWith("--max-time-ms=")) {
+      const { val, step } = readVal(i, "--max-time-ms")
+      i += step
+      envMap["BASHWINK_MAX_TIME_MS"] = val
+      maxTimeMs = parseLimits(envMap).timeMs
+      continue
+    }
+    positional.push(a)
+  }
+
+  const envLimits = parseLimits(envMap)
+  const cliBudgets: Partial<TaskBudgets> = {
+    ...(maxRequests !== undefined
+      ? { maxRequests }
+      : env["BASHWINK_MAX_REQUESTS"] && envLimits.requests !== undefined
+        ? { maxRequests: envLimits.requests }
+        : {}),
+    ...(maxTokens !== undefined
+      ? { maxOutputTokens: maxTokens }
+      : env["BASHWINK_MAX_TOKENS"] && envLimits.tokens !== undefined
+        ? { maxOutputTokens: envLimits.tokens }
+        : {}),
+    ...(maxCostUsd !== undefined
+      ? { maxCostUsd }
+      : env["BASHWINK_MAX_COST_USD"] && envLimits.costUsd !== undefined
+        ? { maxCostUsd: envLimits.costUsd }
+        : {}),
+    ...(maxTimeMs !== undefined
+      ? { maxElapsedMs: maxTimeMs }
+      : env["BASHWINK_MAX_TIME_MS"] && envLimits.timeMs !== undefined
+        ? { maxElapsedMs: envLimits.timeMs }
+        : {}),
+  }
+
+  return { cliBudgets, requireContract, positional }
+}
+
 export async function runStandalone(
   argv: readonly string[],
   options: {
@@ -1214,13 +1560,12 @@ export async function runStandalone(
   const resolved = resolveStandalonePaths(env)
 
   try {
-    const first = argv[0]
-
-    if (first === "--version" || first === "-v") {
+    const firstRaw = argv[0]
+    if (firstRaw === "--version" || firstRaw === "-v") {
       io.write(renderVersion())
       return 0
     }
-    if (first === "--help" || first === "-h") {
+    if (firstRaw === "--help" || firstRaw === "-h") {
       io.write(renderHelp(resolved.config, resolved.data))
       return 0
     }
@@ -1230,10 +1575,10 @@ export async function runStandalone(
       )
       return 3
     }
-    if (first === "doctor") {
+    if (firstRaw === "doctor") {
       return runDoctor(cwd, env, io)
     }
-    if (first === "trust") {
+    if (firstRaw === "trust") {
       const args = argv.slice(1)
       let dir = cwd
       let by: string | undefined
@@ -1258,17 +1603,96 @@ export async function runStandalone(
       io.write(`Trusted ${canonical} (granted by ${by.trim()}).\n`)
       return 0
     }
-    if (first === "evidence" && argv[1] === "verify") {
-      const file = argv[2] ? path.resolve(cwd, argv[2]) : path.join(resolved.evidence, "evidence.jsonl")
-      const res = verifyEvidenceFile(file)
-      if (res.ok) {
-        io.write(`Evidence OK: ${res.entries} entries (head ${res.head}).\n`)
+    if (firstRaw === "contract") {
+      ensurePaths(resolved)
+      return handleContractCli(argv.slice(1), cwd, resolved.data, io)
+    }
+    if (firstRaw === "proof") {
+      ensurePaths(resolved)
+      return handleProofCli(argv.slice(1), cwd, resolved.data, io)
+    }
+    if (firstRaw === "evidence") {
+      const sub = argv[1]
+      if (sub === "verify") {
+        const file = argv[2] ? path.resolve(cwd, argv[2]) : path.join(resolved.evidence, "evidence.jsonl")
+        const res = verifyEvidenceFile(file)
+        if (res.ok) {
+          io.write(`Evidence OK: ${res.entries} entries (head ${res.head}).\n`)
+          return 0
+        }
+        io.writeError(`Evidence verification failed: ${res.reason}\n`)
+        return 1
+      }
+      if (sub === "export") {
+        let runIdArg: string | undefined
+        let outFile: string | undefined
+        let format: "json" | "md" = "json"
+        for (let i = 2; i < argv.length; i += 1) {
+          const a = argv[i]!
+          if (a === "--run" && argv[i + 1]) {
+            runIdArg = argv[++i]
+          } else if (a === "--out" && argv[i + 1]) {
+            outFile = path.resolve(cwd, argv[++i]!)
+          } else if (a === "--format" && argv[i + 1]) {
+            const f = argv[++i]!
+            if (f !== "json" && f !== "md") {
+              io.writeError(`Invalid --format '${f}'. Use 'json' or 'md'.\n`)
+              return 2
+            }
+            format = f
+          }
+        }
+        const run = loadRunRecord(resolved.data, runIdArg)
+        if (!run) {
+          io.writeError(runIdArg ? `Run '${runIdArg}' not found.\n` : "No recorded runs found to export.\n")
+          return 1
+        }
+        const rendered = exportProofBundle(run, { format })
+        if (outFile) {
+          mkdirSync(path.dirname(outFile), { recursive: true, mode: 0o700 })
+          writeFileSync(outFile, rendered, { mode: 0o600, encoding: "utf8" })
+          io.write(`Exported proof/evidence bundle for ${run.runId} to ${outFile}.\n`)
+        } else {
+          io.write(rendered)
+        }
         return 0
       }
-      io.writeError(`Evidence verification failed: ${res.reason}\n`)
-      return 1
+      if (sub === "purge") {
+        let ttlRaw: string | undefined
+        for (let i = 2; i < argv.length; i += 1) {
+          const a = argv[i]!
+          if (a === "--ttl-days" && argv[i + 1]) ttlRaw = argv[++i]
+          else if (a.startsWith("--ttl-days=")) ttlRaw = a.slice("--ttl-days=".length)
+        }
+        if (ttlRaw === undefined || !/^[0-9]+(?:\.[0-9]+)?$/.test(ttlRaw)) {
+          io.writeError("bashwink evidence purge requires --ttl-days <non-negative number>.\n")
+          return 2
+        }
+        const purged = purgeExpiredArtifacts(resolved.data, Number(ttlRaw))
+        io.write(
+          `Purged ${purged.deletedRuns} expired run record(s) and ${purged.deletedSessions} expired session(s); evidence.jsonl and contracts preserved.\n`,
+        )
+        return 0
+      }
+      io.writeError(`Unknown evidence subcommand '${sub ?? ""}'. Use: verify, export, purge.\n`)
+      return 2
     }
-    if (first === "setup" || first === "connect" || (first === "model" && argv.length === 1)) {
+
+    let parsedRunOpts: ParsedCliRunOptions
+    try {
+      parsedRunOpts = parseTopLevelRunOptions(argv, env)
+    } catch (err) {
+      if (err instanceof LimitConfigError) {
+        io.writeError(`bashwink: ${err.message}\n`)
+        return 2
+      }
+      throw err
+    }
+
+    const first = parsedRunOpts.positional[0]
+    const secondPositional = parsedRunOpts.positional[1]
+
+    if (first === "setup" || first === "connect" || (first === "model" && parsedRunOpts.positional.length === 1)) {
       if (!io.isTTY) {
         io.writeError(
           `bashwink ${first} requires an interactive terminal to configure provider, model, and credential references.\n`,
@@ -1340,8 +1764,8 @@ export async function runStandalone(
     if (continueFlag) {
       const existing = listSessions(resolved.data, { workspace: canonical })[0]
       if (existing) activeSession = existing
-    } else if (resumeFlag && argv[1]) {
-      const targetId = argv[1]
+    } else if (resumeFlag && secondPositional) {
+      const targetId = secondPositional
       const direct = loadSession(resolved.data, targetId)
       const matched = direct ?? listSessions(resolved.data).find((s) => s.id.startsWith(targetId))
       if (matched) {
@@ -1724,6 +2148,19 @@ export async function runStandalone(
           )
           return "continue"
         }
+        if (cmdName === "contract") {
+          const active = loadActiveContract(resolved.data, canonical)
+          if (!active) {
+            io.write(`No active IntentLock contract for ${canonical}. Create via \`bashwink contract new\`.\n`)
+          } else {
+            io.write(`\n${renderContractSummary(active)}\n`)
+          }
+          return "continue"
+        }
+        if (cmdName === "proof") {
+          handleProofCli(["show", ...(cmdArgs ? [cmdArgs] : [])], cwd, resolved.data, io)
+          return "continue"
+        }
         return "continue"
       }
 
@@ -1968,6 +2405,7 @@ export async function runStandalone(
           readBurst.length = 0
         }
 
+        const activeContract = loadActiveContract(resolved.data, canonical)
         let result: TaskResult
         try {
           result = await runTask(
@@ -1979,6 +2417,9 @@ export async function runStandalone(
               permissionMode,
               savedRules,
               history: activeSession.messages,
+              budgets: parsedRunOpts.cliBudgets,
+              ...(activeContract ? { contract: activeContract } : {}),
+              requireContract: parsedRunOpts.requireContract,
               signal: currentAbort.signal,
             },
             {
@@ -2151,18 +2592,24 @@ export async function runStandalone(
                     )
                     shownDiffCallIds.add(req.callId)
                     io.write(`\n${rendered.join("\n")}\n`)
-                    if (req.reason) {
+                    if (req.integrityWarning) {
+                      io.write(`${style.red("TestGuard Warning:")} ${sanitizeTerminalText(req.integrityWarning)}\n`)
+                    }
+                    if (req.reason && req.reason !== req.integrityWarning) {
                       const prefix = req.smartDenied ? style.red("Blocked:") : style.yellow("Note:")
                       io.write(`${prefix} ${sanitizeTerminalText(req.reason)}\n`)
                     }
                     return await askPermissionDecision(io, "Apply this change? [y/N]", {
                       allowAlways: req.allowAlways ?? true,
                       allowAcceptEdits: true,
+                      ...(req.integrityWarning ? { integrityWarning: req.integrityWarning } : {}),
                       ...(req.suggestedSummary ? { alwaysSummary: req.suggestedSummary } : {}),
                       ...(currentAbort ? { signal: currentAbort.signal } : {}),
                     })
                   }
-                  const cmdLine = sanitizeTerminalText([req.prepared.command, ...req.prepared.args].join(" "))
+                  const cmdLine = sanitizeTerminalText(
+                    sanitizeSecretText([req.prepared.command, ...req.prepared.args].join(" "), cred.secret),
+                  )
                   io.write(`\n  ${style.yellow("┃")} ${style.bold("$")} ${style.bold(cmdLine)}\n`)
                   io.write(`  ${style.yellow("┃")} ${style.muted(`Dir      ${sanitizeTerminalText(req.prepared.cwd)}`)}\n`)
                   io.write(`  ${style.yellow("┃")} ${style.muted(`Warning  ${req.hostAccessWarning}`)}\n`)

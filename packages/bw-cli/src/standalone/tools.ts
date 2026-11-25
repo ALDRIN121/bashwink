@@ -19,6 +19,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import path from "node:path"
+import { homedir } from "node:os"
 import {
   checkWorkspaceReadPath,
   checkWorkspaceWritePath,
@@ -26,6 +27,7 @@ import {
   physicalPath,
   sanitizeSecretText,
   scrubbedChildEnv,
+  toolPath,
   type BoundaryContext,
 } from "./security.ts"
 import type { StandaloneConfig, ToolDefinition } from "./types.ts"
@@ -254,6 +256,7 @@ export interface PreparedEdit {
   readonly relativePath: string
   readonly create: boolean
   readonly originalSha256: string | null
+  readonly originalNormalized: string | null
   readonly lineEnding: "\r\n" | "\n"
   readonly mode: number
   readonly updatedNormalized: string
@@ -308,6 +311,7 @@ function renderSimpleDiff(relPath: string, beforeText: string | null, afterText:
 export function prepareEditFile(
   boundary: BoundaryContext,
   input: Record<string, unknown>,
+  editedFiles?: ReadonlySet<string>,
 ): { readonly ok: true; readonly prepared: PreparedEdit } | { readonly ok: false; readonly reason: string } {
   const rawPath = input["path"]
   const newText = input["newText"]
@@ -332,6 +336,16 @@ export function prepareEditFile(
 
   const resolvedPath = check.resolvedPath
   const relativePath = path.relative(boundary.workspace, resolvedPath)
+  if (
+    boundary.maxFiles !== undefined &&
+    !editedFiles?.has(relativePath) &&
+    (editedFiles?.size ?? 0) >= boundary.maxFiles
+  ) {
+    return {
+      ok: false,
+      reason: `ScopeFence: contract maxFiles (${boundary.maxFiles}) reached; cannot modify '${relativePath}'.`,
+    }
+  }
   const exists = existsSync(resolvedPath)
 
   if (!exists) {
@@ -350,6 +364,7 @@ export function prepareEditFile(
         relativePath,
         create: true,
         originalSha256: null,
+        originalNormalized: null,
         lineEnding: "\n",
         mode: 0o644,
         updatedNormalized: normalizedNew,
@@ -415,6 +430,7 @@ export function prepareEditFile(
       relativePath,
       create: false,
       originalSha256: sha256Bytes(rawBytes),
+      originalNormalized: normalizedOriginal,
       lineEnding,
       mode: st.mode & 0o777,
       updatedNormalized,
@@ -538,6 +554,28 @@ function quoteCmdArg(arg: string): string {
   return `"${arg.replace(/"/g, '""')}"`
 }
 
+function extractCommandPathCandidates(arg: string, homeDir: string): string[] {
+  const rawCandidates = [arg]
+  if (arg.startsWith("--")) {
+    const eq = arg.indexOf("=")
+    if (eq > 0 && eq + 1 < arg.length) rawCandidates.push(arg.slice(eq + 1))
+  } else if (arg.startsWith("-") && arg.length > 2) {
+    rawCandidates.push(arg.slice(2))
+    rawCandidates.push(arg.slice(1))
+  }
+  const out: string[] = []
+  for (const cand of rawCandidates) {
+    if (cand === "~") {
+      out.push(homeDir)
+    } else if (cand.startsWith("~/") || cand.startsWith("~\\")) {
+      out.push(path.join(homeDir, cand.slice(2)))
+    } else if (cand.includes("/") || cand.includes("\\")) {
+      out.push(cand)
+    }
+  }
+  return out
+}
+
 export function prepareRunCommand(
   boundary: BoundaryContext,
   input: Record<string, unknown>,
@@ -552,6 +590,35 @@ export function prepareRunCommand(
   const command = input["command"]
   if (typeof command !== "string" || command.trim() === "" || /[\r\n\0]/.test(command)) {
     return { ok: false, reason: "run_command: 'command' must be a non-empty single-line executable name." }
+  }
+  if (boundary.scopePolicy?.allowShell === false) {
+    return {
+      ok: false,
+      reason: "ScopeFence: shell commands are disabled by active contract constraints.",
+    }
+  }
+  const exeName = command.trim()
+  const exeBase = path.basename(exeName).toLowerCase().replace(/\.(?:exe|cmd|bat)$/, "")
+  if (
+    boundary.forbiddenCommands?.some(
+      (f) => path.basename(f.trim()).toLowerCase().replace(/\.(?:exe|cmd|bat)$/, "") === exeBase,
+    )
+  ) {
+    return {
+      ok: false,
+      reason: `ScopeFence: command '${exeName}' is explicitly forbidden by the active contract.`,
+    }
+  }
+  if (
+    boundary.allowedCommands !== undefined &&
+    !boundary.allowedCommands.some(
+      (a) => path.basename(a.trim()).toLowerCase().replace(/\.(?:exe|cmd|bat)$/, "") === exeBase,
+    )
+  ) {
+    return {
+      ok: false,
+      reason: `ScopeFence: command '${exeName}' is outside active contract allowedCommands (${boundary.allowedCommands.join(", ")}).`,
+    }
   }
   const rawArgs = input["args"]
   let args: string[] = []
@@ -571,14 +638,25 @@ export function prepareRunCommand(
     return { ok: false, reason: `Working directory does not exist: ${rawCwd ?? "."}` }
   }
 
+  const homeDir = env["HOME"] ?? env["USERPROFILE"] ?? homedir()
+  const scopeForbiddenRoots = boundary.scopePolicy?.forbiddenPaths ?? []
   for (const arg of args) {
-    if (arg.includes("/") || arg.includes("\\")) {
+    for (const expanded of extractCommandPathCandidates(arg, homeDir)) {
       try {
-        const candidate = physicalPath(path.resolve(cwdCheck.resolvedPath, arg))
+        const candidate = toolPath(cwdCheck.resolvedPath, expanded)
         if (boundary.forbiddenReadRoots.some((root) => contains(root, candidate))) {
           return {
             ok: false,
             reason: `Command argument '${arg}' targets protected configuration/credential path ${candidate}.`,
+          }
+        }
+        if (
+          boundary.forbiddenWriteRoots.some((root) => contains(root, candidate)) ||
+          scopeForbiddenRoots.some((root) => contains(root, candidate))
+        ) {
+          return {
+            ok: false,
+            reason: `ScopeFence: command argument '${arg}' targets forbidden path ${candidate}.`,
           }
         }
       } catch {

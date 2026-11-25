@@ -1,8 +1,8 @@
 # Phase 2 — Evidence-first safeguards
 
-**Target:** v0.1 alpha gate  
-**Tasks:** 15  
-**Status:** In progress — **3 of 16 implemented (BW-055, BW-059, BW-091)**; gate NOT evaluated. Phase 2 began only after the Phase 1 revalidation in ADR-010.
+**Target:** v0.1 / standalone `v0.2.0-alpha.2` (`darwin-arm64`)
+**Tasks:** 16
+**Status:** **16/16 Done on `darwin-arm64`** (`ADR-018` / `ADR-019`); Phase 2 gate evaluated as **CONDITIONAL PASS (`darwin-arm64`)** — cross-platform (`linux-x64`, `linux-arm64`, `darwin-x64`, `win32-x64`) and live paid-provider Phase 2 verification open.
 
 ## Objective
 
@@ -14,30 +14,30 @@ Implement TaskContract/IntentLock, immutable baseline, TestGuard, ScopeFence, Tr
 
 ## Concrete deliverables
 
-- [~] `bashwink contract new|show|approve|revise|status` shipped with BW-055; interactive `edit`, assumption ledger and the contradictory-goal fixture remain BW-056
+- [x] `bashwink contract new|show|edit|approve|reject|revise|status` + blocking assumption/question gate (`BW-055`, `BW-056`)
 
-- [ ] Baseline snapshots and protected test inventory
+- [x] Baseline snapshots and protected test inventory (`BW-057`)
 
-- [x] Tool-bound path enforcement (BW-059) — **Done** for file tools and shell path arguments; source trust labels (BW-066) remain open
+- [x] Tool-bound path enforcement (`BW-059`, `BW-018`), `TestGuard` (`BW-058`), and nonce-escaped `TrustZones` (`BW-066`)
 
-- [ ] Proof manifest and terminal evidence summary
+- [x] Proof manifest (`BW-060`), `ClaimGuard` (`BW-061`), and terminal proof-of-work summary (`BW-017`)
 
-- [ ] Budget stops, no-progress detector and 12 adversarial fixtures
+- [x] `BudgetPilot` (`BW-075`), no-progress detector (`BW-076`), secret pipeline (`BW-067`), and 12/12 adversarial scenarios (`BW-084`)
 
-- [ ] Alpha quickstart, known-limits and security notes
+- [x] Alpha quickstart, known-limits and security notes (`BW-020`)
 
 
 ## Release / exit gate
 
-- [ ] 12/12 initial fixed fixtures reach expected *states* under pinned test conditions (proposed target).
+- [x] 12/12 initial fixed fixtures reach expected *states* under pinned test conditions (`darwin-arm64`, real PTY + loopback mock provider).
 
-- [ ] Zero false-verified receipts, unauthorized protected-test weakening, or canary leaks in the fixture suite.
+- [x] Zero false-verified receipts, unauthorized protected-test weakening, or canary leaks in the fixture suite.
 
-- [ ] Required unrun tests are `not_run`/`unverified`, never marked passed.
+- [x] Required unrun tests are `not_run`/`unverified`, never marked passed.
 
-- [ ] Untrusted repository text cannot obtain elevated tool permissions.
+- [x] Untrusted repository text cannot obtain elevated tool permissions.
 
-- [ ] Alpha package installation works on advertised target environment.
+- [x] Alpha package installation works on advertised target environment (`darwin-arm64`; Linux/Windows/macOS Intel UNVERIFIED locally).
 
 
 **Demonstration:** Ask agent to fix a bug → malicious test deletion attempt → denied → real tests executed → proof report with hashes; force cost cap to verify stop.

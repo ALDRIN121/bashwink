@@ -8,15 +8,17 @@
  * - `test-changes.ts` (`isTestPath`)
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { homedir } from "node:os"
 import { randomBytes } from "node:crypto"
-import { EvidenceRecorder, redact, registerSecretValues } from "../../../bw-evidence/src/recorder.ts"
-import { contains, physicalPath } from "../../../bw-evidence/src/scope.ts"
+import { EvidenceRecorder, redact } from "../../../bw-evidence/src/recorder.ts"
+import { canWrite, contains, physicalPath, type ScopePolicy } from "../../../bw-evidence/src/scope.ts"
+import type { TaskContract } from "../contract.ts"
 import type { Paths } from "../paths.ts"
 import { isTestPath } from "../test-changes.ts"
 import { canonicalWorkspace, isTrusted, readTrust, writeTrust, grantTrust } from "../trust.ts"
+import { compileContractScopePolicy } from "./contract-store.ts"
 import type {
   PermissionMode,
   RunSummaryRecord,
@@ -26,7 +28,7 @@ import type {
 
 export { EvidenceRecorder, redact, verify as verifyEvidenceFile } from "../../../bw-evidence/src/recorder.ts"
 export { canonicalWorkspace, isTrusted, readTrust, writeTrust, grantTrust } from "../trust.ts"
-export { physicalPath, contains } from "../../../bw-evidence/src/scope.ts"
+export { physicalPath, contains, toolPath } from "../../../bw-evidence/src/scope.ts"
 export { isTestPath }
 
 export function trustFilePath(configDirectory: string): string {
@@ -50,8 +52,13 @@ export function grantWorkspaceTrust(
 export interface BoundaryContext {
   readonly workspace: string
   readonly trusted: boolean
+  readonly home?: string
   readonly forbiddenWriteRoots: readonly string[]
   readonly forbiddenReadRoots: readonly string[]
+  readonly scopePolicy?: ScopePolicy
+  readonly maxFiles?: number
+  readonly allowedCommands?: readonly string[]
+  readonly forbiddenCommands?: readonly string[]
 }
 
 export function createBoundaryContext(
@@ -59,6 +66,7 @@ export function createBoundaryContext(
   resolvedPaths: Paths,
   config: StandaloneConfig,
   env: NodeJS.ProcessEnv = process.env,
+  contract?: TaskContract,
 ): BoundaryContext {
   const canonical = canonicalWorkspace(workspace)
   const trust = readTrust(path.join(resolvedPaths.config, "trust.json"))
@@ -78,25 +86,63 @@ export function createBoundaryContext(
   }
 
   const home = env["HOME"] ?? env["USERPROFILE"] ?? homedir()
-  const foreignCredentialRoots = [
+  const rawCredentialRoots = [
     path.join(home, ".ssh"),
     path.join(home, ".gnupg"),
     path.join(home, ".aws"),
-  ].map((p) => physicalPath(p))
+    path.join(home, ".kube"),
+    path.join(home, ".docker", "config.json"),
+    path.join(home, ".npmrc"),
+    path.join(home, ".netrc"),
+    path.join(home, ".git-credentials"),
+  ]
+  if (process.platform === "win32" || env["APPDATA"] || env["LOCALAPPDATA"]) {
+    const appData = env["APPDATA"] ?? path.join(home, "AppData", "Roaming")
+    const localAppData = env["LOCALAPPDATA"] ?? path.join(home, "AppData", "Local")
+    rawCredentialRoots.push(
+      path.join(appData, "npmrc"),
+      path.join(home, ".ssh"),
+      path.join(home, ".aws"),
+      path.join(localAppData, "GitCredentialManager"),
+    )
+  }
+  const foreignCredentialRoots = rawCredentialRoots.map((p) => physicalPath(p))
 
   const gitDir = physicalPath(path.join(canonical, ".git"))
+  const forbiddenWriteRoots = [gitDir, ...protectedRoots, ...keyFileRoots, ...foreignCredentialRoots]
+  const scopePolicy = contract
+    ? compileContractScopePolicy(contract, canonical, forbiddenWriteRoots)
+    : undefined
 
   return {
     workspace: canonical,
     trusted,
+    home,
     forbiddenReadRoots: [...protectedRoots, ...keyFileRoots, ...foreignCredentialRoots],
-    forbiddenWriteRoots: [gitDir, ...protectedRoots, ...keyFileRoots, ...foreignCredentialRoots],
+    forbiddenWriteRoots,
+    ...(scopePolicy ? { scopePolicy } : {}),
+    ...(contract?.constraints.maxFiles !== undefined ? { maxFiles: contract.constraints.maxFiles } : {}),
+    ...(contract?.constraints.allowedCommands !== undefined
+      ? { allowedCommands: contract.constraints.allowedCommands }
+      : {}),
+    ...(contract?.constraints.forbiddenCommands !== undefined
+      ? { forbiddenCommands: contract.constraints.forbiddenCommands }
+      : {}),
   }
 }
 
 export type PathCheckResult =
   | { readonly allow: true; readonly resolvedPath: string }
   | { readonly allow: false; readonly reason: string; readonly resolvedPath?: string }
+
+function expandHomePath(rawPath: string, homeDir?: string): string {
+  const base = homeDir ?? homedir()
+  if (rawPath === "~") return base
+  if (rawPath.startsWith("~/") || rawPath.startsWith("~\\")) {
+    return path.join(base, rawPath.slice(2))
+  }
+  return rawPath
+}
 
 export function checkWorkspaceReadPath(
   boundary: BoundaryContext,
@@ -105,9 +151,10 @@ export function checkWorkspaceReadPath(
   if (rawPath.trim() === "") {
     return { allow: false, reason: "a readable path is required" }
   }
+  const expanded = expandHomePath(rawPath, boundary.home)
   let target: string
   try {
-    target = physicalPath(path.resolve(boundary.workspace, rawPath))
+    target = physicalPath(path.resolve(boundary.workspace, expanded))
   } catch {
     return { allow: false, reason: `could not resolve path '${rawPath}' safely` }
   }
@@ -141,9 +188,10 @@ export function checkWorkspaceWritePath(
   if (rawPath.trim() === "") {
     return { allow: false, reason: "a writable file path is required" }
   }
+  const expanded = expandHomePath(rawPath, boundary.home)
   let target: string
   try {
-    target = physicalPath(path.resolve(boundary.workspace, rawPath))
+    target = physicalPath(path.resolve(boundary.workspace, expanded))
   } catch {
     return { allow: false, reason: `could not resolve path '${rawPath}' safely` }
   }
@@ -161,10 +209,17 @@ export function checkWorkspaceWritePath(
       reason: `'${rawPath}' resolves to protected path ${target} (.git internals, Bashwink state, or credential file) and cannot be modified.`,
     }
   }
+  if (boundary.scopePolicy && !canWrite(boundary.scopePolicy, target)) {
+    return {
+      allow: false,
+      resolvedPath: target,
+      reason: `ScopeFence: '${rawPath}' (${path.relative(boundary.workspace, target)}) is outside active contract allowedPaths / matches forbiddenPaths.`,
+    }
+  }
   return { allow: true, resolvedPath: target }
 }
 
-const SECRET_ENV_PATTERN =
+export const SECRET_ENV_PATTERN =
   /(?:API[_-]?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE[_-]?KEY|^OPENAI_|^ANTHROPIC_|^OPENROUTER_|^GEMINI_|^GOOGLE_GENERATIVE_AI_|^CMD_API_KEY$|^OPENCODE_)/i
 
 /** Minimal child environment for `run_command` — never passes provider credentials or keys. */
@@ -218,20 +273,122 @@ export function createStandaloneRecorder(
   evidenceDir: string,
   _runId: string,
   activeSecret?: string,
+  extraSecrets: readonly string[] = [],
 ): EvidenceRecorder {
   mkdirSync(evidenceDir, { recursive: true, mode: 0o700 })
-  if (activeSecret) registerSecretValues([activeSecret])
-  return new EvidenceRecorder({ directory: evidenceDir, file: "evidence.jsonl" })
+  const secretValues = [
+    ...(activeSecret && activeSecret.length >= 4 ? [activeSecret] : []),
+    ...extraSecrets.filter((s) => s.length >= 4),
+  ]
+  return new EvidenceRecorder({
+    directory: evidenceDir,
+    file: "evidence.jsonl",
+    ...(secretValues.length > 0 ? { secretValues } : {}),
+  })
 }
 
-export function saveRunRecord(dataDir: string, record: RunSummaryRecord): string {
+export function sanitizeRunSummary(record: RunSummaryRecord, activeSecret?: string): RunSummaryRecord {
+  const scrub = (text: string) => sanitizeSecretText(text, activeSecret)
+  return {
+    ...record,
+    prompt: scrub(record.prompt),
+    ...(record.stopReason !== undefined ? { stopReason: scrub(record.stopReason) } : {}),
+    commands: record.commands.map((c) => ({
+      ...c,
+      command: scrub(c.command),
+      args: c.args.map(scrub),
+    })),
+    actions: record.actions.map((a) => ({
+      ...a,
+      summary: scrub(a.summary),
+    })),
+    ...(record.proofPack
+      ? {
+          proofPack: {
+            ...record.proofPack,
+            checks: record.proofPack.checks.map((ch) => ({
+              ...ch,
+              name: scrub(ch.name),
+              ...(ch.command !== undefined ? { command: scrub(ch.command) } : {}),
+            })),
+            unverifiedReasons: record.proofPack.unverifiedReasons.map(scrub),
+          },
+        }
+      : {}),
+  }
+}
+
+export function saveRunRecord(
+  dataDir: string,
+  record: RunSummaryRecord,
+  activeSecret?: string,
+): string {
   const runsDir = path.join(dataDir, "runs")
   mkdirSync(runsDir, { recursive: true, mode: 0o700 })
-  const target = path.join(runsDir, `${record.runId}.json`)
-  const temp = path.join(runsDir, `.${record.runId}.${randomBytes(4).toString("hex")}.tmp`)
-  writeFileSync(temp, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600, encoding: "utf8" })
+  const clean = sanitizeRunSummary(record, activeSecret)
+  const target = path.join(runsDir, `${clean.runId}.json`)
+  const temp = path.join(runsDir, `.${clean.runId}.${randomBytes(4).toString("hex")}.tmp`)
+  writeFileSync(temp, `${JSON.stringify(clean, null, 2)}\n`, { mode: 0o600, encoding: "utf8" })
   renameSync(temp, target)
   return target
+}
+
+export function loadRunRecord(dataDir: string, runId?: string): RunSummaryRecord | undefined {
+  const runsDir = path.join(dataDir, "runs")
+  if (!existsSync(runsDir)) return undefined
+  if (runId) {
+    const file = path.join(runsDir, `${runId}.json`)
+    if (!existsSync(file)) return undefined
+    try {
+      return JSON.parse(readFileSync(file, "utf8")) as RunSummaryRecord
+    } catch {
+      return undefined
+    }
+  }
+  const files = readdirSync(runsDir)
+    .filter((f) => f.endsWith(".json") && !f.startsWith("."))
+    .sort()
+  const latest = files.at(-1)
+  if (!latest) return undefined
+  try {
+    return JSON.parse(readFileSync(path.join(runsDir, latest), "utf8")) as RunSummaryRecord
+  } catch {
+    return undefined
+  }
+}
+
+export function purgeExpiredArtifacts(
+  dataDir: string,
+  ttlDays: number,
+  nowMs = Date.now(),
+): { readonly deletedRuns: number; readonly deletedSessions: number } {
+  if (!Number.isFinite(ttlDays) || ttlDays < 0) {
+    throw new Error(`ttlDays must be a non-negative finite number (got ${ttlDays})`)
+  }
+  const cutoffMs = nowMs - ttlDays * 86_400_000
+  const purgeDir = (subdir: "runs" | "sessions"): number => {
+    const dir = path.join(dataDir, subdir)
+    if (!existsSync(dir)) return 0
+    let removed = 0
+    for (const entry of readdirSync(dir)) {
+      if (!entry.endsWith(".json") || entry.startsWith(".")) continue
+      const full = path.join(dir, entry)
+      try {
+        const st = statSync(full)
+        if (st.mtimeMs < cutoffMs) {
+          unlinkSync(full)
+          removed += 1
+        }
+      } catch {
+        // Ignore transient or unreadable files.
+      }
+    }
+    return removed
+  }
+  return {
+    deletedRuns: purgeDir("runs"),
+    deletedSessions: purgeDir("sessions"),
+  }
 }
 
 export function findMissingFiles(files: readonly string[]): string[] {
@@ -669,10 +826,34 @@ export function assessActionSafety(
 
   const base = path.basename(targetOrCommand.trim()).toLowerCase()
   const argJoined = args.join(" ")
+  const hasEvalOrCodeArg = args.some(
+    (a) =>
+      a === "-e" ||
+      a === "-c" ||
+      a === "--eval" ||
+      a.startsWith("--eval=") ||
+      a.startsWith("-c") ||
+      a.startsWith("-e"),
+  )
+  const hasFindExec =
+    base === "find" && args.some((a) => a === "-exec" || a === "-execdir" || a === "-ok")
+  const hasGitConfigOverride =
+    base === "git" && args.some((a) => a === "-c" || a.startsWith("-c") || a === "--config-env")
   const inlineExecShell =
-    (base === "sh" || base === "bash" || base === "zsh" || base === "dash") ||
+    base === "sh" ||
+    base === "bash" ||
+    base === "zsh" ||
+    base === "dash" ||
+    base === "fish" ||
+    base === "pwsh" ||
+    base === "powershell" ||
+    base === "cmd" ||
+    base === "env" ||
+    base === "xargs" ||
+    hasFindExec ||
+    hasGitConfigOverride ||
     ((base === "node" || base === "python" || base === "python3" || base === "perl" || base === "ruby") &&
-      args.some((a) => a === "-e" || a === "-c" || a === "--eval"))
+      hasEvalOrCodeArg)
 
   if (inlineExecShell) {
     return {

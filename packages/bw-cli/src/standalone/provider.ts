@@ -469,7 +469,7 @@ function buildAuthHeaders(
   const headers: Record<string, string> = {
     ...customHeaders,
     "Content-Type": "application/json",
-    "User-Agent": "bashwink-standalone/0.2.0-alpha.1",
+    "User-Agent": "bashwink-standalone/0.2.0-alpha.2",
   }
   if (protocol === "anthropic-messages") {
     if (!Object.keys(headers).some((k) => k.toLowerCase() === "anthropic-version")) {

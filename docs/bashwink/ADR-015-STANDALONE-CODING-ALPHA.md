@@ -7,7 +7,7 @@
 
 - **Previous candidate commit:** `e4d675111fc93906803dd638af4d36eaf6ad91f0` (`local-engine/task-0`)
 - **Previous candidate artifact:** `bashwink-0.1.0-alpha.1.tgz` (`84909090` bytes, `sha256: 347fa737d65722b0afd67c8d742456d150c7078801a77c9d9b0944551c596ea6`)
-- **Active standalone prerelease version:** `0.2.0-alpha.1` (distinct from `0.1.0-alpha.1` so npm and testers can tell the standalone Node build from the legacy fork)
+- **Active standalone prerelease version:** `0.2.0-alpha.2` (distinct from `0.1.0-alpha.1` so npm and testers can tell the standalone Node build from the legacy fork; bumped from `0.2.0-alpha.1` for Phase 2 safeguards)
 
 ## Architecture Decision
 

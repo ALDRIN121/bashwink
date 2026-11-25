@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Native Windows ConPTY terminal end-to-end test for standalone Bashwink (0.2.0-alpha.1).
+  Native Windows ConPTY terminal end-to-end test for standalone Bashwink (0.2.0-alpha.2).
 .DESCRIPTION
   Uses Win32 CreatePseudoConsole + a local System.Net.HttpListener loopback mock server to test:
     1. Clean tarball install into a temporary npm global prefix
@@ -19,7 +19,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 if ([string]::IsNullOrWhiteSpace($Tarball)) {
-  $Tarball = Join-Path $RepoRoot "build\standalone\bashwink-0.2.0-alpha.1.tgz"
+  $Tarball = Join-Path $RepoRoot "build\standalone\bashwink-0.2.0-alpha.2.tgz"
 }
 if (-not (Test-Path $Tarball)) {
   node (Join-Path $PSScriptRoot "build.mjs")

@@ -1,20 +1,21 @@
 # Bashwink next steps
 
-**Current mission:** standalone Node 22+ coding alpha (`v0.2.0-alpha.1`, [ADR-015](ADR-015-STANDALONE-CODING-ALPHA.md)). The older fork baseline (`0.1.0-alpha.1`, `e4d6751`) is preserved as the rollback pin.
+**Current mission:** standalone Node 22+ coding alpha (`v0.2.0-alpha.2`, [ADR-015](ADR-015-STANDALONE-CODING-ALPHA.md)). The older fork baseline (`0.1.0-alpha.1`, `e4d6751`) is preserved as the rollback pin.
 
-## Standalone alpha (`v0.2.0-alpha.1`) — macOS arm64 verified; cross-platform & Phase 2 gate open
+## Standalone alpha (`v0.2.0-alpha.2`) — Phase 2 implemented & evaluated on `darwin-arm64`; cross-platform & live-provider gate items open
 
-Verified locally on macOS Apple Silicon (`darwin-arm64`, tested on lowest supported Node `v22.13.0` and `v22.23.2`):
-- `npm run test:standalone` (16/16 unit & loop tests incl. cost-cap overrun regression)
+Verified locally on macOS Apple Silicon (`darwin-arm64`, `Node v22.23.2`):
+- **16/16 Phase 2 tasks** implemented and verified on the standalone Node `>=22.13.0` runtime (`ADR-018` / `ADR-019`): `BW-017`, `BW-018`, `BW-020`, `BW-055`–`BW-061`, `BW-066`, `BW-067`, `BW-075`, `BW-076`, `BW-084`, `BW-091`.
+- `npm run test:standalone` (39/39 unit, Phase 2 guard, permission-mode, and real PTY widget tests)
+- `bun test packages/bw-cli/test/contract.test.ts packages/bw-cli/test/contract-cli.test.ts packages/bw-cli/test/usage-guard.test.ts packages/bw-evidence` (133/133 shared-module regression tests)
 - `npm run test:standalone:install` (build, audit, space prefix, upgrade, corrupt tarball, uninstall)
-- `npm run test:standalone:e2e` (real PTY onboarding with ambient `OPENAI_API_KEY`, process-level egress probe blocking any host before submission, setup cancel, loopback prompt, Git red-to-green fix + independent test rerun, declined edit, exit-9 failure, Ctrl+C cancellation)
+- `npm run test:standalone:e2e` (12/12 real PTY adversarial + lifecycle scenarios)
 - `npm run test:standalone:independence` (clean clone with `vendor/`, `node_modules/`, `build/`, OpenCode, Hermes, Pi, and Bun physically absent)
 
-Remaining actions before expanding platform support or evaluating the Phase 2 gate:
-1. Run `npm run test:standalone`, `npm run test:standalone:install`, `npm run test:standalone:independence` (and `test:standalone:e2e` on Linux/macOS Intel) on `linux-x64`, `linux-arm64`, `darwin-x64`, and `win32-x64`, plus manual Windows console/ConPTY interactive testing (`Ctrl+C`, setup, red-to-green coding, uninstall).
-2. Run a bounded authorized live-provider interactive session and record real endpoint evidence.
-3. Explicitly decide if/when to remove `vendor/engine/` and legacy OpenCode runtime paths in a separate authorized cleanup commit (zero destructive deletions made).
-4. Complete open Phase 2 tasks (`BW-018`, `BW-056`, `BW-057`, `BW-058`, `BW-060`, `BW-061`, `BW-066`, `BW-067`, `BW-075`, `BW-076`, `BW-084`, `BW-020`) and evaluate the Phase 2 gate.
+Remaining actions before external distribution or starting Phase 3:
+1. Run `npm run test:standalone`, `npm run test:standalone:install`, `npm run test:standalone:independence` (and `test:standalone:e2e` on Linux/macOS Intel + Windows native ConPTY) on `linux-x64`, `linux-arm64`, `darwin-x64`, and `win32-x64`.
+2. Run a bounded authorized live-provider interactive session against the Phase 2 standalone build and record real endpoint evidence.
+3. Explicitly authorize if/when to start Phase 3 (Execution isolation & review/verify stack) or publish packages (`do not publish or push` without explicit approval).
 
 ---
 

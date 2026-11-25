@@ -20,6 +20,7 @@
  * (ADR-008), and every rule here is one a reviewer should be able to read.
  */
 
+import { createHash } from "node:crypto"
 import type { Plan } from "./plan.js"
 
 export const CONTRACT_VERSION = 1
@@ -34,15 +35,33 @@ export interface ContractCriterion {
   readonly statement: string
   /** A required criterion is part of the definition of done; optional ones are advisory. */
   readonly required: boolean
-  /** Plan task whose work this criterion proves. */
+  /** Plan task whose work this criterion proves ("standalone" for standalone contracts). */
   readonly task: string
   /** Declared check on that task; evidence is whatever that check observed. */
   readonly check: string
+  /** Optional standalone verification command associated with this criterion. */
+  readonly command?: string
   /**
    * Persisted lifecycle status. Set when reading a contract back from the store; ignored on
    * write, where the status lives in the `criterion` table and is moved only by evidence.
    */
   readonly status?: CriterionStatus
+}
+
+export interface ContractAssumption {
+  readonly id: string
+  readonly statement: string
+  readonly blocking: boolean
+  readonly resolved: boolean
+  readonly resolution?: string
+}
+
+export interface ContractQuestion {
+  readonly id: string
+  readonly question: string
+  readonly blocking: boolean
+  readonly resolved: boolean
+  readonly answer?: string
 }
 
 export interface ContractConstraints {
@@ -69,6 +88,8 @@ export interface TaskContract {
   readonly negativeRequirements: readonly string[]
   readonly criteria: readonly ContractCriterion[]
   readonly constraints: ContractConstraints
+  readonly assumptions?: readonly ContractAssumption[]
+  readonly openQuestions?: readonly ContractQuestion[]
   readonly approval: ContractApproval
   readonly approvedBy?: string
   readonly approvedAt?: string
@@ -163,8 +184,12 @@ export function validateContract(value: unknown, plan?: Plan): ContractValidatio
     add("v", `unsupported version ${String(value.v)}; expected ${CONTRACT_VERSION}`)
   if (typeof value.id !== "string" || !ID_PATTERN.test(value.id))
     add("id", "must look like 'ctr_<hex8+>'")
-  if (typeof value.planId !== "string" || value.planId.trim() === "")
-    add("planId", "must reference a plan")
+  if (plan !== undefined) {
+    if (typeof value.planId !== "string" || value.planId.trim() === "")
+      add("planId", "must reference a plan")
+  } else if (value.planId !== undefined && (typeof value.planId !== "string" || value.planId.trim() === "")) {
+    add("planId", "must be a non-empty string when provided")
+  }
   if (typeof value.objective !== "string" || value.objective.trim() === "")
     add("objective", "must be a non-empty statement of what the work achieves")
   if (typeof value.createdAt !== "string" || Number.isNaN(Date.parse(value.createdAt)))
@@ -255,10 +280,19 @@ export function validateContract(value: unknown, plan?: Plan): ContractValidatio
       if (typeof raw["statement"] !== "string" || raw["statement"].trim() === "")
         add(`${at}.statement`, "must state what passing means")
       if (typeof raw["required"] !== "boolean") add(`${at}.required`, "must be a boolean")
-      if (typeof raw["task"] !== "string" || raw["task"].trim() === "")
-        add(`${at}.task`, "must name the plan task this criterion proves")
-      if (typeof raw["check"] !== "string" || raw["check"].trim() === "")
-        add(`${at}.check`, "must name the declared check that produces the evidence")
+      if (plan !== undefined) {
+        if (typeof raw["task"] !== "string" || raw["task"].trim() === "")
+          add(`${at}.task`, "must name the plan task this criterion proves")
+        if (typeof raw["check"] !== "string" || raw["check"].trim() === "")
+          add(`${at}.check`, "must name the declared check that produces the evidence")
+      } else {
+        if (raw["task"] !== undefined && (typeof raw["task"] !== "string" || raw["task"].trim() === ""))
+          add(`${at}.task`, "must be a non-empty string when provided")
+        if (raw["check"] !== undefined && (typeof raw["check"] !== "string" || raw["check"].trim() === ""))
+          add(`${at}.check`, "must be a non-empty string when provided")
+      }
+      if (raw["command"] !== undefined && (typeof raw["command"] !== "string" || raw["command"].trim() === ""))
+        add(`${at}.command`, "must be a non-empty string when provided")
       if (raw["status"] !== undefined && !isCriterionStatus(raw["status"]))
         add(`${at}.status`, `must be one of ${STATUSES.join(", ")}`)
 
@@ -277,6 +311,32 @@ export function validateContract(value: unknown, plan?: Plan): ContractValidatio
     }
     if (!value.criteria.some((raw) => isRecord(raw) && raw["required"] === true))
       add("criteria", "at least one criterion must be required")
+  }
+
+  // --- assumptions & openQuestions (optional IntentLock gates) ----------
+  for (const [field, textKey] of [
+    ["assumptions", "statement"],
+    ["openQuestions", "question"],
+  ] as const) {
+    const rawList = value[field]
+    if (rawList === undefined) continue
+    if (!Array.isArray(rawList)) {
+      add(field, "must be an array")
+      continue
+    }
+    for (const [index, raw] of rawList.entries()) {
+      const at = `${field}[${index}]`
+      if (!isRecord(raw)) {
+        add(at, "must be an object")
+        continue
+      }
+      if (typeof raw["id"] !== "string" || raw["id"].trim() === "")
+        add(`${at}.id`, "must be a non-empty string")
+      if (typeof raw[textKey] !== "string" || raw[textKey].trim() === "")
+        add(`${at}.${textKey}`, "must be a non-empty string")
+      if (typeof raw["blocking"] !== "boolean") add(`${at}.blocking`, "must be a boolean")
+      if (typeof raw["resolved"] !== "boolean") add(`${at}.resolved`, "must be a boolean")
+    }
   }
 
   // --- approval ----------------------------------------------------------
@@ -310,12 +370,13 @@ export const CRITERION_TRANSITIONS: Readonly<Record<CriterionStatus, readonly Cr
 
 export class InvalidCriterionTransitionError extends Error {
   readonly code = "criterion_transition_invalid"
-  constructor(
-    readonly from: CriterionStatus,
-    readonly to: CriterionStatus,
-  ) {
+  readonly from: CriterionStatus
+  readonly to: CriterionStatus
+  constructor(from: CriterionStatus, to: CriterionStatus) {
     super(`criterion cannot move from '${from}' to '${to}'`)
     this.name = "InvalidCriterionTransitionError"
+    this.from = from
+    this.to = to
   }
 }
 
@@ -329,11 +390,13 @@ export function assertCriterionTransition(from: CriterionStatus, to: CriterionSt
 
 export class ContractInvalidError extends Error {
   readonly code = "contract_invalid"
-  constructor(readonly issues: readonly ContractIssue[]) {
+  readonly issues: readonly ContractIssue[]
+  constructor(issues: readonly ContractIssue[]) {
     super(
       `contract is invalid: ${issues.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`,
     )
     this.name = "ContractInvalidError"
+    this.issues = issues
   }
 }
 
@@ -371,9 +434,10 @@ export function assertContract(value: unknown, plan?: Plan): asserts value is Ta
 
 /** Deterministic id, readable in a log and stable for the same plan + objective. */
 export function contractId(planId: string, objective: string, createdAt: string): string {
-  const hasher = new Bun.CryptoHasher("sha256")
-  hasher.update(`${planId}\u0000${objective}\u0000${createdAt}`)
-  return `ctr_${hasher.digest("hex").slice(0, 12)}`
+  return `ctr_${createHash("sha256")
+    .update(`${planId}\u0000${objective}\u0000${createdAt}`)
+    .digest("hex")
+    .slice(0, 12)}`
 }
 
 /**

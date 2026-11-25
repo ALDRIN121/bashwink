@@ -1809,3 +1809,18 @@ Reproduced pre-rewrite onboarding defect on `packages/bw-cli/src/bin.ts` (`2817d
 
 - **Non-interactive stdout/stderr (exit 0):** printed legacy help forwarding (`"run the agent using a private local OpenCode server"`).
 - **Interactive PTY against `build/local-engine/darwin-arm64/dist/cli-darwin-arm64/bin/opencode`:** after trust confirmation, rendered OpenCode's TUI (`Ask anything...`) and silently selected `Build · GPT-6.1 Terra OpenAI` from `OPENAI_API_KEY` without Bashwink setup (exited `130` on SIGTERM).
+
+### 2026-11-26 — Phase 2 standalone verification (`v0.2.0-alpha.2`, `darwin-arm64`, Node `v22.23.2`)
+
+Executed locally on Apple Silicon (`darwin-arm64`, `Node v22.23.2`, loopback mock provider + real `python3` PTY harness; zero live paid-provider calls; Linux, Windows, and Intel macOS unverified locally):
+
+| Command | Exit | Observed result |
+| --- | ---: | --- |
+| `npm run typecheck` | 0 | Clean `tsc --noEmit` across `packages/bw-evidence` and `packages/bw-cli`. |
+| `npm run lint` | 0 | `oxlint --deny-warnings packages`: 0 warnings, 0 errors (115 files). |
+| `npm run test:standalone` | 0 | 39/39 unit, permission-mode, Phase 2 guard (`phase2-guards.test.ts`), and real PTY widget tests pass. |
+| `bun test packages/bw-cli/test/contract.test.ts packages/bw-cli/test/contract-cli.test.ts packages/bw-cli/test/usage-guard.test.ts packages/bw-evidence` | 0 | 133/133 shared-module regression tests pass (`406 expect()` assertions). |
+| `npm run test:standalone:install` | 0 | Clean tarball build (`24` compiled JS files, `0` runtime npm deps), audit, space-prefix install, upgrade preservation, corrupt-tarball resilience, and clean uninstall. |
+| `npm run test:standalone:e2e` | 0 | 12/12 real PTY adversarial + lifecycle scenarios against installed binary (onboarding egress=0, provider isolation, Git red->green + `ProofPack` `verified`, declined edit + exit-9 `ClaimGuard`, `Ctrl+C` + child PID reaping, fake-success downgrade to `done_unverified`, `TestGuard` `.skip` block under `accept-edits`, poisoned `README.md`/workspace configs + non-ASCII `proj ü 用户`, `IntentLock` `ScopeFence`, `--flag=path`/`~/` escapes, canary redaction across terminal/`evidence.jsonl`/`sessions/*.json`/`runs/*.json`, and 3-failure retry stop + `evidence export`/`purge`). |
+| `npm run test:standalone:independence` | 0 | Clean checkout with `vendor/`, `node_modules/`, `build/`, OpenCode, Hermes, Pi, and Bun physically absent passes install, 39/39 unit tests, and Git red->green coding. |
+| `python3 scripts/generate_status_summary.py --check && python3 scripts/verify_bashwink_docs.py` | 0 | Generated status summary and docs verification pass after manifest refresh (`refresh_docs_manifest.py --write`). |

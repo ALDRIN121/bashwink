@@ -248,7 +248,7 @@ test("Hermes-style setup supports pasted API key (0600 key file), live /models f
   const dir = mkdtempSync(path.join(tmpdir(), "bw-hermes-wizard-"))
   try {
     const seenRequests: Array<{ url: string; auth: string | undefined; method: string | undefined }> = []
-    const mockFetch: typeof fetch = async (input, init) => {
+    const mockFetch = (async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url
       const hdrs = (init?.headers ?? {}) as Record<string, string>
       seenRequests.push({ url, auth: hdrs["Authorization"], method: init?.method })
@@ -265,7 +265,7 @@ test("Hermes-style setup supports pasted API key (0600 key file), live /models f
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       )
-    }
+    }) as typeof fetch
 
     // 1. Cancel after entering API key leaves ZERO key file and ZERO standalone.json
     const cancelled = scriptedIO(["openai", "", "4", "sk-hermes-cancel-secret", "1", "n"])

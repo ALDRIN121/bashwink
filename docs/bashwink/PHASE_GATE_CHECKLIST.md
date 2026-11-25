@@ -4,12 +4,20 @@
 **Phase 1: 10/10 tasks Done, 4/4 release criteria verified; 11/11 CI jobs green on both
 supported platforms. Gate PASSED — revalidated 2026-11-23 after the silent-plugin-load
 investigation (ADR-010).**
-**Phase 2: 3/16 tasks Done (BW-055, BW-059, BW-091). Gate NOT evaluated. Phases 3–7: not started.**
-**BW-091 (provider/model integration) is now a register task in P2, Done — see
-`LLM_INTEGRATION_AUDIT.md`. It does not move the Phase 2 gate, which remains NOT evaluated.**
+**Phase 2: 16/16 tasks Done on `darwin-arm64` (standalone Node >=22.13.0 runtime, ADR-018 / ADR-019). Gate CONDITIONAL PASS locally (`darwin-arm64`, real PTY + loopback mock provider); cross-platform (`linux-x64`, `linux-arm64`, `darwin-x64`, `win32-x64`) and live paid-provider runs UNVERIFIED / BLOCKED locally.** Phases 3–7: not started.
 
-Last evaluated 2026-11-23 after real GitHub Actions runs on both supported platforms
-(Phase 0 and Phase 1), and a local real-runtime pass for the Phase 1 revalidation.
+Last evaluated 2026-11-26 after local Phase 2 standalone verification (`darwin-arm64`: 39/39 unit/PTY tests, 133/133 Bun shared-module regression tests, `test:standalone:install`, 12/12 `test:standalone:e2e`, `test:standalone:independence`), plus earlier real GitHub Actions runs on Phase 0 and Phase 1.
+
+## Phase 2 — Evidence-first safeguards (Standalone v0.2.0-alpha.2 gate evaluation)
+
+- [x] **12/12 initial fixed fixtures reach expected states under pinned test conditions (`darwin-arm64`).** Verified against the installed compiled standalone binary via `npm run test:standalone:e2e` (12/12 real PTY scenarios covering onboarding egress=0, provider isolation, Git red->green + ProofPack `verified`, declined edit + exit-9 failure, `Ctrl+C` + child PID termination, fake `"All tests pass!"` downgrade, `TestGuard` `.skip` block under `accept-edits`, poisoned `README.md` + malicious workspace `standalone.json`/`opencode.json` in `proj ü 用户`, `IntentLock` `ScopeFence` outside write + symlink block, compound-arg credential escape, canary redaction, and budget/3-failure retry stop + `evidence export`/`purge`).
+- [x] **Zero false-verified receipts, unauthorized protected-test weakening, or canary leaks in the fixture suite.** Verified across both `phase2-guards.test.ts` (39/39 standalone suite) and `test:standalone:e2e` Scenario 6/7/11 (`evidence.jsonl`, `sessions/*.json`, `runs/*.json`, terminal output).
+- [x] **Required unrun tests are `not_run` / `unverified`, never marked passed.** Declined commands and missing contract criteria record `status: "not_run"` in `ProofPackManifest`; `ClaimGuard` structurally downgrades to `done_unverified` or `inconclusive` whenever a check failed, was declined, ran unverified edits, or failed `TestGuard` / chain verification.
+- [x] **Untrusted repository text cannot obtain elevated tool permissions.** `TrustZones` escapes XML/tag breakouts (`<trust_zone nonce=...>`, `<untrusted>`) and workspace config files (`README.md`, `AGENTS.md`, `standalone.json`, `opencode.json`) cannot mutate `trust.json`, `permissions.json`, or `BoundaryContext`.
+- [x] **Alpha package installation works on advertised target environment (`darwin-arm64`).** `npm run test:standalone:install` and `npm run test:standalone:independence` pass on macOS Apple Silicon (`Node v22.23.2`, zero `vendor/`/`node_modules/`/`bun`/OpenCode/Hermes/Pi dependencies).
+- [ ] **Cross-platform & live paid-provider Phase 2 qualification (UNVERIFIED / BLOCKED locally).** `linux-x64`, `linux-arm64`, `darwin-x64`, and `win32-x64` standalone Phase 2 runs and a bounded live paid-provider Phase 2 session have not yet been executed on external hosts or with live API credentials.
+
+**Gate Verdict (Phase 2):** **CONDITIONAL PASS (`darwin-arm64` implementation & adversarial suite complete; external cross-platform & live-provider verification open).** Do NOT publish to npm without cross-platform CI + owner sign-off.
 
 ## Phase 1 — CLI & durable execution substrate (Internal CLI prototype gate)
 

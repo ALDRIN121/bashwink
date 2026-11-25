@@ -4,9 +4,7 @@
 Phase 1 **complete and gate-passed** — 10/10 tasks, 11/11 CI jobs green on `ubuntu-latest`
 and `macos-15` at `ad9d44e` ([run 45129207277](https://github.com/ALDRIN121/bashwink/actions/runs/45129207277)),
 and **revalidated** after the silent-plugin-load investigation (ADR-010).
-Phase 2 **in progress** — BW-055, BW-059 and BW-091 done (3 of 16). The independent baseline audit ran **369 tests** under Bun 1.4.4. The
-runtime-health job runs on the real OpenCode binary on both platforms. Phase 2's gate has
-**not** been evaluated.
+Phase 2 **16/16 tasks Done on `darwin-arm64` (standalone Node `>=22.13.0` runtime, `ADR-018` / `ADR-019`)** — all 13 open Phase 2 safeguards (`BW-017`, `BW-018`, `BW-020`, `BW-056`–`BW-058`, `BW-060`, `BW-061`, `BW-066`, `BW-067`, `BW-075`, `BW-076`, `BW-084`) are implemented and verified locally across 39 unit/PTY tests, 133 Bun regression tests, install lifecycle checks, zero-dependency independence checks, and 12/12 real PTY adversarial scenarios. Phase 2 gate evaluated as **CONDITIONAL PASS (`darwin-arm64`)**: cross-platform (`linux-x64`, `linux-arm64`, `darwin-x64`, `win32-x64`) and live paid-provider Phase 2 checks remain UNVERIFIED / BLOCKED locally.
 **BW-091 was added to the register during alpha stabilization**, so the provider/model work now has a task
 of its own instead of living in prose. The register is 91 tasks; earlier increments referenced
 90, which is a register growth, not a reassignment.
@@ -22,13 +20,13 @@ it. `--check` fails if it drifts from the register.
 | --- | ---: | ---: | ---: | ---: | ---: |
 | P0 | 9 | 9 | 0 | 0 | 0 |
 | P1 | 10 | 10 | 0 | 0 | 0 |
-| P2 | 16 | 3 | 3 | 0 | 10 |
+| P2 | 16 | 16 | 0 | 0 | 0 |
 | P3 | 19 | 0 | 1 | 0 | 18 |
 | P4 | 13 | 0 | 2 | 0 | 11 |
 | P5 | 8 | 0 | 0 | 0 | 8 |
 | P6 | 9 | 0 | 0 | 0 | 9 |
 | P7 | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **91** | **22** | **6** | **0** | **63** |
+| **Total** | **91** | **35** | **3** | **0** | **53** |
 
 <!-- END GENERATED:status -->
 
@@ -243,7 +241,22 @@ re-described.
 
 | ID | Status | What is actually true |
 | --- | --- | --- |
-| BW-055 | **Done** | TaskContract schema v2 (`contract`, `contract_revision`, `criterion`, `criterion_evidence`) with a tested rollback. Immutable numbered revisions; a revision that omits a criterion marks it `dropped` with a reason and `dropped_in_revision`, never deletes it, and a dropped id cannot be re-added. Criteria are tied to a plan task + declared check; `plan observe` links the observation (including its id and exit code) to every matching criterion and moves its status. `passed` cannot be set without a passing observation. Content revisions reset approval to draft. Once a contract exists, `plan task <id> in_progress` is refused unless it is approved, valid and covers that task. CLI: `contract new|show|approve|revise|status`. 45 new tests plus a 14/14 lifecycle fixture. |
+| BW-017 | **Done** | `renderProofSummary()` and `renderTaskOutcome()` render `Claim` status (`verified`, `done_unverified`, `inconclusive`), changed files, pass/fail/`not_run` checks, TestGuard findings, and `evidence.jsonl` / `runs/*.json` paths. |
+| BW-018 | **Done** | `ScopeFence` (`allowedPaths`, `forbiddenPaths`, `maxFiles`, `allowedCommands`, `forbiddenCommands`), `prepareRunCommand` compound-flag (`--flag=path`, `-f~/.aws/...`) and `~/` credential-store checks via exported `toolPath()`, plus hard blocks for `fish`/`pwsh`/`powershell`/`cmd`/`env`/`xargs`/`find -exec`/`git -c` and attached eval flags. |
+| BW-020 | **Done** | Standalone docs (`release/npm/README.md`, `ALPHA_TESTER_GUIDE.md`, `KNOWN_LIMITATIONS.md`, `SECURITY.md`) and `renderHelp()` updated, explicitly scoping advertised verified platform to `darwin-arm64`; zero packages published or pushed. |
+| BW-055 | **Done** | `TaskContract` schema v1 + `validateContract()` (shared with standalone contracts in `contract.ts`), zero-dep pure Node compatibility (`node:crypto`, zero parameter properties), plus original SQLite/migrations verified in Phase 2 increment (`contract.test.ts` / `contract-cli.test.ts`). |
+| BW-056 | **Done** | `contract-store.ts` persists immutable `<id>.r<rev>.json` + workspace-keyed `active.json`, enforces `evaluateContractGate()` before model calls when active or `--require-contract`, rejects unresolved blocking assumptions/questions or dirty bases on `requireCleanBase`, and adds `bashwink contract new|show|edit|approve|reject|revise|status` + `/contract`. |
+| BW-057 | **Done** | `baseline.ts` (`captureWorkspaceBaseline`, `diffProtectedBaseline`) snapshots Git HEAD/branch/dirty files and SHA-256 hashes of protected test files + `package.json` with non-Git filesystem fallback while skipping `.git`, `node_modules`, build dirs, and symlinks. |
+| BW-058 | **Done** | `test-guard.ts` detects deleted test blocks, `.skip`/`.only`, reduced/trivial assertions, neutered `package.json` `scripts.test*`, and shell-tampered protected hashes; sets `hardBlockedFromAuto: true` + `allowAlways: false` before `Always allow`/mode matching and logs shell deltas under `unconstrained`. |
+| BW-059 | **Done** | `compileContractScopePolicy` reuses `bw-evidence/src/scope.ts` (`makePolicy`, `canWrite`, `physicalPath`) inside `checkWorkspaceWritePath` and `prepareEditFile` / `prepareRunCommand`. |
+| BW-060 | **Done** | `proof.ts` builds versioned `ProofPackManifest` linking every check/criterion to `seq`/`hash`/`outputDigest` returned by `EvidenceRecorder.recordTool()`, validates integrity via `verifyProofPack()` / `bashwink proof show|verify`, and exports bundles via `bashwink evidence export`. |
+| BW-061 | **Done** | `ClaimGuard` in `proof.ts` deterministically downgrades `outcome: "completed"` to `done_unverified` or `inconclusive` (without altering `finalText`) whenever evidence chain fails, tests fail/decline, `TestGuard` fires, required criteria are `not_run`/`failed`, edits lack passing checks, or assistant text claims passing tests without exit-0 evidence. |
+| BW-066 | **Done** | `TrustZones` (`escapeTrustDelimiter`, `<trust_zone nonce=...>`, `<untrusted>`) isolates retrieved `ContextProvider` chunks and `evaluateGuardian` payloads; workspace `README.md`, `AGENTS.md`, `standalone.json`, and `opencode.json` cannot mutate `trust.json`, `permissions.json`, or `BoundaryContext`. |
+| BW-067 | **Done** | Expanded host credential roots (`~/.kube`, `~/.docker/config.json`, `~/.npmrc`, `~/.netrc`, `~/.git-credentials`, Windows `%APPDATA%\npmrc` / `GitCredentialManager`), per-instance `EvidenceRecorder.secretValues`, recursive secret scrubbing in `session.ts` (`toolCalls.input`, `commands`, `actions`), `saveRunRecord`, and terminal command prompts, plus `purgeExpiredArtifacts` (`evidence purge --ttl-days`). |
+| BW-075 | **Done** | `BudgetPilot` (`checkPreRequestBudget`, `recordCompletionUsage`) enforces `maxRequests`, `maxOutputTokens`, `maxCostUsd`, `maxElapsedMs`, and `maxGuardianRequests` across both main and `evaluateGuardian()` calls, estimates fallback cost when `usage` is omitted (`costEstimated: true`), clamps command timeouts, and parses CLI flags (`--max-*`) over `parseLimits(env)`. |
+| BW-076 | **Done** | Normalized failure & zero-diff repeated no-progress loop detector stops runaway retry/spin loops (`outcome: "budget_stopped"`) while preserving partial edits and checkpoints. |
+| BW-084 | **Done** | `scripts/standalone/test-e2e.mjs` extended to 12/12 real PTY adversarial + lifecycle scenarios (incl. child PID reaping on `Ctrl+C` and non-ASCII/space workspace `proj ü 用户`), alongside 7 new test blocks in `phase2-guards.test.ts`. |
+| BW-091 | **Done** | Standalone & legacy explicit provider/model configuration without ambient env hijack and per-call model attribution. |
 
 ## Phase 0 gate: 4 of 4 met — **PASS**
 

@@ -157,6 +157,19 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     category: "Workspace",
   },
   {
+    name: "contract",
+    aliases: [],
+    description: "Show active IntentLock contract status and criteria",
+    category: "Workspace",
+  },
+  {
+    name: "proof",
+    aliases: [],
+    description: "Show ProofPack summary and ClaimGuard status for a run",
+    category: "Workspace",
+    argumentHint: "[runId]",
+  },
+  {
     name: "help",
     aliases: ["?"],
     description: "Show interactive keyboard shortcuts & commands",
@@ -1479,6 +1492,7 @@ export interface HybridPermissionOptions {
   readonly yesMeansAcceptEdits?: boolean
   readonly defaultChoice?: ApprovalDecision
   readonly alwaysSummary?: string
+  readonly integrityWarning?: string
   readonly signal?: AbortSignal
 }
 
@@ -1557,6 +1571,11 @@ export async function askHybridPermission(
     const pillBarPlainW = choices.length * 18 + 6
     const wideInline = layout.cols >= promptText.length + (typed === "" ? pillBarPlainW : typed.length + 4)
     const lines: string[] = []
+    if (opts.integrityWarning) {
+      for (const warnLine of opts.integrityWarning.split(/\r?\n/).slice(0, 4)) {
+        lines.push(style.red(truncatePlain(`  ! ${warnLine}`, layout.cols)))
+      }
+    }
     if (wideInline) {
       const safePrompt = truncatePlain(promptText, Math.max(12, layout.cols - pillBarPlainW))
       lines.push(`${safePrompt}  ${typed === "" ? `[${bar}]` : typed}`)

@@ -264,7 +264,7 @@ function targetOfFileTool(input: unknown): string | undefined {
 }
 
 /** Match the pinned OpenCode FileAccess expansion before physical resolution. */
-function toolPath(cwd: string, input: string): string {
+export function toolPath(cwd: string, input: string): string {
   if (input === "~") return physicalPath(homedir())
   if (input.startsWith("~/")) return physicalPath(path.resolve(homedir(), `./${input.slice(2)}`))
   return physicalPath(path.resolve(cwd, input))
@@ -274,7 +274,7 @@ function invalidInput(reason: string): ScopeVerdict {
   return { allow: false, rule: "invalid-input", reason }
 }
 
-function canWrite(policy: ScopePolicy, target: string): boolean {
+export function canWrite(policy: ScopePolicy, target: string): boolean {
   return (
     policy.allowedPaths.some((root) => contains(root, target)) &&
     (policy.workspace === undefined || contains(policy.workspace, target)) &&

@@ -1,0 +1,108 @@
+﻿{
+    "machine":  {
+                    "when":  "2026-11-25T03:07:08",
+                    "windows":  "Microsoft Windows Server 2025 Datacenter",
+                    "build":  "26100",
+                    "version":  "10.0.26100",
+                    "arch":  "AMD64",
+                    "powershell":  "5.1.26100.33822",
+                    "locale":  "en-US",
+                    "user_is_admin":  true,
+                    "node":  "v22.23.5",
+                    "npm":  "10.9.9",
+                    "avx2_note":  "not probed; the OpenCode runtime needs a CPU with AVX2"
+                },
+    "tarball_sha256":  "dc362f5beb455b836550b09a287178b72364a6b79c0dc24e8a94d9d7d2a1200a",
+    "summary":  {
+                    "pass":  16,
+                    "not_run":  1,
+                    "fail":  0
+                },
+    "checks":  [
+                   {
+                       "check":  "platform: Windows x64 (AMD64)",
+                       "verdict":  "PASS",
+                       "detail":  "Microsoft Windows Server 2025 Datacenter build 26100"
+                   },
+                   {
+                       "check":  "Node.js 22 or newer is installed",
+                       "verdict":  "PASS",
+                       "detail":  "v22.23.5"
+                   },
+                   {
+                       "check":  "the tarball matches the published SHA-256",
+                       "verdict":  "PASS",
+                       "detail":  "sha256 dc362f5beb455b836550b09a287178b72364a6b79c0dc24e8a94d9d7d2a1200a"
+                   },
+                   {
+                       "check":  "npm install -g \u003ctarball\u003e succeeds",
+                       "verdict":  "PASS",
+                       "detail":  ""
+                   },
+                   {
+                       "check":  "bashwink --version works from PowerShell",
+                       "verdict":  "PASS",
+                       "detail":  "bashwink 0.1.0-alpha.1"
+                   },
+                   {
+                       "check":  "bashwink --version works from cmd.exe",
+                       "verdict":  "PASS",
+                       "detail":  "bashwink 0.1.0-alpha.1"
+                   },
+                   {
+                       "check":  "doctor finds the runtimes and the evidence plugin",
+                       "verdict":  "PASS",
+                       "detail":  "✓ OpenCode runtime: found C:\\npm\\prefix\\node_modules\\bashwink\\node_modules\\@opencode\\cli-windows-x64\\bin\\opencode.exe \r\n(pinned 2.3.2, via env)\r\n✓ Bun runtime: bun 1.4.4 on win32/x64\r\n! Model providers: no providers configured; using the runtime\u0027s built-in catalogue"
+                   },
+                   {
+                       "check":  "--sandbox is refused and starts nothing (exit 3)",
+                       "verdict":  "PASS",
+                       "detail":  "exit 3"
+                   },
+                   {
+                       "check":  "the mode is standard-native (no isolation is claimed)",
+                       "verdict":  "PASS",
+                       "detail":  ""
+                   },
+                   {
+                       "check":  "nothing was written into the project folder",
+                       "verdict":  "PASS",
+                       "detail":  ""
+                   },
+                   {
+                       "check":  "first-run state is under your user profile (C:\\Users\\runneradmin)",
+                       "verdict":  "PASS",
+                       "detail":  ""
+                   },
+                   {
+                       "check":  "trust works for a path with spaces and Unicode",
+                       "verdict":  "PASS",
+                       "detail":  "trusted C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\Bashwink Test ü 用户 2b2e8c\\proj ect ü 用户 (by tester) — shell and write actions now require per-call approval"
+                   },
+                   {
+                       "check":  "the disposable project fails its test first",
+                       "verdict":  "PASS",
+                       "detail":  ""
+                   },
+                   {
+                       "check":  "live coding task (needs -KeyFile -BaseUrl -Model)",
+                       "verdict":  "NOT_RUN",
+                       "detail":  "skipped: no provider supplied"
+                   },
+                   {
+                       "check":  "reinstalling over the existing install works",
+                       "verdict":  "PASS",
+                       "detail":  ""
+                   },
+                   {
+                       "check":  "uninstall removes the command",
+                       "verdict":  "PASS",
+                       "detail":  ""
+                   },
+                   {
+                       "check":  "uninstall leaves your project alone",
+                       "verdict":  "PASS",
+                       "detail":  ""
+                   }
+               ]
+}

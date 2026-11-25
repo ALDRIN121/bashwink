@@ -333,6 +333,15 @@ describe("shell", () => {
     expect(shellPathTokens("cp ./a/b.txt /tmp/c.txt")).toEqual(["./a/b.txt", "/tmp/c.txt"])
   })
 
+  test("Windows paths are path-shaped too: a drive letter, a UNC share and backslash traversal", () => {
+    expect(shellPathTokens('node -e x "C:\\Users\\me\\provider.key"')).toContain(
+      "C:\\Users\\me\\provider.key",
+    )
+    expect(shellPathTokens("type ..\\..\\secret.txt")).toEqual(["..\\..\\secret.txt"])
+    expect(shellPathTokens("copy \\\\server\\share\\f.txt .")).toEqual(["\\\\server\\share\\f.txt"])
+    expect(shellPathTokens("echo plain words")).toEqual([])
+  })
+
   test("a substituted path is not judged, because its value is unknowable here", () => {
     expect(shellPathTokens('cat "$TARGET/file"')).toEqual([])
   })

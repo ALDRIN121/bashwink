@@ -138,7 +138,7 @@ Check "uninstall removes the command" ($remove.code -eq 0 -and $gone.text -notma
 Check "uninstall leaves your project alone" (Test-Path (Join-Path $project "sum.js")) ""
 
 if (-not $Out) { $Out = Join-Path (Get-Location) ("bashwink-windows-qualification-" + (Get-Date).ToString("yyyyMMdd-HHmmss") + ".json") }
-([ordered]@{ machine = $info; tarball_sha256 = $actual; summary = @{ pass = @($results | Where-Object verdict -eq "PASS").Count; fail = @($results | Where-Object verdict -eq "FAIL").Count; not_run = @($results | Where-Object verdict -eq "NOT_RUN").Count }; checks = $results } | ConvertTo-Json -Depth 6) | Set-Content -Encoding UTF8 $Out
+([ordered]@{ machine = $info; tarball_sha256 = $actual; summary = @{ pass = @($results | Where-Object verdict -eq "PASS").Count; fail = @($results | Where-Object verdict -eq "FAIL").Count; not_run = @($results | Where-Object verdict -eq "NOT_RUN").Count }; checks = $results } | ConvertTo-Json -Depth 6) | ForEach-Object { [System.IO.File]::WriteAllText($Out, $_, (New-Object System.Text.UTF8Encoding $false)) }
 Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 Write-Host "`nResult file: $Out`nSend that file to the owner. It contains no key. Now do the manual checklist (WINDOWS_TESTER_CHECKLIST.md)."
 if ($script:failed -gt 0) { exit 1 } else { exit 0 }

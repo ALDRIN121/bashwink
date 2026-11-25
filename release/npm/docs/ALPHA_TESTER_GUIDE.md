@@ -27,7 +27,8 @@ bashwink auth check myprovider
 Providers that the runtime already knows (for example those listed by its own catalogue) also work with their usual
 environment variable. See `SUPPORTED_PROVIDERS.md` in the repository documents for what has and has not been tested.
 **Do not use a key you cannot afford to lose; set a spending limit at your provider.** Prefer `--key-file <path>` to
-`--env`: the model cannot read a key file, and on Windows keep it in your user profile.
+`--env`: the model's file tools cannot read a key file and Bashwink removes an `--env` key from shell commands' environment,
+but no shell check is a sandbox (see SECURITY.md). On Windows keep the key file in your user profile.
 
 Bashwink stops runaway work (300 model requests and 5 retries of one failing request per launch, by default) and prints
 requests, tokens and an estimated cost when a session ends. Add a price to see a cost and to use a dollar limit:

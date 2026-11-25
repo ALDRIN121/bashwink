@@ -1,0 +1,56 @@
+{
+  "platform": "win32",
+  "machine": "",
+  "checks": [
+    {
+      "check": "npm install -g <tarball>",
+      "verdict": "PASS",
+      "detail": "22s"
+    },
+    {
+      "check": "the command and package exist",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "bashwink --version",
+      "verdict": "PASS",
+      "detail": "bashwink 0.1.0-alpha.1"
+    },
+    {
+      "check": "doctor runs and finds the npm-installed runtimes and plugin",
+      "verdict": "FAIL",
+      "detail": "exit 0; 'te actions are denied by default\\n    fix: bashwink trust C:\\\\Users\\\\runneradmin\\\\AppData\\\\Local\\\\Temp\\\\bw-install-qehg4l3w\\\\project\\n! Execution boundary: standard-native: approved commands run with host access\\n\u00e2\u0153\u201c Docker (optional): found C:\\\\Windows\\\\system32\\\\docker.EXE\\n\\n13 checks, 9 warning(s), 0 failures\\n'"
+    },
+    {
+      "check": "--sandbox fails closed with exit 3 and starts nothing",
+      "verdict": "PASS",
+      "detail": "exit 3"
+    },
+    {
+      "check": "the execution mode is standard-native",
+      "verdict": "PASS",
+      "detail": "{\n  \"mode\": \"standard-native\",\n  \"workspace\": \"direct\",\n  \"filesystemIsolation\": false,\n  \"networkIsolation\": false,\n  \""
+    },
+    {
+      "check": "nothing was written into the project directory",
+      "verdict": "PASS",
+      "detail": "[]"
+    },
+    {
+      "check": "first-run state is under the user profile",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "npm uninstall -g removes the command and the package",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "uninstall leaves the user's state alone",
+      "verdict": "PASS",
+      "detail": ""
+    }
+  ]
+}

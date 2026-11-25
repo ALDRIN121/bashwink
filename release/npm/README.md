@@ -13,8 +13,10 @@ bashwink
 file edit, refuses file access outside the project, network tools and code execution, and records what ran. It is **not an operating-system sandbox**: a command you
 approve can do anything you can do. Work in a Git repository, keep a backup, and read each approval.
 
-Requirements: Node.js 18 or newer (for `npm`), and one of macOS (Apple Silicon or Intel), Linux (x64 or arm64), or
-Windows 11 x64. **Windows on ARM64 is not supported.** The package installs its own pinned Bun and OpenCode runtimes
+Requirements: Node.js (for `npm`; only Node 22 has been tested, 18 or newer is expected to work), and one of macOS
+(Apple Silicon or Intel), Linux (x64 or arm64), or Windows 11 x64. These are the platforms the package is built for, not
+a claim that each is qualified: `share/doc/KNOWN_LIMITATIONS.md` says what has and has not been run.
+**Windows on ARM64 is not supported.** The package installs its own pinned Bun and OpenCode runtimes
 (public packages `bun` and `@opencode/cli`). If one of them is missing, Bashwink names it and exits with status 1.
 
 First steps: `bashwink --version`, `bashwink doctor`, then the guide in `share/doc/ALPHA_TESTER_GUIDE.md`

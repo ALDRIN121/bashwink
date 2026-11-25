@@ -20,10 +20,18 @@
 
 ## Platforms
 
-- Qualified so far: macOS on Apple Silicon, **install and TUI smoke only**, on the developer's own machine (not a clean
-  machine). Linux and Windows: **not yet run**. See `SUPPORTED_PLATFORMS.md` in the repository documents.
-- Windows on ARM64 is refused. Windows x64 is the intended Windows target and has **not been qualified**.
-- Node.js 18+ and network access to the public npm registry are needed to install (the pinned runtimes are downloaded).
+- **What has been run.** With a scripted stand-in for the model (not a real one), the installed package completed an
+  automated check of install, a coding task, permissions, cancellation and limits on cloud CI machines: macOS 15 (Apple
+  Silicon) and Ubuntu (x64) passed all of it. On Windows Server 2025 (x64) most of it passed; it also found two real
+  defects (a shell path check that ignored Windows paths, and a `doctor` that could not find `git.exe`), both fixed since
+  but **not re-run on a Windows machine**, and some checks there did not run because of a test-script bug, also fixed and
+  not re-run. These are cloud runners, not clean desktops. `SUPPORTED_PLATFORMS.md` in the repository documents lists what
+  each result covers.
+- **What has not.** No physical Windows 11 desktop, Linux desktop, macOS Intel or Windows ARM64 machine has been used. The
+  interactive screen was checked automatically in a pseudo-terminal on macOS only; Windows terminal rendering, Ctrl+C in a real
+  console and closing the terminal are in the manual checklist and have not been run.
+- Windows on ARM64 is refused. Windows x64 is the intended Windows target and has **not been qualified on a physical Windows 11 machine**.
+- Node.js and network access to the public npm registry are needed to install (the pinned runtimes are downloaded). Only Node 22 was tested; 18+ is expected to work.
   Installs with `--ignore-scripts` are untested (Bun's own package finishes its install in a script).
 
 ## Product
@@ -38,7 +46,7 @@
   figures may be too low. They are an estimate from declared prices, never an invoice.
 - A live conversation with a real model, tool calls and edits has **not** been run on the installed package.
 - Large repositories, monorepos and non-Git folders are untested. Undo is Git.
-- Upgrades: reinstalling the same version over an existing install was tested on macOS; upgrading from an earlier version has not been.
+- Upgrades: reinstalling the same version over an existing install worked on macOS, Ubuntu and Windows runners; upgrading from an earlier version has not been tested.
 
 ## Licensing
 

@@ -1,0 +1,353 @@
+{
+  "platform": "darwin",
+  "machine": "arm64",
+  "python": "3.12.10",
+  "provider": "scripted mock (not a live model)",
+  "summary": {
+    "PASS": 68,
+    "FAIL": 0,
+    "NOT_RUN": 0
+  },
+  "checks": [
+    {
+      "check": "install: npm install -g <tarball> succeeds in a path with spaces and non-ASCII characters",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "coding: the fixture project really fails its tests first",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "coding: the installed command completes a scripted coding task (exit 0)",
+      "verdict": "PASS",
+      "detail": "exit 0"
+    },
+    {
+      "check": "coding: the standard-mode banner names the mode and says it is not a sandbox",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "coding: the final diff is exactly the intended fix (independently read from git)",
+      "verdict": "PASS",
+      "detail": "['M sum.js']"
+    },
+    {
+      "check": "coding: the project's tests pass afterwards (run independently, not taken from the agent's output)",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "coding: tool results went back to the model (read, edit, shell outputs)",
+      "verdict": "PASS",
+      "detail": "4 model requests"
+    },
+    {
+      "check": "coding: the model request carried a credential",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "coding: a token and request summary is printed with the allowed limit",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "coding: evidence records every tool call (before and after) for read, edit and shell",
+      "verdict": "PASS",
+      "detail": "[('edit', 'after'), ('edit', 'before'), ('read', 'after'), ('read', 'before'), ('shell', 'after'), ('shell', 'before')]"
+    },
+    {
+      "check": "coding: evidence attributes the work to the model that served it",
+      "verdict": "PASS",
+      "detail": "{'script-model'}"
+    },
+    {
+      "check": "coding: the evidence hash chain verifies with the installed verifier",
+      "verdict": "PASS",
+      "detail": "{\"ok\":true,\"entries\":9,\"head\":\"26186990e3056ae1ca4bf3282ae2cb4453871a0c3ea959c28ad79ced83bc0386\"}"
+    },
+    {
+      "check": "coding: the session is listed for continuation",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "session: continuing a session after a model switch works (exit 0)",
+      "verdict": "PASS",
+      "detail": "exit 0"
+    },
+    {
+      "check": "session: the continued request used the switched model and carried the earlier conversation",
+      "verdict": "PASS",
+      "detail": "other-model, 10 messages vs 2"
+    },
+    {
+      "check": "session: evidence attributes each model separately across the switch",
+      "verdict": "PASS",
+      "detail": "{'other-model', 'script-model'}"
+    },
+    {
+      "check": "credentials: the provider key is in no file under the profile or project, and not in the output",
+      "verdict": "PASS",
+      "detail": "[]"
+    },
+    {
+      "check": "coding: the run record is finalized with usage",
+      "verdict": "PASS",
+      "detail": "recorded"
+    },
+    {
+      "check": "credentials: an approved shell command cannot read the provider key from the environment",
+      "verdict": "PASS",
+      "detail": " KEY=[]\n"
+    },
+    {
+      "check": "credentials: the key is not in the evidence log, session store or anywhere under the profile after such a command",
+      "verdict": "PASS",
+      "detail": "[]"
+    },
+    {
+      "check": "credentials: with --key-file the model cannot read the key file, by tool or by shell",
+      "verdict": "PASS",
+      "detail": " {\"error\":{\"type\":\"unknown\",\"message\":\"bashwink scope fence: '/private/var/folders/9d/l02zfgrs7c16twd3wbpdmhkc0000gn/T/Bashwink Qual ü 用户 4v"
+    },
+    {
+      "check": "credentials: the key-file value is in no recorded file",
+      "verdict": "PASS",
+      "detail": "[]"
+    },
+    {
+      "check": "credentials: the key-file request still carried a credential",
+      "verdict": "PASS",
+      "detail": "exit 0"
+    },
+    {
+      "check": "untrusted workspace: no file is written and no command runs, even with --auto",
+      "verdict": "PASS",
+      "detail": "exit 0"
+    },
+    {
+      "check": "untrusted workspace: the refusal names the missing step (trust)",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "explicit denial: a command the user denied does not run under --auto",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "explicit denial: the control command (not denied) did run, so --auto really was approving",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "restricted contract: the shell tool is not offered to the model at all",
+      "verdict": "PASS",
+      "detail": "['edit', 'experimental_image_generate', 'glob', 'grep', 'question', 'read', 'skill', 'subagent', 'webfetch', 'websearch', 'write', 'execute']"
+    },
+    {
+      "check": "restricted contract: an in-scope write succeeds and an out-of-scope write is refused, under --auto",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "direct file operations: a write outside the workspace is refused",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "direct file operations: a read of a file outside the workspace is refused and its content never reaches the model",
+      "verdict": "PASS",
+      "detail": " {\"error\":{\"type\":\"unknown\",\"message\":\"bashwink scope fence: '../outside-write.txt' resolves to /private/var/folders/9d/l02zfgrs7c16twd3wbpd"
+    },
+    {
+      "check": "direct file operations: the control write inside the workspace succeeded",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "direct file operations: Bashwink's own config was not modified",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "unsupported tools: arbitrary code execution is not available to the model",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "unsupported tools: network tools are not offered or are refused (no fetch was made)",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "policy plugin failure: the run is refused with a non-zero status even though an earlier run left valid evidence",
+      "verdict": "PASS",
+      "detail": "good 0, broken 3"
+    },
+    {
+      "check": "policy plugin failure: the model is never contacted after the failure",
+      "verdict": "PASS",
+      "detail": "2 requests, 2 before the broken run"
+    },
+    {
+      "check": "policy plugin failure: the output says the policy plugin is the problem",
+      "verdict": "PASS",
+      "detail": "ate; see /private/var/folders/9d/l02zfgrs7c16twd3wbpdmhkc0000gn/T/Bashwink Qual ü 用户 4v291lb8/09 plugin-failure/perfil ü/.local/share/opencode/log/opencode.log "
+    },
+    {
+      "check": "server reuse: a foreign listener on the runtime's default port receives no connection, and the run works",
+      "verdict": "PASS",
+      "detail": "exit 0, 0 connections"
+    },
+    {
+      "check": "malicious repo instructions: a model that obeys them still cannot run the command without approval",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "malicious repo config: in an untrusted workspace a repository's own config cannot redirect the provider",
+      "verdict": "PASS",
+      "detail": "evil 0, configured 1"
+    },
+    {
+      "check": "sandbox selection: --sandbox fails closed (exit 3), says so, and contacts no model",
+      "verdict": "PASS",
+      "detail": "exit 3"
+    },
+    {
+      "check": "cancellation (group-interrupt): the model request was in flight before cancelling",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "cancellation (group-interrupt): the command ends promptly after the signal",
+      "verdict": "PASS",
+      "detail": "0.4s"
+    },
+    {
+      "check": "cancellation (group-interrupt): the in-flight model request is closed, so nothing keeps running or billing",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "cancellation (group-interrupt): no runtime or CLI process is left behind",
+      "verdict": "PASS",
+      "detail": "{}"
+    },
+    {
+      "check": "cancellation (group-interrupt): the run record is finalized (not left pending)",
+      "verdict": "PASS",
+      "detail": "cancelled"
+    },
+    {
+      "check": "cancellation (group-interrupt): the project is untouched",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "cancellation (launcher-only): the model request was in flight before cancelling",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "cancellation (launcher-only): the command ends promptly after the signal",
+      "verdict": "PASS",
+      "detail": "0.8s"
+    },
+    {
+      "check": "cancellation (launcher-only): the in-flight model request is closed, so nothing keeps running or billing",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "cancellation (launcher-only): no runtime or CLI process is left behind",
+      "verdict": "PASS",
+      "detail": "{}"
+    },
+    {
+      "check": "cancellation (launcher-only): the run record is finalized (not left pending)",
+      "verdict": "PASS",
+      "detail": "cancelled"
+    },
+    {
+      "check": "cancellation (launcher-only): the project is untouched",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "retries: a failing provider is retried at most BASHWINK_MAX_RETRIES times, then the work stops",
+      "verdict": "PASS",
+      "detail": "3 requests (1 + 2 retries expected), exit 4, 7s"
+    },
+    {
+      "check": "retries: the stop reason is explained and shown in the summary",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "request limit: a runaway tool loop is stopped at the limit (the one request already in flight may complete)",
+      "verdict": "PASS",
+      "detail": "7 requests reached the provider for a limit of 6; exit 4"
+    },
+    {
+      "check": "request limit: the run record says a limit stopped the run",
+      "verdict": "PASS",
+      "detail": "the request limit was reached (6 model requests in this launch; BASHWINK_MAX_REQ"
+    },
+    {
+      "check": "token limit: the run stops once the tokens the provider reported reach the limit",
+      "verdict": "PASS",
+      "detail": "4 model requests; exit 4"
+    },
+    {
+      "check": "cost limit: with a declared price the run stops at the limit and says the in-flight request was not recalled",
+      "verdict": "PASS",
+      "detail": "4 model requests; exit 4"
+    },
+    {
+      "check": "cost: the summary shows an estimated cost computed from the declared price",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "cost limit without a known price refuses to run rather than pretend to protect",
+      "verdict": "PASS",
+      "detail": "exit 4, 1 model requests"
+    },
+    {
+      "check": "limit configuration: an invalid limit is refused with exit 2 and contacts no model",
+      "verdict": "PASS",
+      "detail": "exit 2"
+    },
+    {
+      "check": "links: running from a junction/symlink to a trusted project edits the real directory",
+      "verdict": "PASS",
+      "detail": "exit 0: 'ed.txt\\n> build · script-model\\nUsage: 3 model requests of 300 allowed\\n  tokens: 230 input, 44 output\\n  cost: unknown (no price is declared for this model; add one with `bashwink auth add ... --price`)\\n'"
+    },
+    {
+      "check": "lifecycle: reinstalling over an existing install works and the command still runs",
+      "verdict": "PASS",
+      "detail": "bashwink 0.1.0-alpha.1"
+    },
+    {
+      "check": "lifecycle: a run after reinstalling works",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "lifecycle: uninstall removes the command and the package",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "lifecycle: uninstall leaves the user's own project and profile data alone",
+      "verdict": "PASS",
+      "detail": ""
+    }
+  ]
+}

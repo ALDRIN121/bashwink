@@ -284,7 +284,7 @@ def suite_credentials(q: Qual) -> None:
     with Scenario(q, "key-file", reads_the_key, key_file=True) as c:
         result = c.run("read the key file", "--auto")
         seen = " ".join(r["last_tool_result"] for r in c.mock.requests(main=True))
-        check("credentials: with --key-file the model cannot read the key file, by tool or by shell", SECOND_CANARY not in seen, seen[:140])
+        check("credentials: with --key-file neither the file tools nor an obvious shell path argument can read the key file (the shell check is best-effort, not a sandbox)", SECOND_CANARY not in seen, seen[:140])
         check("credentials: the key-file value is in no recorded file", not [h for h in c.leaked(SECOND_CANARY) if "provider.key" not in h], str(c.leaked(SECOND_CANARY)))
         check("credentials: the key-file request still carried a credential", all(r["authorization_present"] for r in c.mock.requests(main=True)), f"exit {result.returncode}")
 

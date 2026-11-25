@@ -1,3 +1,5 @@
+import type { TaskContract } from "../contract.ts"
+
 /**
  * Core plain TypeScript data types for standalone Bashwink.
  *
@@ -106,16 +108,88 @@ export interface ToolDispatchResult {
   readonly changedFile?: string
 }
 
+export type UntrustedTrustZone = "workspace_doc" | "tool_output" | "context_provider" | "git_history"
+
+export type ClaimStatus =
+  | "verified"
+  | "done_unverified"
+  | "inconclusive"
+  | "failed"
+  | "cancelled"
+  | "budget_stopped"
+
+export type ProofCheckStatus = "passed" | "failed" | "not_run"
+
+export interface WorkspaceBaseline {
+  readonly capturedAt: string
+  readonly gitHead: string | null
+  readonly gitBranch: string | null
+  readonly dirtyFiles: readonly string[]
+  readonly protectedTestHashes: Readonly<Record<string, string>>
+  readonly mode: "git" | "filesystem"
+}
+
+export interface TestIntegrityFinding {
+  readonly kind:
+    | "deleted_test"
+    | "skipped_test"
+    | "only_test"
+    | "weakened_assertion"
+    | "script_weakened"
+    | "protected_file_tampered"
+  readonly path: string
+  readonly detail: string
+  readonly removedCount?: number
+  readonly severity: "block_auto"
+}
+
+export interface ProofCheckRecord {
+  readonly id: string
+  readonly name: string
+  readonly kind: "test" | "command" | "criterion"
+  readonly status: ProofCheckStatus
+  readonly command?: string
+  readonly exitCode?: number | null
+  readonly outputDigest?: string
+  readonly evidenceSeq?: number
+  readonly evidenceHash?: string
+}
+
+export interface CriterionOutcomeRecord {
+  readonly id: string
+  readonly statement: string
+  readonly required: boolean
+  readonly status: "passed" | "failed" | "not_run" | "dropped"
+  readonly checkId?: string
+  readonly reason?: string
+}
+
+export interface ProofPackManifest {
+  readonly version: 1
+  readonly runId: string
+  readonly baseline?: WorkspaceBaseline
+  readonly checks: readonly ProofCheckRecord[]
+  readonly criteria: readonly CriterionOutcomeRecord[]
+  readonly testIntegrity: readonly TestIntegrityFinding[]
+  readonly verified: boolean
+  readonly claimStatus: ClaimStatus
+  readonly unverifiedReasons: readonly string[]
+  readonly evidenceFile: string
+  readonly evidenceEntries: number
+  readonly evidenceChainOk: boolean
+}
+
 export interface WorkspaceContextChunk {
   readonly source: string
   readonly workspace: string
   readonly content: string
   readonly untrusted: true
+  readonly trustZone?: UntrustedTrustZone
 }
 
-export type PermissionMode = "manual" | "accept-edits" | "smart" | "auto"
+export type PermissionMode = "accept-edits" | "smart" | "auto" | "manual" | "ask"
 
-export type ApprovalDecision = "once" | "always" | "reject"
+export type ApprovalDecision = "once" | "always" | "accept-edits" | "reject"
 
 export interface SavedPermissionRule {
   readonly tool: "edit_file" | "run_command"
@@ -132,6 +206,8 @@ export interface RunActionRecord {
   readonly exitCode?: number | null
   readonly signal?: string | null
   readonly target?: string
+  readonly evidenceSeq?: number
+  readonly evidenceHash?: string
 }
 
 export interface CommandOutcomeRecord {
@@ -142,6 +218,9 @@ export interface CommandOutcomeRecord {
   readonly exitCode: number | null
   readonly signal: string | null
   readonly timedOut: boolean
+  readonly outputDigest?: string
+  readonly evidenceSeq?: number
+  readonly evidenceHash?: string
 }
 
 export interface RunSummaryRecord {
@@ -155,18 +234,27 @@ export interface RunSummaryRecord {
   readonly model: string
   readonly prompt: string
   readonly outcome: "completed" | "failed" | "cancelled" | "uncertain" | "budget_stopped"
+  readonly claimStatus?: ClaimStatus
   readonly stopReason?: string
   readonly changedFiles: readonly string[]
   readonly changedTests: readonly string[]
+  readonly diffPreviews?: readonly DiffPreviewRecord[]
   readonly commands: readonly CommandOutcomeRecord[]
   readonly actions: readonly RunActionRecord[]
   readonly requests: number
+  readonly guardianRequests?: number
   readonly usage: {
     readonly inputTokens: number
     readonly outputTokens: number
     readonly totalTokens: number
     readonly costUsd?: number
+    readonly estimatedCostUsd?: number
+    readonly costEstimated?: boolean
   }
+  readonly contractId?: string
+  readonly contractRevision?: number
+  readonly baseline?: WorkspaceBaseline
+  readonly proofPack?: ProofPackManifest
   readonly evidenceFile: string
 }
 
@@ -186,6 +274,8 @@ export interface TaskBudgets {
   readonly maxRequests: number
   readonly maxOutputTokens?: number
   readonly maxCostUsd?: number
+  readonly maxElapsedMs?: number
+  readonly maxGuardianRequests?: number
   readonly commandTimeoutMs: number
   readonly repeatedFailureLimit: number
 }
@@ -195,8 +285,9 @@ export type TaskEvent =
   | { readonly type: "turn_started"; readonly step: number; readonly maxRequests: number }
   | { readonly type: "model_requested"; readonly step: number; readonly model: string; readonly endpoint: string }
   | { readonly type: "model_responded"; readonly step: number; readonly finishReason: FinishReason; readonly usage?: ModelUsage }
-  | { readonly type: "tool_proposed"; readonly callId: string; readonly tool: string; readonly summary: string; readonly preview?: string }
+  | { readonly type: "tool_proposed"; readonly callId: string; readonly tool: string; readonly summary: string; readonly preview?: string; readonly integrityWarning?: string }
   | { readonly type: "guardian_review"; readonly callId: string; readonly tool: string; readonly verdict: "APPROVE" | "DENY" | "ESCALATE"; readonly reason?: string }
+  | { readonly type: "test_guard_triggered"; readonly callId: string; readonly path: string; readonly findings: readonly TestIntegrityFinding[] }
   | { readonly type: "tool_approved"; readonly callId: string; readonly tool: string; readonly source?: string; readonly relativePath?: string; readonly resolvedPath?: string }
   | { readonly type: "tool_denied"; readonly callId: string; readonly tool: string; readonly reason: string }
   | { readonly type: "tool_completed"; readonly result: ToolDispatchResult }
@@ -212,6 +303,8 @@ export interface TaskInput {
   readonly savedRules?: readonly SavedPermissionRule[]
   readonly history?: readonly ChatMessage[]
   readonly budgets?: Partial<TaskBudgets>
+  readonly contract?: TaskContract
+  readonly requireContract?: boolean
   readonly signal?: AbortSignal
 }
 
@@ -224,6 +317,7 @@ export interface DiffPreviewRecord {
 export interface TaskResult {
   readonly runId: string
   readonly outcome: RunSummaryRecord["outcome"]
+  readonly claimStatus?: ClaimStatus
   readonly finalText: string
   readonly stopReason?: string
   readonly changedFiles: readonly string[]
@@ -233,7 +327,10 @@ export interface TaskResult {
   readonly actions?: readonly RunActionRecord[]
   readonly messages?: readonly ChatMessage[]
   readonly requests: number
+  readonly guardianRequests?: number
   readonly usage: RunSummaryRecord["usage"]
+  readonly proofPack?: ProofPackManifest
+  readonly proofSummary?: string
   readonly evidenceFile: string
   readonly runRecordFile: string
 }

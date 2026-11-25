@@ -380,6 +380,9 @@ try {
     $s2.WaitFor("bashwink> ", 15000)
     if ($ServerState.Count -ne 0) { throw "Outbound requests fired before task submission ($($ServerState.Count))" }
     $s2.Resize(80, 24)
+    $s2.Send("/mode manual`r`n")
+    $s2.WaitFor("Permission mode set to 'manual'.", 15000)
+    $s2.WaitFor("bashwink> ", 15000)
     $s2.Send("fix sum`r`n")
     $s2.WaitFor("Trust this workspace for interactive edit/command approvals? [y/N]", 15000)
     $s2.Send("y`r`n")

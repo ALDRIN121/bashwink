@@ -796,6 +796,86 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
     } finally {
       rmSync(untrustedDir, { recursive: true, force: true })
     }
+
+    // 5) ask mode strictly denies edits & commands even when workspace IS trusted & rules exist
+    let askStep = 0
+    const askRes = await runTask(
+      {
+        workspace: f.workspace,
+        prompt: "ask only",
+        trusted: true,
+        config: f.config,
+        permissionMode: "ask",
+        savedRules: [{ tool: "edit_file", pattern: "*", grantedAt: "" }],
+      },
+      {
+        paths: f.paths,
+        env: { ...process.env, TEST_PROVIDER_KEY: "k" },
+        confirmAction: async () => {
+          assert.fail("ask mode must never reach confirmAction")
+        },
+        requestWorkspaceTrust: async () => {
+          assert.fail("ask mode must never requestWorkspaceTrust")
+        },
+        completeImpl: async () => {
+          askStep += 1
+          if (askStep === 1) {
+            return {
+              text: "",
+              finishReason: "tool_calls",
+              toolCalls: [
+                { id: "ak1", name: "edit_file", input: { path: "a.txt", oldText: "yo", newText: "no" } },
+                { id: "ak2", name: "run_command", input: { command: "ls", args: [] } },
+              ],
+              toolInputErrors: [],
+            }
+          }
+          return { text: "read-only answer", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+        },
+      },
+    )
+    assert.equal(askRes.outcome, "completed")
+    assert.equal(askRes.actions?.every((a) => a.decision === "deny" && a.approvalSource === "ask"), true)
+
+    // 6) interactive trust unlock + accept-edits promotion
+    const untrustedUnlockDir = mkdtempSync(path.join(tmpdir(), "bw-unlock-edits-"))
+    try {
+      writeFileSync(path.join(untrustedUnlockDir, "n.txt"), "v1\n", "utf8")
+      const changedModes: string[] = []
+      let uStep = 0
+      const unlockRes = await runTask(
+        { workspace: untrustedUnlockDir, prompt: "write", trusted: false, config: f.config, permissionMode: "manual" },
+        {
+          paths: f.paths,
+          env: { ...process.env, TEST_PROVIDER_KEY: "k" },
+          onPermissionModeChange: (m) => changedModes.push(m),
+          requestWorkspaceTrust: async () => "accept-edits",
+          confirmAction: async () => {
+            assert.fail("Second edit after switching to accept-edits should auto-apply cleanly")
+          },
+          completeImpl: async () => {
+            uStep += 1
+            if (uStep === 1) {
+              return {
+                text: "",
+                finishReason: "tool_calls",
+                toolCalls: [
+                  { id: "ul1", name: "edit_file", input: { path: "n.txt", oldText: "v1", newText: "v2" } },
+                  { id: "ul2", name: "edit_file", input: { path: "n.txt", oldText: "v2", newText: "v3" } },
+                ],
+                toolInputErrors: [],
+              }
+            }
+            return { text: "done", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+          },
+        },
+      )
+      assert.equal(unlockRes.outcome, "completed")
+      assert.deepEqual(changedModes, ["accept-edits"])
+      assert.equal(readFileSync(path.join(untrustedUnlockDir, "n.txt"), "utf8"), "v3\n")
+    } finally {
+      rmSync(untrustedUnlockDir, { recursive: true, force: true })
+    }
   } finally {
     f.cleanup()
   }

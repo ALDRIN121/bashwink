@@ -139,10 +139,10 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   {
     name: "mode",
     aliases: ["approvals", "permissions"],
-    description: "Switch permission mode (manual, accept-edits, smart guardian, auto)",
+    description: "Switch permission mode (accept-edits, smart, auto, manual, ask read-only)",
     category: "Workspace",
     shortcut: "shift+tab",
-    argumentHint: "[manual|accept-edits|smart|auto|reset]",
+    argumentHint: "[accept-edits|smart|auto|manual|ask|reset]",
   },
   {
     name: "status",
@@ -672,6 +672,7 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
     if (mode === "smart") return style.accent(text)
     if (mode === "auto") return style.yellow(text)
     if (mode === "accept-edits") return style.cyan(text)
+    if (mode === "ask") return style.green(text)
     return style.accent(text)
   }
 
@@ -1410,7 +1411,7 @@ export async function askHybridConfirm(
     const layout = raw.layout()
     const yesTag = highlighted === "yes" && typed === "" ? style.selectedRow(" Yes (y) ") : style.green("Yes (y)")
     const noTag = highlighted === "no" && typed === "" ? style.selectedRow(" No (n) ") : style.muted("No (n)")
-    const hint = style.dim(`  [${yesTag}${style.dim(" / ")}${noTag}${style.dim("]")}] `)
+    const hint = `${style.dim("  [")}${yesTag}${style.dim(" / ")}${noTag}${style.dim("]")} `
     const safePrompt = truncatePlain(promptText, Math.max(12, layout.cols - (typed === "" ? 24 : typed.length + 2)))
     const line = `${safePrompt}${typed === "" ? hint : ` ${typed}`}`
     raw.write(`${SYNC_START}${rendered ? "\r\x1b[2K" : ""}${line}${CURSOR_SHOW}${SYNC_END}`)
@@ -1474,14 +1475,16 @@ export async function askHybridConfirm(
 
 export interface HybridPermissionOptions {
   readonly allowAlways: boolean
+  readonly allowAcceptEdits?: boolean
+  readonly yesMeansAcceptEdits?: boolean
   readonly alwaysSummary?: string
   readonly signal?: AbortSignal
 }
 
 /**
- * OpenCode/Hermes 3-way interactive permission selector:
- * `[ Allow once (y) ]  [ Always allow (a) ]  [ Reject (n) ]`
- * Supports typed `y`/`a`/`n` + `Enter`, `Left`/`Right`/`Tab` navigation + `Enter`, and `Esc` to reject.
+ * OpenCode/Hermes/Claude interactive permission selector:
+ * `[ Allow once (y) · Accept-edits mode (e) · Always allow (a) · Reject (n) ]`
+ * (Or `[ Yes · accept-edits (y) · Once (o) · Reject (n) ]` when unlocking edits from read-only.)
  */
 export async function askHybridPermission(
   raw: RawTerminalSession,
@@ -1489,29 +1492,54 @@ export async function askHybridPermission(
   promptText: string,
   opts: HybridPermissionOptions,
 ): Promise<ApprovalDecision> {
-  const choices: ApprovalDecision[] = opts.allowAlways
-    ? ["once", "always", "reject"]
-    : ["once", "reject"]
+  const choices: ApprovalDecision[] = opts.yesMeansAcceptEdits
+    ? ["accept-edits", "once", "reject"]
+    : (() => {
+        const list: ApprovalDecision[] = ["once"]
+        if (opts.allowAcceptEdits) list.push("accept-edits")
+        if (opts.allowAlways) list.push("always")
+        list.push("reject")
+        return list
+      })()
   let typed = ""
   let selectedIdx = choices.length - 1
   let renderedRows = 0
 
   const resolveTypedDecision = (text: string): ApprovalDecision => {
     const clean = text.trim().toLowerCase()
+    if (opts.yesMeansAcceptEdits) {
+      if (clean === "y" || clean === "yes" || clean === "e" || clean === "accept-edits" || clean === "edits") {
+        return "accept-edits"
+      }
+      if (clean === "o" || clean === "once") return "once"
+      if ((clean === "a" || clean === "always") && opts.allowAlways) return "always"
+      return "reject"
+    }
     if (clean === "y" || clean === "yes") return "once"
+    if ((clean === "e" || clean === "accept-edits" || clean === "edits") && opts.allowAcceptEdits) {
+      return "accept-edits"
+    }
     if ((clean === "a" || clean === "always") && opts.allowAlways) return "always"
     return "reject"
   }
 
   const pill = (dec: ApprovalDecision, active: boolean): string => {
-    const label =
-      dec === "once"
-        ? " Allow once (y) "
-        : dec === "always"
-          ? " Always allow (a) "
+    const label = opts.yesMeansAcceptEdits
+      ? dec === "accept-edits"
+        ? " Yes (accept-edits) (y) "
+        : dec === "once"
+          ? " Once (o) "
           : " Reject (n) "
+      : dec === "once"
+        ? " Allow once (y) "
+        : dec === "accept-edits"
+          ? " Accept-edits mode (e) "
+          : dec === "always"
+            ? " Always allow (a) "
+            : " Reject (n) "
     if (active) return style.selectedRow(label)
-    if (dec === "once") return style.green(label.trim())
+    if (dec === "once") return opts.yesMeansAcceptEdits ? style.cyan(label.trim()) : style.green(label.trim())
+    if (dec === "accept-edits") return opts.yesMeansAcceptEdits ? style.green(label.trim()) : style.yellow(label.trim())
     if (dec === "always") return style.cyan(label.trim())
     return style.muted(label.trim())
   }
@@ -1524,11 +1552,11 @@ export async function askHybridPermission(
 
     const active = choices[selectedIdx] ?? "reject"
     const bar = choices.map((c) => pill(c, typed === "" && c === active)).join(style.dim(" · "))
-    const wideInline = layout.cols >= promptText.length + (typed === "" ? (opts.allowAlways ? 58 : 36) : typed.length + 4)
+    const pillBarPlainW = choices.length * 18 + 6
+    const wideInline = layout.cols >= promptText.length + (typed === "" ? pillBarPlainW : typed.length + 4)
     const lines: string[] = []
     if (wideInline) {
-      const hintW = typed === "" ? (opts.allowAlways ? 56 : 34) : typed.length + 4
-      const safePrompt = truncatePlain(promptText, Math.max(12, layout.cols - hintW))
+      const safePrompt = truncatePlain(promptText, Math.max(12, layout.cols - pillBarPlainW))
       lines.push(`${safePrompt}  ${typed === "" ? `[${bar}]` : typed}`)
     } else {
       lines.push(truncatePlain(promptText, layout.cols))
@@ -1536,6 +1564,8 @@ export async function askHybridPermission(
     }
     if (typed === "" && active === "always" && opts.alwaysSummary) {
       lines.push(style.dim(truncatePlain(`  ↳ Will remember for this workspace: ${opts.alwaysSummary}`, layout.cols)))
+    } else if (typed === "" && active === "accept-edits") {
+      lines.push(style.dim(truncatePlain("  ↳ Applies edit & switches workspace mode to accept-edits (Shift+Tab anytime)", layout.cols)))
     }
     frame += `${lines.join("\n")}${CURSOR_SHOW}${SYNC_END}`
     raw.write(frame)

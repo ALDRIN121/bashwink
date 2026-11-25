@@ -427,6 +427,7 @@ export function formatPromptMetadata(
     if (m === "smart") segs.push(style.accentBold(chosen.mode))
     else if (m === "auto") segs.push(style.yellow(chosen.mode))
     else if (m === "accept-edits") segs.push(style.cyan(chosen.mode))
+    else if (m === "ask") segs.push(style.green(chosen.mode))
     else segs.push(style.muted(chosen.mode))
   }
   if (chosen.trust) segs.push(input.trusted ? style.green(chosen.trust) : style.yellow(chosen.trust))

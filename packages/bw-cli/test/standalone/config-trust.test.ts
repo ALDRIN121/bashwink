@@ -304,13 +304,14 @@ test("workspace permission rules, mode cycling, shell comment stripper, and hard
   const wsB = path.join(dir, "ws-b")
   const cfgDir = path.join(dir, "cfg")
   try {
-    assert.equal(loadWorkspacePermissions(cfgDir, wsA).mode, "manual")
+    assert.equal(loadWorkspacePermissions(cfgDir, wsA).mode, "accept-edits")
     assert.deepEqual(loadWorkspacePermissions(cfgDir, wsA).rules, [])
 
-    assert.equal(nextPermissionMode("manual"), "accept-edits")
     assert.equal(nextPermissionMode("accept-edits"), "smart")
     assert.equal(nextPermissionMode("smart"), "auto")
     assert.equal(nextPermissionMode("auto"), "manual")
+    assert.equal(nextPermissionMode("manual"), "ask")
+    assert.equal(nextPermissionMode("ask"), "accept-edits")
 
     setWorkspacePermissionMode(cfgDir, wsA, "smart")
     saveAlwaysPermissionRule(cfgDir, wsA, { tool: "edit_file", pattern: "*" })
@@ -320,7 +321,7 @@ test("workspace permission rules, mode cycling, shell comment stripper, and hard
     const loadedB = loadWorkspacePermissions(cfgDir, wsB)
     assert.equal(loadedA.mode, "smart")
     assert.equal(loadedA.rules.length, 2)
-    assert.equal(loadedB.mode, "manual")
+    assert.equal(loadedB.mode, "accept-edits")
     assert.equal(loadedB.rules.length, 0)
 
     assert.equal(globMatch("npm test *", "npm test -- --watch"), true)

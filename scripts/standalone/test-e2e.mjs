@@ -618,6 +618,8 @@ async function main() {
     scenario = "fix";
     turn = 0;
     const fixRes = await runPtySession([bashwinkBin], gitRepo, env, [
+      { wait: "bashwink> ", send: "/mode manual\n" },
+      { wait: "Permission mode set to 'manual'." },
       { wait: "bashwink> ", send: "fix the failing test\n" },
       { wait: "Trust this workspace for interactive edit/command approvals? [y/N]", send: "y\n" },
       { wait: "Apply this change? [y/N]", send: "y\n" },

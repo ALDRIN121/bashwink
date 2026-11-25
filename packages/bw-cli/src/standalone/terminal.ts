@@ -431,11 +431,11 @@ export function renderHelp(configDir: string, dataDir: string): string {
     "  /model, /connect         Choose provider, enter API key / env var, select or fetch models, and test",
     "  /test, /status           Test saved model connection or view session & budget status",
     "  /diff, /compact          Inspect edits or compact conversation context",
-    "  /mode, /trust, /evidence Switch approval mode (manual/accept-edits/smart/auto) or verify log",
+    "  /mode, /trust, /evidence Switch mode (accept-edits/smart/auto/manual/ask) or verify log",
     "  /help, /exit             Show help or quit",
     "",
     "KEYBOARD SHORTCUTS",
-    "  Shift+Tab                Cycle permission mode (manual -> accept-edits -> smart -> auto)",
+    "  Shift+Tab                Cycle permission mode (accept-edits -> smart -> auto -> manual -> ask)",
     "  Ctrl+P                   Command palette (fuzzy search all commands)",
     "  Ctrl+O                   Session browser & switcher",
     "  Esc Esc                  Timeline & checkpoint rewind",
@@ -486,11 +486,18 @@ async function askPermissionDecision(
   if (io instanceof RawTerminalIO) {
     return await io.askPermission(prompt, opts)
   }
-  const suffix = opts.allowAlways ? " [Allow once (y) / Always allow (a) / Reject (n)] " : " "
+  const suffixParts = ["Allow once (y)"]
+  if (opts.allowAcceptEdits) suffixParts.push("Accept-edits mode (e)")
+  if (opts.allowAlways) suffixParts.push("Always allow (a)")
+  suffixParts.push("Reject (n)")
+  const suffix = ` [${suffixParts.join(" / ")}] `
   const ans = await io.ask(`${prompt}${suffix}`, opts.signal)
   if (ans === null) return "reject"
   const clean = ans.trim().toLowerCase()
   if (clean === "y" || clean === "yes") return "once"
+  if ((clean === "e" || clean === "accept-edits" || clean === "edits") && opts.allowAcceptEdits) {
+    return "accept-edits"
+  }
   if ((clean === "a" || clean === "always") && opts.allowAlways) return "always"
   return "reject"
 }
@@ -1072,10 +1079,10 @@ function buildStatusSummary(
   trusted: boolean,
   config?: StandaloneConfig,
   layout?: TerminalLayout,
-  permissionMode: PermissionMode = "manual",
+  permissionMode: PermissionMode = "accept-edits",
 ): string {
   const modelText = config ? config.model : "no model"
-  const trustText = trusted ? "trusted" : "read-only"
+  const trustText = permissionMode === "ask" ? "ask (read-only)" : trusted ? "trusted" : "read-only"
   const modeText = permissionModeLabel(permissionMode, Boolean(layout?.isCompact))
   const costText =
     session.usageTotals.costUsd !== undefined ? ` · $${session.usageTotals.costUsd.toFixed(4)}` : ""
@@ -1091,15 +1098,15 @@ function buildStatusSummary(
 function buildComposerMetadata(
   trusted: boolean,
   config?: StandaloneConfig,
-  permissionMode: PermissionMode = "manual",
+  permissionMode: PermissionMode = "accept-edits",
 ): PromptMetadataInput {
   return {
-    agent: "build",
+    agent: permissionMode === "ask" ? "ask" : "build",
     model: config ? config.model : "no model selected (/model)",
     ...(config?.providerId ? { provider: config.providerId } : {}),
     permissionMode,
-    trustLabel: trusted ? "trusted" : "read-only",
-    trusted,
+    trustLabel: permissionMode === "ask" ? "read-only" : trusted ? "trusted" : "read-only",
+    trusted: permissionMode === "ask" ? false : trusted,
   }
 }
 
@@ -1559,13 +1566,15 @@ export async function runStandalone(
                 ...PERMISSION_MODES.map((m): HybridChoiceOption => ({
                   value: m,
                   display:
-                    m === "manual"
-                      ? `${m}${m === permissionMode ? " (active)" : ""} — Confirm edits & commands [Allow once / Always allow / Reject]`
-                      : m === "accept-edits"
-                        ? `${m}${m === permissionMode ? " (active)" : ""} — Auto-apply workspace edits; confirm commands (Claude Code style)`
-                        : m === "smart"
-                          ? `${m}${m === permissionMode ? " (active)" : ""} — Guardian LLM security reviewer + breaker (Hermes style)`
-                          : `${m}${m === permissionMode ? " (active)" : ""} — Auto-allow edits & safe checks; guardian reviews risky commands`,
+                    m === "accept-edits"
+                      ? `${m}${m === permissionMode ? " (active)" : ""} — Auto-apply workspace edits; confirm commands (default)`
+                      : m === "smart"
+                        ? `${m}${m === permissionMode ? " (active)" : ""} — Guardian LLM security reviewer + breaker (Hermes style)`
+                        : m === "auto"
+                          ? `${m}${m === permissionMode ? " (active)" : ""} — Auto-allow edits & safe checks; guardian reviews risky commands`
+                          : m === "manual"
+                            ? `${m}${m === permissionMode ? " (active)" : ""} — Confirm edits & commands [Allow once / Accept-edits / Always / Reject]`
+                            : `${m}${m === permissionMode ? " (active)" : ""} — Read-only Q&A mode (edits & commands disabled)`,
                 })),
                 {
                   value: "reset",
@@ -1584,7 +1593,7 @@ export async function runStandalone(
           }
           io.write(
             `Mode: ${permissionMode} (${savedRules.length} saved Always-allow rule(s)).\n` +
-              "Usage: /mode [manual | accept-edits | smart | auto | reset]\n",
+              "Usage: /mode [accept-edits | smart | auto | manual | ask | reset]\n",
           )
           return "continue"
         }
@@ -1832,7 +1841,7 @@ export async function runStandalone(
           )
         }
 
-        if (!trusted && !trustPromptShown) {
+        if (!trusted && !trustPromptShown && permissionMode !== "ask") {
           trustPromptShown = true
           io.write(`\nWorkspace ${canonical} is NOT trusted yet (read-only mode).\n`)
           io.write(
@@ -1849,7 +1858,7 @@ export async function runStandalone(
             trusted = true
             io.write(`Trusted ${canonical}.\n`)
           } else {
-            io.write("Continuing in read-only mode (edits and commands will be denied).\n")
+            io.write("Continuing in read-only mode (edits and commands will be denied). Run /trust anytime to trust this folder.\n")
           }
         }
 
@@ -1979,6 +1988,52 @@ export async function runStandalone(
               onSavePermissionRule: (rule) => {
                 savedRules = saveAlwaysPermissionRule(resolved.config, canonical, rule).rules
               },
+              onPermissionModeChange: (nextMode) => {
+                permissionMode = setWorkspacePermissionMode(resolved.config, canonical, nextMode).mode
+                clearSpinnerLine()
+                const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+                io.write(`  ${style.cyan("↳")} switched permission mode to ${style.bold(permissionMode)}\n`)
+              },
+              requestWorkspaceTrust: async (req: ApprovalRequest): Promise<ApprovalDecision> => {
+                pauseSpinnerAndCancel()
+                flushReadBurst()
+                try {
+                  const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+                  if (req.kind === "edit_file") {
+                    const cleanPatch = sanitizeTerminalText(req.prepared.diffPreview)
+                    const rendered = renderOpenCodeDiff(
+                      cleanPatch,
+                      {
+                        path: req.prepared.relativePath,
+                        create: req.prepared.create,
+                        maxWidth: terminalCols(io),
+                        view: "auto",
+                      },
+                      style,
+                    )
+                    shownDiffCallIds.add(req.callId)
+                    io.write(`\n${rendered.join("\n")}\n`)
+                    io.write(
+                      `  ${style.yellow("Note:")} Workspace ${sanitizeTerminalText(canonical)} is read-only; trusting enables edits.\n`,
+                    )
+                    const dec = await askPermissionDecision(
+                      io,
+                      "Shall I edit & switch to accept-edits mode? [y/N]",
+                      {
+                        allowAlways: false,
+                        allowAcceptEdits: true,
+                        yesMeansAcceptEdits: true,
+                        ...(currentAbort ? { signal: currentAbort.signal } : {}),
+                      },
+                    )
+                    if (dec !== "reject") trusted = true
+                    return dec
+                  }
+                  return "reject"
+                } finally {
+                  startSpinnerAndCancel()
+                }
+              },
               onEvent: (event: TaskEvent) => {
                 if (event.type === "model_requested") {
                   spinnerText = `Waiting for ${event.model} at ${formatDestination(event.endpoint)}`
@@ -2101,6 +2156,7 @@ export async function runStandalone(
                     }
                     return await askPermissionDecision(io, "Apply this change? [y/N]", {
                       allowAlways: req.allowAlways ?? true,
+                      allowAcceptEdits: true,
                       ...(req.suggestedSummary ? { alwaysSummary: req.suggestedSummary } : {}),
                       ...(currentAbort ? { signal: currentAbort.signal } : {}),
                     })
@@ -2132,6 +2188,17 @@ export async function runStandalone(
 
         currentAbort = undefined
         renderTaskOutcome(result, io)
+        if (
+          !trusted &&
+          result.actions?.some(
+            (a) => a.decision === "deny" && (a.tool === "edit_file" || a.tool === "run_command"),
+          )
+        ) {
+          const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+          io.write(
+            `  ${style.yellow("Tip:")} Workspace is read-only — run ${style.bold("/trust")} in the prompt box below to allow edits and commands.\n`,
+          )
+        }
 
         activeSession = appendTurnToSession(activeSession, {
           userPrompt: trimmed,

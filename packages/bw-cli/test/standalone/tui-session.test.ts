@@ -432,9 +432,9 @@ test("real PTY interactive TUI supports multi-turn history, Ctrl+P palette, Ctrl
 
     const steps = [
       { wait: "bashwink> ", send: "change note\r" },
+      { wait: "approved (accept-edits)" },
       { wait: "← Edit" },
       { wait: "+1" },
-      { wait: "Apply this change? [y/N]", send: "y\r" },
       { wait: "TURN_ONE_DONE" },
       // Inspect `/diff` modal to verify line-numbered diff card persists in session turn
       { wait: "bashwink> ", send: "/diff\r" },
@@ -740,24 +740,30 @@ test("real PTY OpenCode bottom-pinned raised prompt, Shift+Tab mode cycling, Alw
 
     const steps = [
       { wait: "bashwink> " },
-      { wait: "mode:manual" },
-      { wait: "shift+tab" },
-      // Shift+Tab cycles mode while preserving draft text
-      { send: "draft text\x1b[Z" },
       { wait: "mode:accept-edits" },
-      { send: "\x1b[Z" },
+      { wait: "shift+tab" },
+      // Shift+Tab cycles mode while preserving draft text: accept-edits -> smart -> auto -> manual -> ask -> accept-edits
+      { send: "draft text\x1b[Z" },
       { wait: "mode:smart" },
       { send: "\x1b[Z" },
       { wait: "mode:auto" },
       { send: "\x1b[Z" },
       { wait: "mode:manual" },
+      { send: "\x1b[Z" },
+      { wait: "mode:ask" },
+      { send: "\x1b[Z" },
+      { wait: "mode:accept-edits" },
       { send: "\x03" }, // Clear "draft text"
-      { wait: "Cleared input", send: "update both files\r" },
+      { wait: "Cleared input", send: "/mode manual\r" },
+      { wait: "Permission mode set to 'manual'." },
+      { wait: "bashwink> ", send: "update both files\r" },
       { wait: "Apply this change? [y/N]" },
       { wait: "Always allow (a)" },
       { send: "a\r" }, // Save Always allow for edit_file -> second edit auto-approves without prompting!
       { wait: "Both files updated." },
-      { wait: "bashwink> ", send: "/exit\r" },
+      { wait: "bashwink> ", send: "/mode ask\r" },
+      { wait: "Permission mode set to 'ask'." },
+      { wait: "mode:ask", send: "/exit\r" },
     ]
     const parsed = await runPtyDriver(ws, home, 30, 110, steps)
     assert.equal(parsed.exitCode, 0, parsed.output)

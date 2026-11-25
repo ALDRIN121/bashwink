@@ -239,14 +239,21 @@ export function findMissingFiles(files: readonly string[]): string[] {
 }
 
 export const PERMISSION_MODES: readonly PermissionMode[] = [
-  "manual",
   "accept-edits",
   "smart",
   "auto",
+  "manual",
+  "ask",
 ]
 
 export function isValidPermissionMode(value: string): value is PermissionMode {
-  return value === "manual" || value === "accept-edits" || value === "smart" || value === "auto"
+  return (
+    value === "accept-edits" ||
+    value === "smart" ||
+    value === "auto" ||
+    value === "manual" ||
+    value === "ask"
+  )
 }
 
 export function nextPermissionMode(current: PermissionMode): PermissionMode {
@@ -278,7 +285,7 @@ export function permissionsFilePath(configDirectory: string): string {
 }
 
 function emptyWorkspacePermissions(): WorkspacePermissionState {
-  return { mode: "manual", rules: [], updatedAt: "" }
+  return { mode: "accept-edits", rules: [], updatedAt: "" }
 }
 
 function readPermissionsStore(filePath: string): PermissionsStoreFile {
@@ -294,7 +301,8 @@ function readPermissionsStore(filePath: string): PermissionsStoreFile {
     for (const [ws, entry] of Object.entries(obj["workspaces"] as Record<string, unknown>)) {
       if (typeof entry !== "object" || entry === null) continue
       const e = entry as Record<string, unknown>
-      const mode = typeof e["mode"] === "string" && isValidPermissionMode(e["mode"]) ? e["mode"] : "manual"
+      const mode =
+        typeof e["mode"] === "string" && isValidPermissionMode(e["mode"]) ? e["mode"] : "accept-edits"
       const rules: SavedPermissionRule[] = []
       if (Array.isArray(e["rules"])) {
         for (const r of e["rules"]) {

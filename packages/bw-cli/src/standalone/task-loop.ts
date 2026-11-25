@@ -18,6 +18,7 @@ import {
   assessActionSafety,
   createBoundaryContext,
   createStandaloneRecorder,
+  grantWorkspaceTrust,
   isTestPath,
   matchesPermissionRule,
   saveRunRecord,
@@ -148,7 +149,9 @@ export interface TaskLoopDeps {
   readonly paths: Paths
   readonly completeImpl?: typeof defaultComplete
   readonly confirmAction: (req: ApprovalRequest) => Promise<boolean | ApprovalDecision>
+  readonly requestWorkspaceTrust?: (req: ApprovalRequest) => Promise<ApprovalDecision>
   readonly onSavePermissionRule?: (rule: SavedPermissionRule) => void
+  readonly onPermissionModeChange?: (mode: PermissionMode) => void
   readonly onEvent?: (event: TaskEvent) => void
   readonly contextProvider?: ContextProvider
   readonly env?: NodeJS.ProcessEnv
@@ -193,6 +196,7 @@ function normalizeApprovalDecision(
 ): ApprovalDecision {
   if (raw === true) return "once"
   if (raw === false) return "reject"
+  if (raw === "accept-edits") return allowAlways ? "accept-edits" : "once"
   if (raw === "always") return allowAlways ? "always" : "once"
   return raw === "once" ? "once" : "reject"
 }
@@ -203,15 +207,18 @@ function buildSystemPrompt(
   permissionMode: PermissionMode,
   untrustedContext: readonly { source: string; content: string }[],
 ): string {
-  const approvalGuidance = !trusted
-    ? "Workspace trust is NOT granted (read-only mode): list_files and read_file are available; edit_file and run_command are disabled."
-    : permissionMode === "accept-edits"
-      ? "Workspace trust is granted (accept-edits mode): file edits auto-apply inside the workspace; commands require user approval."
-      : permissionMode === "smart"
-        ? "Workspace trust is granted (smart mode): an automated safety guardian reviews edits and commands, escalating risky actions to the user."
-        : permissionMode === "auto"
-          ? "Workspace trust is granted (auto mode): workspace edits and safe read/test checks auto-approve, while higher-risk commands pass guardian safety review."
-          : "Workspace trust is granted, and file edits or commands follow workspace rules / user approval."
+  const approvalGuidance =
+    permissionMode === "ask"
+      ? "Workspace mode is 'ask' (read-only): list_files and read_file are available; edit_file and run_command are disabled."
+      : !trusted
+        ? "Workspace trust is NOT granted (read-only mode): list_files and read_file are available; edit_file and run_command are disabled."
+        : permissionMode === "accept-edits"
+          ? "Workspace trust is granted (accept-edits mode): file edits auto-apply inside the workspace; commands require user approval."
+          : permissionMode === "smart"
+            ? "Workspace trust is granted (smart mode): an automated safety guardian reviews edits and commands, escalating risky actions to the user."
+            : permissionMode === "auto"
+              ? "Workspace trust is granted (auto mode): workspace edits and safe read/test checks auto-approve, while higher-risk commands pass guardian safety review."
+              : "Workspace trust is granted, and file edits or commands follow workspace rules / user approval."
   const parts = [
     "You are Bashwink, a focused local coding assistant.",
     `Workspace directory: ${workspace}`,
@@ -250,7 +257,7 @@ function estimateRequestInputTokens(messages: readonly ChatMessage[]): number {
 export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<TaskResult> {
   const env = deps.env ?? process.env
   const completeFn = deps.completeImpl ?? defaultComplete
-  const permissionMode: PermissionMode = input.permissionMode ?? "manual"
+  let permissionMode: PermissionMode = input.permissionMode ?? "manual"
   const sessionRules: SavedPermissionRule[] = [...(input.savedRules ?? [])]
   let guardianDenialStreak = 0
   const runId = newRunId()
@@ -266,7 +273,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
     ...(input.budgets?.maxCostUsd !== undefined ? { maxCostUsd: input.budgets.maxCostUsd } : {}),
   }
 
-  const boundary = createBoundaryContext(input.workspace, deps.paths, input.config, env)
+  let boundary = createBoundaryContext(input.workspace, deps.paths, input.config, env)
   const cred = resolveCredentialSecret(input.config.credential, env)
   const activeSecret = cred.secret
   const recorder = createStandaloneRecorder(deps.paths.evidence, runId, activeSecret)
@@ -453,6 +460,10 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
       reason?: string
     }) => ApprovalRequest,
   ): Promise<{ readonly approved: boolean; readonly source: string }> => {
+    if (permissionMode === "ask") {
+      return { approved: false, source: "ask" }
+    }
+
     const safety = assessActionSafety(tool, safetyTarget, safetyArgs)
     const suggestion = suggestPermissionPattern(tool, safetyTarget, safetyArgs)
 
@@ -506,6 +517,11 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
     const normalized = normalizeApprovalDecision(rawDecision, allowAlways)
     if (normalized === "reject") {
       return { approved: false, source: "user" }
+    }
+    if (normalized === "accept-edits") {
+      permissionMode = "accept-edits"
+      deps.onPermissionModeChange?.("accept-edits")
+      return { approved: true, source: "accept-edits" }
     }
     if (normalized === "always") {
       const newRule: SavedPermissionRule = {
@@ -761,7 +777,68 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
           results.push(res)
           deps.onEvent?.({ type: "tool_completed", result: res })
         } else if (call.name === "edit_file") {
-          const prep = prepareEditFile(boundary, call.input)
+          if (permissionMode === "ask") {
+            const msg = "Mode is 'ask' (read-only): edit_file is disabled. Switch modes with Shift+Tab or /mode to allow edits."
+            recorder.recordTool("denied", ref, { input: call.input, note: msg })
+            const res: ToolDispatchResult = {
+              callId: call.id,
+              tool: call.name,
+              status: "denied",
+              output: msg,
+              target: String(call.input["path"] ?? ""),
+            }
+            actions.push({
+              callId: call.id,
+              tool: call.name,
+              summary: String(call.input["path"] ?? ""),
+              decision: "deny",
+              approvalSource: "ask",
+            })
+            results.push(res)
+            deps.onEvent?.({ type: "tool_denied", callId: call.id, tool: call.name, reason: msg })
+            deps.onEvent?.({ type: "tool_completed", result: res })
+            continue
+          }
+          let prep = prepareEditFile(boundary, call.input)
+          let trustedAndApprovedViaPrompt: { readonly source: string } | undefined
+          if (!prep.ok && !boundary.trusted && deps.requestWorkspaceTrust) {
+            const candidatePrep = prepareEditFile({ ...boundary, trusted: true }, call.input)
+            if (candidatePrep.ok) {
+              const suggestion = suggestPermissionPattern("edit_file", candidatePrep.prepared.relativePath, [])
+              const rawTrustDec = await deps.requestWorkspaceTrust({
+                kind: "edit_file",
+                callId: call.id,
+                prepared: candidatePrep.prepared,
+                allowAlways: true,
+                suggestedPattern: suggestion.pattern,
+                suggestedSummary: suggestion.summary,
+                reason: `Workspace ${boundary.workspace} is read-only. Trust & apply this edit?`,
+              })
+              const trustDec = normalizeApprovalDecision(rawTrustDec, true)
+              if (trustDec !== "reject") {
+                const user = env["USER"] ?? env["USERNAME"] ?? "terminal-user"
+                grantWorkspaceTrust(deps.paths.config, boundary.workspace, user)
+                boundary = createBoundaryContext(input.workspace, deps.paths, input.config, env)
+                if (trustDec === "accept-edits") {
+                  permissionMode = "accept-edits"
+                  deps.onPermissionModeChange?.("accept-edits")
+                  trustedAndApprovedViaPrompt = { source: "accept-edits" }
+                } else if (trustDec === "always") {
+                  const newRule: SavedPermissionRule = {
+                    tool: "edit_file",
+                    pattern: suggestion.pattern,
+                    grantedAt: new Date().toISOString(),
+                  }
+                  sessionRules.push(newRule)
+                  deps.onSavePermissionRule?.(newRule)
+                  trustedAndApprovedViaPrompt = { source: "user-always" }
+                } else {
+                  trustedAndApprovedViaPrompt = { source: "user" }
+                }
+                prep = prepareEditFile(boundary, call.input)
+              }
+            }
+          }
           if (!prep.ok) {
             recorder.recordTool("denied", ref, { input: call.input, note: prep.reason })
             const res: ToolDispatchResult = {
@@ -790,20 +867,22 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
             preview: prep.prepared.diffPreview,
           })
 
-          const auth = await authorizeAction(
-            "edit_file",
-            call.id,
-            prep.prepared.relativePath,
-            prep.prepared.relativePath,
-            [],
-            prep.prepared.diffPreview,
-            (meta) => ({
-              kind: "edit_file",
-              callId: call.id,
-              prepared: prep.prepared,
-              ...meta,
-            }),
-          )
+          const auth = trustedAndApprovedViaPrompt
+            ? { approved: true, source: trustedAndApprovedViaPrompt.source }
+            : await authorizeAction(
+                "edit_file",
+                call.id,
+                prep.prepared.relativePath,
+                prep.prepared.relativePath,
+                [],
+                prep.prepared.diffPreview,
+                (meta) => ({
+                  kind: "edit_file",
+                  callId: call.id,
+                  prepared: prep.prepared,
+                  ...meta,
+                }),
+              )
           if (!auth.approved) {
             const reason = `User declined edit to ${prep.prepared.relativePath}. File left unchanged.`
             recorder.recordTool("denied", ref, { input: call.input, note: reason })
@@ -885,6 +964,28 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
           results.push(res)
           deps.onEvent?.({ type: "tool_completed", result: res })
         } else if (call.name === "run_command") {
+          if (permissionMode === "ask") {
+            const msg = "Mode is 'ask' (read-only): run_command is disabled. Switch modes with Shift+Tab or /mode to allow commands."
+            recorder.recordTool("denied", ref, { input: call.input, note: msg })
+            const res: ToolDispatchResult = {
+              callId: call.id,
+              tool: call.name,
+              status: "denied",
+              output: msg,
+              target: String(call.input["command"] ?? ""),
+            }
+            actions.push({
+              callId: call.id,
+              tool: call.name,
+              summary: String(call.input["command"] ?? ""),
+              decision: "deny",
+              approvalSource: "ask",
+            })
+            results.push(res)
+            deps.onEvent?.({ type: "tool_denied", callId: call.id, tool: call.name, reason: msg })
+            deps.onEvent?.({ type: "tool_completed", result: res })
+            continue
+          }
           const prep = prepareRunCommand(boundary, call.input, env)
           if (!prep.ok) {
             recorder.recordTool("denied", ref, { input: call.input, note: prep.reason })

@@ -1,5 +1,7 @@
 # Bashwink local engine design
 
+**Historical fork design.** For new implementation work, use the [standalone coding alpha design and plan](../plans/2026-11-25-bashwink-standalone-alpha.md).
+
 The current standard installer uses the pinned OpenCode npm runtime. Local engine
 bring-up has progressed on Apple Silicon. The companion
 [implementation plan](../plans/2026-11-25-local-engine-implementation.md) records where to

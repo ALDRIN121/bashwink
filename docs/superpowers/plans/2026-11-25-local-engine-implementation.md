@@ -1,5 +1,7 @@
 # Bashwink local engine migration implementation plan
 
+**Historical fork plan.** Its builds and results describe the vendored OpenCode application. For the new single-agent Bashwink product, start with the [standalone coding alpha plan](2026-11-25-bashwink-standalone-alpha.md).
+
 > **For the coding agent:** Follow the repository workflow and the executing-plans skill if available. Begin with the resume checkpoint below. Record actual evidence before moving through a gate. Pushing, merging, publishing, changing sharing, and distributing artifacts require separate authorization.
 
 **Goal:** Make Bashwink an independent product. Build its coding engine from the needed upstream source committed to Bashwink. Clone, build, package, install, run, update, and roll back under Bashwink's own identity with zero required OpenCode packages, executables, or hosted services.

@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test"
+import { expect } from "bun:test"
+import { posixTest } from "./platform.js"
 import { mkdtempSync, rmSync, statSync } from "node:fs"
 import { request } from "node:http"
 import { tmpdir } from "node:os"
@@ -40,7 +41,13 @@ function post(
         }
       },
     )
-    outgoing.on("error", reject)
+    // The server may answer an oversized request and close before the client finishes writing it; Linux then
+    // reports EPIPE on the write while the response is still on its way. Give the response a moment to arrive.
+    outgoing.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EPIPE" || error.code === "ECONNRESET")
+        setTimeout(() => reject(error), 500)
+      else reject(error)
+    })
     outgoing.end(body)
   })
 }
@@ -104,75 +111,78 @@ async function* text(value: string) {
 
 const resolvePublic = async () => ["8.8.8.8"]
 
-test("validates requests before selecting the pinned host and applying the host credential", async () => {
-  const dispatched: Parameters<NonNullable<ProviderRelayDependencies["request"]>>[0][] = []
-  await fixture(
-    {
-      resolve: resolvePublic,
-      async request(request) {
-        dispatched.push(request)
-        return {
-          status: 200,
-          contentType: "application/json",
-          body: text('{"usage":{"prompt_tokens":3,"completion_tokens":2}}'),
-          cancel() {},
-        }
-      },
-    },
-    async (socket, relay) => {
-      expect(statSync(socket).mode & 0o777).toBe(0o600)
-      expect(
-        (await post(socket, { headers: { authorization: `Bearer ${credential}` } })).status,
-      ).toBe(401)
-      expect((await post(socket, { headers: { host: "other" } })).status).toBe(400)
-      expect(
-        (await post(socket, { headers: { origin: "https://unrelated.invalid" } })).status,
-      ).toBe(400)
-      expect((await post(socket, { headers: { forwarded: "host=other" } })).status).toBe(400)
-      expect((await post(socket, { path: `${guestPath}?extra=1` })).status).toBe(404)
-      expect((await post(socket, { body: { ...valid, model: "unknown" } })).status).toBe(400)
-      expect((await post(socket, { body: { ...valid, max_tokens: 21 } })).status).toBe(400)
-      expect(
-        (await post(socket, { body: { ...valid, tools: [{ type: "web_search" }] } })).status,
-      ).toBe(400)
-      expect(
-        (
-          await post(socket, {
-            body: {
-              ...valid,
-              messages: [
-                {
-                  role: "user",
-                  content: [{ type: "image_url", image_url: { url: "https://example.com" } }],
-                },
-              ],
-            },
-          })
-        ).status,
-      ).toBe(400)
-      expect(dispatched).toHaveLength(0)
-      expect((await post(socket)).status).toBe(200)
-      expect(dispatched[0]?.endpoint.href).toBe("https://api.example.com/v1/chat/completions")
-      expect(dispatched[0]?.address).toBe("8.8.8.8")
-      expect(dispatched[0]?.headers["authorization"]).toBe(`Bearer ${credential}`)
-      expect(dispatched[0]?.body.toString()).not.toContain(capability)
-      expect(JSON.parse(dispatched[0]!.body.toString()).max_tokens).toBe(20)
-      expect(relay.usage.models.filter((entry) => entry.requests > 0)).toEqual([
-        {
-          routeId: "chat",
-          model: "allowed-model",
-          requests: 1,
-          inputTokens: 3,
-          outputTokens: 2,
-          cacheReadInputTokens: 0,
-          cacheWriteInputTokens: 0,
+posixTest(
+  "validates requests before selecting the pinned host and applying the host credential",
+  async () => {
+    const dispatched: Parameters<NonNullable<ProviderRelayDependencies["request"]>>[0][] = []
+    await fixture(
+      {
+        resolve: resolvePublic,
+        async request(request) {
+          dispatched.push(request)
+          return {
+            status: 200,
+            contentType: "application/json",
+            body: text('{"usage":{"prompt_tokens":3,"completion_tokens":2}}'),
+            cancel() {},
+          }
         },
-      ])
-    },
-  )
-})
+      },
+      async (socket, relay) => {
+        expect(statSync(socket).mode & 0o777).toBe(0o600)
+        expect(
+          (await post(socket, { headers: { authorization: `Bearer ${credential}` } })).status,
+        ).toBe(401)
+        expect((await post(socket, { headers: { host: "other" } })).status).toBe(400)
+        expect(
+          (await post(socket, { headers: { origin: "https://unrelated.invalid" } })).status,
+        ).toBe(400)
+        expect((await post(socket, { headers: { forwarded: "host=other" } })).status).toBe(400)
+        expect((await post(socket, { path: `${guestPath}?extra=1` })).status).toBe(404)
+        expect((await post(socket, { body: { ...valid, model: "unknown" } })).status).toBe(400)
+        expect((await post(socket, { body: { ...valid, max_tokens: 21 } })).status).toBe(400)
+        expect(
+          (await post(socket, { body: { ...valid, tools: [{ type: "web_search" }] } })).status,
+        ).toBe(400)
+        expect(
+          (
+            await post(socket, {
+              body: {
+                ...valid,
+                messages: [
+                  {
+                    role: "user",
+                    content: [{ type: "image_url", image_url: { url: "https://example.com" } }],
+                  },
+                ],
+              },
+            })
+          ).status,
+        ).toBe(400)
+        expect(dispatched).toHaveLength(0)
+        expect((await post(socket)).status).toBe(200)
+        expect(dispatched[0]?.endpoint.href).toBe("https://api.example.com/v1/chat/completions")
+        expect(dispatched[0]?.address).toBe("8.8.8.8")
+        expect(dispatched[0]?.headers["authorization"]).toBe(`Bearer ${credential}`)
+        expect(dispatched[0]?.body.toString()).not.toContain(capability)
+        expect(JSON.parse(dispatched[0]!.body.toString()).max_tokens).toBe(20)
+        expect(relay.usage.models.filter((entry) => entry.requests > 0)).toEqual([
+          {
+            routeId: "chat",
+            model: "allowed-model",
+            requests: 1,
+            inputTokens: 3,
+            outputTokens: 2,
+            cacheReadInputTokens: 0,
+            cacheWriteInputTokens: 0,
+          },
+        ])
+      },
+    )
+  },
+)
 
-test("refuses oversized requests before dispatch", async () => {
+posixTest("refuses oversized requests before dispatch", async () => {
   await fixture(
     {
       resolve: resolvePublic,
@@ -189,7 +199,7 @@ test("refuses oversized requests before dispatch", async () => {
   )
 })
 
-test("rejects a capability from another run and revokes access after shutdown", async () => {
+posixTest("rejects a capability from another run and revokes access after shutdown", async () => {
   let dispatches = 0
   await fixture(
     {
@@ -213,7 +223,7 @@ test("rejects a capability from another run and revokes access after shutdown", 
   )
 })
 
-test("refuses oversized provider responses", async () => {
+posixTest("refuses oversized provider responses", async () => {
   await fixture(
     {
       resolve: resolvePublic,
@@ -232,7 +242,7 @@ test("refuses oversized provider responses", async () => {
   )
 })
 
-test("aborts a stalled provider request at the configured deadline", async () => {
+posixTest("aborts a stalled provider request at the configured deadline", async () => {
   let aborted = false
   await fixture(
     {
@@ -258,7 +268,7 @@ test("aborts a stalled provider request at the configured deadline", async () =>
   )
 })
 
-test("cancels the upstream when a streaming client disconnects", async () => {
+posixTest("cancels the upstream when a streaming client disconnects", async () => {
   let aborted = false
   let cancelled = false
   await fixture(
@@ -318,145 +328,163 @@ test("cancels the upstream when a streaming client disconnects", async () => {
   )
 })
 
-test("fails an interrupted upstream stream without reporting successful completion", async () => {
-  let cancelled = false
-  await fixture(
-    {
-      resolve: resolvePublic,
-      async request() {
-        return {
-          status: 200,
-          contentType: "text/event-stream",
-          body: (async function* () {
-            yield Buffer.from('data: {"choices":[]}\n\n')
-            throw new Error("synthetic upstream interruption")
-          })(),
-          cancel() {
-            cancelled = true
-          },
-        }
+posixTest(
+  "fails an interrupted upstream stream without reporting successful completion",
+  async () => {
+    let cancelled = false
+    await fixture(
+      {
+        resolve: resolvePublic,
+        async request() {
+          return {
+            status: 200,
+            contentType: "text/event-stream",
+            body: (async function* () {
+              yield Buffer.from('data: {"choices":[]}\n\n')
+              throw new Error("synthetic upstream interruption")
+            })(),
+            cancel() {
+              cancelled = true
+            },
+          }
+        },
       },
-    },
-    async (socket) => {
-      await expect(post(socket, { body: { ...valid, stream: true } })).rejects.toThrow()
-      expect(cancelled).toBe(true)
-    },
-  )
-})
+      async (socket) => {
+        await expect(post(socket, { body: { ...valid, stream: true } })).rejects.toThrow()
+        expect(cancelled).toBe(true)
+      },
+    )
+  },
+)
 
-test("reports malformed and upstream server responses without exposing their bodies", async () => {
-  let count = 0
-  await fixture(
-    {
-      resolve: resolvePublic,
-      async request() {
-        return {
-          status: ++count === 1 ? 200 : 503,
-          contentType: "application/json",
-          body: text(credential),
-          cancel() {},
+posixTest(
+  "reports malformed and upstream server responses without exposing their bodies",
+  async () => {
+    let count = 0
+    await fixture(
+      {
+        resolve: resolvePublic,
+        async request() {
+          return {
+            status: ++count === 1 ? 200 : 503,
+            contentType: "application/json",
+            body: text(credential),
+            cancel() {},
+          }
+        },
+      },
+      async (socket) => {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const result = await post(socket)
+          expect(result.status).toBe(502)
+          expect(result.body).not.toContain(credential)
         }
       },
-    },
-    async (socket) => {
-      for (let attempt = 0; attempt < 2; attempt++) {
+    )
+  },
+)
+
+posixTest(
+  "rejects a DNS result containing a nonpublic address without dispatching credentials",
+  async () => {
+    await fixture(
+      {
+        resolve: async () => ["8.8.8.8", "127.0.0.1"],
+        async request() {
+          throw new Error("unexpected upstream dispatch")
+        },
+      },
+      async (socket) => {
         const result = await post(socket)
         expect(result.status).toBe(502)
-        expect(result.body).not.toContain(credential)
-      }
-    },
-  )
-})
-
-test("rejects a DNS result containing a nonpublic address without dispatching credentials", async () => {
-  await fixture(
-    {
-      resolve: async () => ["8.8.8.8", "127.0.0.1"],
-      async request() {
-        throw new Error("unexpected upstream dispatch")
+        expect(result.body).not.toContain("unexpected upstream dispatch")
       },
-    },
-    async (socket) => {
-      const result = await post(socket)
-      expect(result.status).toBe(502)
-      expect(result.body).not.toContain("unexpected upstream dispatch")
-    },
-  )
-})
+    )
+  },
+)
 
-test("suppresses upstream failures and limits dispatches, including failed requests", async () => {
-  let calls = 0
-  await fixture(
-    {
-      resolve: resolvePublic,
-      async request() {
-        calls++
-        return { status: 307, contentType: "text/html", body: text(credential), cancel() {} }
+posixTest(
+  "suppresses upstream failures and limits dispatches, including failed requests",
+  async () => {
+    let calls = 0
+    await fixture(
+      {
+        resolve: resolvePublic,
+        async request() {
+          calls++
+          return { status: 307, contentType: "text/html", body: text(credential), cancel() {} }
+        },
       },
-    },
-    async (socket, relay) => {
-      const refused = await post(socket)
-      expect(refused.status).toBe(502)
-      expect(refused.body).not.toContain(credential)
-      expect((await post(socket)).status).toBe(502)
-      expect((await post(socket)).status).toBe(429)
-      expect(calls).toBe(2)
-      expect(relay.usage.requests).toBe(2)
-    },
-  )
-})
-
-test("reports upstream authentication and rate-limit statuses without upstream bodies", async () => {
-  let calls = 0
-  await fixture(
-    {
-      resolve: resolvePublic,
-      async request() {
-        return {
-          status: ++calls === 1 ? 401 : 429,
-          contentType: "application/json",
-          body: text(credential),
-          cancel() {},
-        }
+      async (socket, relay) => {
+        const refused = await post(socket)
+        expect(refused.status).toBe(502)
+        expect(refused.body).not.toContain(credential)
+        expect((await post(socket)).status).toBe(502)
+        expect((await post(socket)).status).toBe(429)
+        expect(calls).toBe(2)
+        expect(relay.usage.requests).toBe(2)
       },
-    },
-    async (socket) => {
-      const auth = await post(socket)
-      const rate = await post(socket)
-      expect(auth.status).toBe(401)
-      expect(rate.status).toBe(429)
-      expect(auth.body + rate.body).not.toContain(credential)
-    },
-  )
-})
+    )
+  },
+)
 
-test("passes split stream chunks through and counts numeric final usage only once", async () => {
-  await fixture(
-    {
-      resolve: resolvePublic,
-      async request() {
-        return {
-          status: 200,
-          contentType: "text/event-stream; charset=utf-8",
-          body: (async function* () {
-            yield Buffer.from('data: {"choices":[],"usage":{"prompt_tokens":5,')
-            yield Buffer.from('"completion_tokens":7}}\n\ndata: [DONE]\n\n')
-          })(),
-          cancel() {},
-        }
+posixTest(
+  "reports upstream authentication and rate-limit statuses without upstream bodies",
+  async () => {
+    let calls = 0
+    await fixture(
+      {
+        resolve: resolvePublic,
+        async request() {
+          return {
+            status: ++calls === 1 ? 401 : 429,
+            contentType: "application/json",
+            body: text(credential),
+            cancel() {},
+          }
+        },
       },
-    },
-    async (socket, relay) => {
-      const result = await post(socket, { body: { ...valid, stream: true } })
-      expect(result.status).toBe(200)
-      expect(result.body).toContain("data: [DONE]")
-      expect(relay.usage.inputTokens).toBe(5)
-      expect(relay.usage.outputTokens).toBe(7)
-    },
-  )
-})
+      async (socket) => {
+        const auth = await post(socket)
+        const rate = await post(socket)
+        expect(auth.status).toBe(401)
+        expect(rate.status).toBe(429)
+        expect(auth.body + rate.body).not.toContain(credential)
+      },
+    )
+  },
+)
 
-test("attributes Anthropic cache input usage separately across stream events", async () => {
+posixTest(
+  "passes split stream chunks through and counts numeric final usage only once",
+  async () => {
+    await fixture(
+      {
+        resolve: resolvePublic,
+        async request() {
+          return {
+            status: 200,
+            contentType: "text/event-stream; charset=utf-8",
+            body: (async function* () {
+              yield Buffer.from('data: {"choices":[],"usage":{"prompt_tokens":5,')
+              yield Buffer.from('"completion_tokens":7}}\n\ndata: [DONE]\n\n')
+            })(),
+            cancel() {},
+          }
+        },
+      },
+      async (socket, relay) => {
+        const result = await post(socket, { body: { ...valid, stream: true } })
+        expect(result.status).toBe(200)
+        expect(result.body).toContain("data: [DONE]")
+        expect(relay.usage.inputTokens).toBe(5)
+        expect(relay.usage.outputTokens).toBe(7)
+      },
+    )
+  },
+)
+
+posixTest("attributes Anthropic cache input usage separately across stream events", async () => {
   await fixture(
     {
       resolve: resolvePublic,
@@ -489,7 +517,7 @@ test("attributes Anthropic cache input usage separately across stream events", a
   )
 })
 
-test("does not return a provider credential reflected in a successful response", async () => {
+posixTest("does not return a provider credential reflected in a successful response", async () => {
   await fixture(
     {
       resolve: resolvePublic,
@@ -510,55 +538,58 @@ test("does not return a provider credential reflected in a successful response",
   )
 })
 
-test("keeps the first vetted address across routes and strips account-backed Responses options", async () => {
-  let resolutions = 0
-  const dispatched: Parameters<NonNullable<ProviderRelayDependencies["request"]>>[0][] = []
-  await fixture(
-    {
-      async resolve() {
-        return [++resolutions === 1 ? "8.8.8.8" : "127.0.0.1"]
+posixTest(
+  "keeps the first vetted address across routes and strips account-backed Responses options",
+  async () => {
+    let resolutions = 0
+    const dispatched: Parameters<NonNullable<ProviderRelayDependencies["request"]>>[0][] = []
+    await fixture(
+      {
+        async resolve() {
+          return [++resolutions === 1 ? "8.8.8.8" : "127.0.0.1"]
+        },
+        async request(request) {
+          dispatched.push(request)
+          return {
+            status: 200,
+            contentType: "application/json",
+            body: text('{"error":null,"usage":{"input_tokens":3,"output_tokens":2}}'),
+            cancel() {},
+          }
+        },
       },
-      async request(request) {
-        dispatched.push(request)
-        return {
-          status: 200,
-          contentType: "application/json",
-          body: text('{"error":null,"usage":{"input_tokens":3,"output_tokens":2}}'),
-          cancel() {},
+      async (socket) => {
+        const responses = {
+          path: "/relay/responses/responses",
+          body: { model: "allowed-model", input: "hello", store: true },
         }
+        expect(
+          (
+            await post(socket, {
+              ...responses,
+              body: { ...responses.body, previous_response_id: "resp_other" },
+            })
+          ).status,
+        ).toBe(400)
+        expect(
+          (
+            await post(socket, {
+              ...responses,
+              body: { ...responses.body, tool_choice: { type: "web_search" } },
+            })
+          ).status,
+        ).toBe(400)
+        expect((await post(socket, responses)).status).toBe(200)
+        expect(JSON.parse(dispatched[0]!.body.toString()).store).toBe(false)
+        expect((await post(socket)).status).toBe(200)
+        expect(resolutions).toBe(1)
+        expect(dispatched.map(({ address }) => address)).toEqual(["8.8.8.8", "8.8.8.8"])
       },
-    },
-    async (socket) => {
-      const responses = {
-        path: "/relay/responses/responses",
-        body: { model: "allowed-model", input: "hello", store: true },
-      }
-      expect(
-        (
-          await post(socket, {
-            ...responses,
-            body: { ...responses.body, previous_response_id: "resp_other" },
-          })
-        ).status,
-      ).toBe(400)
-      expect(
-        (
-          await post(socket, {
-            ...responses,
-            body: { ...responses.body, tool_choice: { type: "web_search" } },
-          })
-        ).status,
-      ).toBe(400)
-      expect((await post(socket, responses)).status).toBe(200)
-      expect(JSON.parse(dispatched[0]!.body.toString()).store).toBe(false)
-      expect((await post(socket)).status).toBe(200)
-      expect(resolutions).toBe(1)
-      expect(dispatched.map(({ address }) => address)).toEqual(["8.8.8.8", "8.8.8.8"])
-    },
-  )
-})
+    )
+  },
+)
 
-test("rejects Anthropic hosted tools and uses the host-owned Messages headers", async () => {
+posixTest("rejects Anthropic hosted tools and uses the host-owned Messages headers", async () => {
   let observed: Readonly<Record<string, string>> | undefined
   await fixture(
     {

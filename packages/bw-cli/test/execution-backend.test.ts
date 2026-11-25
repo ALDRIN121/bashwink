@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { posixTest } from "./platform.js"
 import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -95,7 +96,7 @@ test("an expired deadline terminates and reaps a real managed child", async () =
   }
 })
 
-test("bounded cancellation reaps an owned process that handles and ignores TERM", async () => {
+posixTest("bounded cancellation reaps an owned process that handles and ignores TERM", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "bw-process-term-"))
   try {
     const result = await runWithBackend(

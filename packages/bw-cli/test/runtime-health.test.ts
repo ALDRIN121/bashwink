@@ -176,8 +176,14 @@ describe("stagePlugins — refuse a directory the runtime would drop", () => {
       const config = path.join(t.root, "config")
       const staged = stagePlugins(config, [{ id: "bashwink-evidence", directory, order: 0 }])
       expect(staged).toHaveLength(1)
-      expect(staged[0]?.entry).toBe(path.join(directory, "src/index.ts"))
-      expect(staged[0]?.path).toBe(path.join(config, "plugin", "bashwink-evidence"))
+      const target = path.join(config, "plugin", "bashwink-evidence")
+      // Windows stages a copy (a link would need a privilege), so the entry is inside the staged directory there.
+      expect(staged[0]?.entry).toBe(
+        process.platform === "win32"
+          ? path.join(target, "src", "index.ts")
+          : path.join(directory, "src/index.ts"),
+      )
+      expect(staged[0]?.path).toBe(target)
     } finally {
       t.cleanup()
     }

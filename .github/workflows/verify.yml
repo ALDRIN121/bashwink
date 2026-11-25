@@ -322,11 +322,17 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
       - name: Portable unit tests (launcher platform plan, plugin staging, home directory)
-        run: bun test packages/bw-cli/test/npm-launcher.test.ts packages/bw-cli/test/plugin-staging.test.ts
+        run: bun test packages/bw-cli/test/npm-launcher.test.ts packages/bw-cli/test/plugin-staging.test.ts packages/bw-cli/test/usage-guard.test.ts
       - name: Build and audit the tarball
         run: python scripts/build_npm_package.py --out build/npm
       - name: Install the tarball and exercise the installed command
         run: python scripts/npm_install_check.py build/npm/bashwink-0.1.0-alpha.1.tgz --out build/npm/install-check.json
+      # The installed command against a scripted provider: coding task, session continuation and model switch, the
+      # permission negative controls, credential containment, cancellation and cleanup, and the usage limits. This is
+      # a hosted-runner result; it is not an interactive qualification of a Windows 11 desktop, and the scripted
+      # provider is not a live model.
+      - name: Qualify the installed package (scripted provider)
+        run: python fixtures/release/npm_qual.py build/npm/bashwink-0.1.0-alpha.1.tgz --out build/npm/qualification.json
       - name: Keep the evidence
         if: always()
         uses: actions/upload-artifact@v5

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { macosDescribe } from "./platform.js"
 import { createHash } from "node:crypto"
 import {
   chmodSync,
@@ -199,9 +200,12 @@ describe("startup failure record", () => {
       code: "vm-assets-missing",
       at: "1970-01-01T00:00:00.000Z",
     })
-    // An unwritable location reports false instead of masking the launch error.
+    // An unwritable location reports false instead of masking the launch error. A regular file used as a
+    // directory is unwritable on every platform, unlike a POSIX-only path such as /dev/null/nope.
+    const blocker = path.join(root, "not-a-directory")
+    writeFileSync(blocker, "x")
     expect(
-      recordStartupFailure("/dev/null/nope", {
+      recordStartupFailure(path.join(blocker, "nope"), {
         code: "vm-init-failed",
         mode: "isolated-vm",
         message: "z",
@@ -210,7 +214,7 @@ describe("startup failure record", () => {
   })
 })
 
-describe("release asset validation", () => {
+macosDescribe("release asset validation", () => {
   function install(options: { relay?: boolean; version?: number } = {}) {
     const lib = mkdtempSync(path.join(root, "lib-"))
     chmodSync(lib, 0o700)

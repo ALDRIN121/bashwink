@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, expect, test } from "bun:test"
+import { macosDescribe } from "./platform.js"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -62,7 +63,7 @@ function open() {
   return Object.keys(handle.record.base).sort()
 }
 
-describe("supported structures", () => {
+macosDescribe("supported structures", () => {
   test("a Git checkout root with top-level .ts, .js and .txt files", () => {
     project({ "a.ts": "export const a = 1\n", "b.js": "1\n", "notes.txt": "n\n" })
     expect(open()).toEqual(["a.ts", "b.js", "notes.txt"])
@@ -73,7 +74,7 @@ describe("supported structures", () => {
   })
 })
 
-describe("unsupported structures are refused or left out, never silently included", () => {
+macosDescribe("unsupported structures are refused or left out, never silently included", () => {
   test("a directory that is not a Git repository is refused", () => {
     const dir = path.join(root, `plain${counter++}`)
     mkdirSync(dir)

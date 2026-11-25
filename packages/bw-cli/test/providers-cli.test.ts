@@ -166,7 +166,8 @@ describe("BW-091 — auth add", () => {
       ])
       expect(run.code).toBe(0)
       const raw = readFileSync(path.join(box.home, "opencode.json"), "utf8")
-      expect(raw).toContain(`{file:${keyFile}}`)
+      // The config is JSON, so a Windows path appears with its backslashes escaped.
+      expect(raw).toContain(JSON.stringify(`{file:${keyFile}}`).slice(1, -1))
       // The value must not be in the config, only a reference to the file that holds it.
       expect(raw).not.toContain("the-real-key-value")
     } finally {

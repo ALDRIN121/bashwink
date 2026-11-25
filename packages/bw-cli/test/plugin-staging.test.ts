@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
+import { posixTest } from "./platform.js"
 import {
   existsSync,
   lstatSync,
@@ -57,7 +58,7 @@ describe("link or copy", () => {
 })
 
 describe("staging", () => {
-  test("a source checkout is staged as a symlink, as before", () => {
+  posixTest("a source checkout is staged as a symlink, as before", () => {
     const source = makePlugin(fresh("d/packages"))
     const config = fresh("d/config")
     const [staged] = stagePlugins(config, [

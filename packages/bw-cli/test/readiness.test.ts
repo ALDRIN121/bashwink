@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { posixTest } from "./platform.js"
 import { Database } from "bun:sqlite"
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -71,7 +72,7 @@ test("an acknowledgement is only valid for the exact launch, server pid and work
     expect(matchesReadiness(wrong, expected)).toBe(false)
 })
 
-test("readiness distinguishes a malformed endpoint without exposing raw stdout", async () => {
+posixTest("readiness distinguishes a malformed endpoint without exposing raw stdout", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "bw-readiness-endpoint-"))
   const runtime = path.join(root, "fixture")
   writeFileSync(runtime, '#!/bin/sh\nprintf "raw endpoint must not be included\\n"\n', {

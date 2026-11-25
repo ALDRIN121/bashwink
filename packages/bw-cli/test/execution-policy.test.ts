@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { posixTest } from "./platform.js"
 import { Database } from "bun:sqlite"
 import {
   existsSync,
@@ -75,7 +76,7 @@ async function withRuntime(
   }
 }
 
-test("a failed private server gets no prompt arguments or client launch", async () => {
+posixTest("a failed private server gets no prompt arguments or client launch", async () => {
   await withRuntime(async (run, root) => {
     const result = await run(["run", "hello"])
     expect(result.exitCode).toBe(3)

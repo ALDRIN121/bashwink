@@ -58,6 +58,8 @@ function fixtureRepo(files: Record<string, string>, run: (dir: string) => void):
     git(dir, ["init", "-q", "-b", "main"])
     git(dir, ["config", "user.name", "fixture"])
     git(dir, ["config", "user.email", "fixture@bashwink.invalid"])
+    // The fixtures assert byte-exact restore of LF files; Git for Windows would otherwise convert on checkout.
+    git(dir, ["config", "core.autocrlf", "false"])
     for (const [name, content] of Object.entries(files))
       writeFileSync(path.join(dir, name), content, "utf8")
     git(dir, ["add", "-A"])

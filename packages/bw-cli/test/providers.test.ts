@@ -12,6 +12,7 @@
  */
 
 import { describe, expect, test } from "bun:test"
+import { posixTest } from "./platform.js"
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -219,7 +220,7 @@ describe("credential references", () => {
 })
 
 describe("key file permissions", () => {
-  test("a 0600 key file is reported as protected", () => {
+  posixTest("a 0600 key file is reported as protected", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "bw-mode-"))
     const file = path.join(directory, "key")
     writeFileSync(file, "value", { mode: 0o600 })
@@ -231,16 +232,19 @@ describe("key file permissions", () => {
     expect(describeCredential(state, "settings")).toContain("mode 600")
   })
 
-  test("a world-readable key file is flagged, because the bits are the only protection", () => {
-    const directory = mkdtempSync(path.join(tmpdir(), "bw-mode-"))
-    const file = path.join(directory, "key")
-    writeFileSync(file, "value", { mode: 0o644 })
-    chmodSync(file, 0o644)
-    const state = credentialRef(`{file:${file}}`)
-    if (state.kind !== "file") throw new Error("expected a file reference")
-    expect(state.groupOrWorldReadable).toBe(true)
-    expect(describeCredential(state, "settings")).toContain("chmod 600")
-  })
+  posixTest(
+    "a world-readable key file is flagged, because the bits are the only protection",
+    () => {
+      const directory = mkdtempSync(path.join(tmpdir(), "bw-mode-"))
+      const file = path.join(directory, "key")
+      writeFileSync(file, "value", { mode: 0o644 })
+      chmodSync(file, 0o644)
+      const state = credentialRef(`{file:${file}}`)
+      if (state.kind !== "file") throw new Error("expected a file reference")
+      expect(state.groupOrWorldReadable).toBe(true)
+      expect(describeCredential(state, "settings")).toContain("chmod 600")
+    },
+  )
 
   test("a missing file is not reported as a permission problem", () => {
     const state = credentialRef(`{file:${path.join(tmpdir(), "bw-no-such-key")}}`)
@@ -250,15 +254,44 @@ describe("key file permissions", () => {
   })
 })
 
+describe("key file protection on Windows", () => {
+  test("where file modes mean nothing the description says so instead of claiming mode 600", () => {
+    const text = describeCredential(
+      {
+        kind: "file",
+        file: "C:\\keys\\k",
+        present: true,
+        groupOrWorldReadable: false,
+        modeChecked: false,
+      },
+      "settings",
+    )
+    expect(text).toContain("not checked on Windows")
+    expect(text).not.toContain("mode 600")
+  })
+})
+
 describe("credential usability", () => {
   test("present env, present file and literal are usable; absent and none are not", () => {
     expect(credentialUsable({ kind: "env", variable: "X", present: true })).toBe(true)
     expect(credentialUsable({ kind: "env", variable: "X", present: false })).toBe(false)
     expect(
-      credentialUsable({ kind: "file", file: "/k", present: true, groupOrWorldReadable: false }),
+      credentialUsable({
+        kind: "file",
+        file: "/k",
+        present: true,
+        groupOrWorldReadable: false,
+        modeChecked: true,
+      }),
     ).toBe(true)
     expect(
-      credentialUsable({ kind: "file", file: "/k", present: false, groupOrWorldReadable: false }),
+      credentialUsable({
+        kind: "file",
+        file: "/k",
+        present: false,
+        groupOrWorldReadable: false,
+        modeChecked: true,
+      }),
     ).toBe(false)
     expect(credentialUsable({ kind: "literal", present: true })).toBe(true)
     expect(credentialUsable({ kind: "none" })).toBe(false)

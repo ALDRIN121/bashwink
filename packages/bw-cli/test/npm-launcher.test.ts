@@ -76,7 +76,9 @@ describe("binary lookup", () => {
     })
     put(path.join(packageRoot, "node_modules/bun/bin/bun.exe"))
     expect(launcher.findBinary("@oven/bun-darwin-aarch64", "bun", "", packageRoot)).toBeUndefined()
-    expect(launcher.findBinary("bun", "bun", ".exe", packageRoot)).toEndWith("bun/bin/bun.exe")
+    expect(launcher.findBinary("bun", "bun", ".exe", packageRoot)).toEndWith(
+      path.join("bun", "bin", "bun.exe"),
+    )
     // A hoisted install (dependency next to the package) is found too.
     put(path.join(base, "node_modules/bun/bin/bun.exe"))
     expect(launcher.findBinary("bun", "bun", ".exe", packageRoot)).toBeDefined()

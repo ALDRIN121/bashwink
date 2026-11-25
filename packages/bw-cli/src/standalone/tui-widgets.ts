@@ -1477,6 +1477,7 @@ export interface HybridPermissionOptions {
   readonly allowAlways: boolean
   readonly allowAcceptEdits?: boolean
   readonly yesMeansAcceptEdits?: boolean
+  readonly defaultChoice?: ApprovalDecision
   readonly alwaysSummary?: string
   readonly signal?: AbortSignal
 }
@@ -1502,7 +1503,8 @@ export async function askHybridPermission(
         return list
       })()
   let typed = ""
-  let selectedIdx = choices.length - 1
+  const preferredIdx = opts.defaultChoice ? choices.indexOf(opts.defaultChoice) : -1
+  let selectedIdx = preferredIdx >= 0 ? preferredIdx : choices.length - 1
   let renderedRows = 0
 
   const resolveTypedDecision = (text: string): ApprovalDecision => {
@@ -1524,24 +1526,24 @@ export async function askHybridPermission(
   }
 
   const pill = (dec: ApprovalDecision, active: boolean): string => {
-    const label = opts.yesMeansAcceptEdits
+    const base = opts.yesMeansAcceptEdits
       ? dec === "accept-edits"
-        ? " Yes (accept-edits) (y) "
+        ? "Yes (accept-edits) (y)"
         : dec === "once"
-          ? " Once (o) "
-          : " Reject (n) "
+          ? "Once (o)"
+          : "Reject (n)"
       : dec === "once"
-        ? " Allow once (y) "
+        ? "Allow once (y)"
         : dec === "accept-edits"
-          ? " Accept-edits mode (e) "
+          ? "Accept-edits mode (e)"
           : dec === "always"
-            ? " Always allow (a) "
-            : " Reject (n) "
-    if (active) return style.selectedRow(label)
-    if (dec === "once") return opts.yesMeansAcceptEdits ? style.cyan(label.trim()) : style.green(label.trim())
-    if (dec === "accept-edits") return opts.yesMeansAcceptEdits ? style.green(label.trim()) : style.yellow(label.trim())
-    if (dec === "always") return style.cyan(label.trim())
-    return style.muted(label.trim())
+            ? "Always allow (a)"
+            : "Reject (n)"
+    if (active) return style.selectedRow(` ▸ ${base} `)
+    if (dec === "once") return opts.yesMeansAcceptEdits ? style.cyan(base) : style.green(base)
+    if (dec === "accept-edits") return opts.yesMeansAcceptEdits ? style.green(base) : style.yellow(base)
+    if (dec === "always") return style.cyan(base)
+    return style.muted(base)
   }
 
   const render = () => {

@@ -75,6 +75,7 @@ async function main() {
     ["packages/bw-cli/src/paths.ts", "packages/bw-cli/src/paths.ts"],
     ["packages/bw-cli/src/trust.ts", "packages/bw-cli/src/trust.ts"],
     ["packages/bw-cli/src/test-changes.ts", "packages/bw-cli/src/test-changes.ts"],
+    ["packages/bw-cli/src/usage-guard.ts", "packages/bw-cli/src/usage-guard.ts"],
     ["packages/bw-cli/src/standalone", "packages/bw-cli/src/standalone"],
     ["packages/bw-cli/test/standalone", "packages/bw-cli/test/standalone"],
   ];

@@ -2018,11 +2018,12 @@ export async function runStandalone(
                     )
                     const dec = await askPermissionDecision(
                       io,
-                      "Shall I edit & switch to accept-edits mode? [y/N]",
+                      "Shall I edit & switch to accept-edits mode? [Y/n]",
                       {
                         allowAlways: false,
                         allowAcceptEdits: true,
                         yesMeansAcceptEdits: true,
+                        defaultChoice: "accept-edits",
                         ...(currentAbort ? { signal: currentAbort.signal } : {}),
                       },
                     )

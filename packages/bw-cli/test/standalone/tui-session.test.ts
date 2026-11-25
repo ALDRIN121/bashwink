@@ -954,3 +954,101 @@ test("OpenCode markdown table/code renderer, shell card, grouped read burst, and
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test("real PTY untrusted session unlocks & switches to accept-edits on bare Enter at Shall I edit prompt", async (t) => {
+  const pyCheck = spawnSync("python3", ["-c", "import pty, termios"], { encoding: "utf8" })
+  if (pyCheck.status !== 0) {
+    t.skip("python3 pty module unavailable")
+    return
+  }
+
+  const root = mkdtempSync(path.join(tmpdir(), "bw-untrusted-enter-"))
+  const home = path.join(root, "home")
+  const ws = path.join(root, "ws")
+  mkdirSync(home, { recursive: true })
+  mkdirSync(ws, { recursive: true })
+
+  let turn = 0
+  const srv = createServer((req, res) => {
+    let raw = ""
+    req.on("data", (c) => (raw += String(c)))
+    req.on("end", () => {
+      req.resume()
+      turn += 1
+      res.writeHead(200, { "content-type": "application/json" })
+      if (turn === 1) {
+        res.end(
+          JSON.stringify({
+            choices: [
+              {
+                finish_reason: "tool_calls",
+                message: {
+                  role: "assistant",
+                  content: "",
+                  tool_calls: [
+                    {
+                      id: "c_new_1",
+                      type: "function",
+                      function: {
+                        name: "edit_file",
+                        arguments: JSON.stringify({
+                          path: "hello.py",
+                          create: true,
+                          newText: "print('hi')\n",
+                        }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        )
+        return
+      }
+      res.end(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { role: "assistant", content: "Created hello.py." } }],
+        }),
+      )
+    })
+  })
+
+  await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", resolve))
+  const port = (srv.address() as { port: number }).port
+
+  try {
+    const resolved = paths({ BASHWINK_HOME: home })
+    mkdirSync(resolved.config, { recursive: true })
+    writeFileSync(
+      path.join(resolved.config, "standalone.json"),
+      JSON.stringify({
+        version: 1,
+        providerId: "custom-local",
+        endpointType: "local",
+        baseURL: `http://127.0.0.1:${port}/v1`,
+        model: "unlock-model",
+        credential: { kind: "none" },
+        updatedAt: "2026-11-26T00:00:00.000Z",
+      }),
+      "utf8",
+    )
+
+    // Deliberately DO NOT pre-trust workspace; decline startup trust via Enter -> inline edit unlock accepts on bare Enter!
+    const steps = [
+      { wait: "bashwink> ", send: "create hello.py\r" },
+      { wait: "Trust this workspace for interactive edit/command approvals? [y/N]", send: "\r" },
+      { wait: "Continuing in read-only mode" },
+      { wait: "Shall I edit & switch to accept-edits mode? [Y/n]", delay: 0.05, send: "\r" },
+      { wait: "Created hello.py." },
+      { wait: "mode:accept-edits" },
+      { send: "/exit\r" },
+    ]
+    const parsed = await runPtyDriver(ws, home, 32, 120, steps)
+    assert.equal(parsed.exitCode, 0, parsed.output)
+    assert.equal(readFileSync(path.join(ws, "hello.py"), "utf8"), "print('hi')\n")
+  } finally {
+    await new Promise<void>((resolve) => srv.close(() => resolve()))
+    rmSync(root, { recursive: true, force: true })
+  }
+})

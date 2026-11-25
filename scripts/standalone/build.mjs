@@ -90,6 +90,7 @@ function sourceFiles() {
     path.join("packages", "bw-cli", "src", "paths.ts"),
     path.join("packages", "bw-cli", "src", "trust.ts"),
     path.join("packages", "bw-cli", "src", "test-changes.ts"),
+    path.join("packages", "bw-cli", "src", "usage-guard.ts"),
     ...standaloneFiles,
   ];
 }

@@ -507,7 +507,13 @@ export async function main(input: readonly string[]): Promise<MainResult> {
   }
 
   // Anything else belongs to the runtime.
-  if (STANDARD_BUILD && !process.env["BASHWINK_OPENCODE_BIN"]) {
+  //
+  // A locally built engine arrives as a *manifest*, not as BASHWINK_OPENCODE_BIN, so requiring the
+  // env var here would make a verified local engine unusable through the npm launcher — the engine
+  // builds, verifies, and then cannot start (exit 127). Either credential authorizes the runtime;
+  // neither is invented, and both are verified before use.
+  const engineManifestFromLauncher = process.env["BASHWINK_ENGINE_MANIFEST"]
+  if (STANDARD_BUILD && !process.env["BASHWINK_OPENCODE_BIN"] && !engineManifestFromLauncher) {
     // The launcher resolves the pinned runtime and passes it explicitly. Searching PATH instead could
     // run some other OpenCode, so the standard build refuses to guess.
     err(
@@ -521,11 +527,12 @@ export async function main(input: readonly string[]): Promise<MainResult> {
     // Task 4: a packaged build resolves the engine from the local build manifest and verifies it.
     // The old `bundledOnly` path is kept for a bundle that ships no manifest — it still refuses to
     // search PATH, so neither branch can run an engine this build did not produce.
-    const engineManifest = RELEASE_BUILD
-      ? (process.env["BASHWINK_ENGINE_MANIFEST"] ?? path.join(MODULE_DIR, "..", "engine-manifest.json"))
-      : undefined
+    const engineManifest =
+      RELEASE_BUILD || STANDARD_BUILD
+        ? (engineManifestFromLauncher ?? path.join(MODULE_DIR, "..", "engine-manifest.json"))
+        : undefined
     runtime = resolveRuntime(
-      RELEASE_BUILD
+      RELEASE_BUILD || STANDARD_BUILD
         ? engineManifest !== undefined && existsSync(engineManifest)
           ? { engineManifest }
           : { bundled: path.join(MODULE_DIR, "..", "libexec", "opencode"), bundledOnly: true }

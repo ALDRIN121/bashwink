@@ -26,8 +26,11 @@ import argparse
 import hashlib
 import json
 import os
+import platform
+import shutil
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -39,7 +42,31 @@ CACHE = Path(os.environ.get("BASHWINK_NATIVE_CACHE", REPO / "build" / "native-in
 MANIFEST = CACHE / "native-inputs.json"
 
 GHOSTTY_REPO = "https://github.com/ghostty-org/ghostty.git"
+OPENTUI_REPO = "https://github.com/anomalyco/opentui.git"
+OPENTUI_REVISION = "d4a2af24ba50636da5f222367f91746a1bf89644"
+WANT_ZIG_PTY = "0.16.0"
+WANT_ZIG_OPENTUI = "0.17.0"
 MARKER_NAME = ".bw-complete"
+
+# Mapping from manifest target to OpenTUI native library build matrix and npm package directory names.
+OPENTUI_TARGET_BUILDS: dict[str, list[tuple[str, str, str]]] = {
+    "darwin-arm64": [("aarch64-macos.13.0", "aarch64-macos", "core-darwin-arm64")],
+    "darwin-x64": [("x86_64-macos.13.0", "x86_64-macos", "core-darwin-x64")],
+    "linux-x64": [("x86_64-linux-gnu.2.17", "x86_64-linux", "core-linux-x64")],
+    "linux-arm64": [("aarch64-linux-gnu.2.17", "aarch64-linux", "core-linux-arm64")],
+    "linux-x64-musl": [
+        ("x86_64-linux-musl", "x86_64-linux-musl", "core-linux-x64-musl"),
+        ("x86_64-linux-gnu.2.17", "x86_64-linux", "core-linux-x64"),
+    ],
+    "linux-arm64-musl": [
+        ("aarch64-linux-musl", "aarch64-linux-musl", "core-linux-arm64-musl"),
+        ("aarch64-linux-gnu.2.17", "aarch64-linux", "core-linux-arm64"),
+    ],
+    "win32-x64": [("x86_64-windows-gnu", "x86_64-windows", "core-win32-x64")],
+    "win32-arm64": [("aarch64-windows-gnu", "aarch64-windows", "core-win32-arm64")],
+}
+
+FFMPEG_MARKERS = (b"avcodec", b"avformat", b"swscale", b"swresample", b"libavutil", b"_ff_")
 
 
 class FetchRefused(RuntimeError):
@@ -105,9 +132,19 @@ def ghostty_dir(rev: str) -> Path:
     return CACHE / f"ghostty-{rev}"
 
 
-def ensure_ghostty(rev: str) -> tuple[Path, str]:
-    """Clone the pinned Ghostty revision if absent; return the directory and its tree digest."""
-    target = ghostty_dir(rev)
+def git_executable() -> str:
+    git = shutil.which("git")
+    if git:
+        return git
+    raise FetchRefused(
+        "Git is required to fetch pinned native inputs, but `git` was not found on PATH.\n"
+        "Install Git and retry: macOS (`xcode-select --install`), Linux (`apt/dnf install git`), "
+        "Windows (`winget install Git.Git`)."
+    )
+
+
+def ensure_pinned_repo(repo_url: str, rev: str, target: Path, label: str) -> tuple[Path, str]:
+    """Clone `repo_url` at pinned `rev` if absent; return directory and tree digest."""
     marker = target / MARKER_NAME
 
     if marker.is_file():
@@ -116,38 +153,90 @@ def ensure_ghostty(rev: str) -> tuple[Path, str]:
     if target.exists():
         # A half-finished directory is deleted rather than reused: a partial checkout that happens
         # to satisfy a build is worse than no checkout at all.
-        run(["rm", "-rf", str(target)])
+        shutil.rmtree(target)
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    run(["git", "init", "--quiet", str(target)])
-    run(["git", "-C", str(target), "fetch", "--depth=1", GHOSTTY_REPO, rev])
-    run(["git", "-C", str(target), "-c", "core.longpaths=true", "checkout", "--detach", rev])
+    git = git_executable()
+    run([git, "init", "--quiet", str(target)])
+    run([git, "-C", str(target), "fetch", "--depth=1", repo_url, rev])
+    run([git, "-C", str(target), "-c", "core.longpaths=true", "checkout", "--detach", rev])
 
-    head = run(["git", "-C", str(target), "rev-parse", "HEAD"]).stdout.strip()
+    head = run([git, "-C", str(target), "rev-parse", "HEAD"]).stdout.strip()
     if head != rev:
         raise FetchRefused(f"checked out {head}, expected {rev}")
 
     digest = tree_digest(target)
     marker.write_text(
-        json.dumps({"revision": rev, "treeDigest": digest, "source": GHOSTTY_REPO}, indent=2) + "\n",
+        json.dumps({"revision": rev, "treeDigest": digest, "source": repo_url}, indent=2) + "\n",
         encoding="utf-8",
     )
     return target, digest
 
 
-def zig_executable() -> Path | None:
-    """Locate a Zig the daemon can use (0.16.x). Absent is a valid answer, not an error."""
-    explicit = os.environ.get("BASHWINK_ZIG_PTY")
-    if explicit and Path(explicit).is_file():
-        return Path(explicit)
-    for candidate in (
-        Path("/tmp/zig-install/zig-aarch64-macos-0.16.0"),
-        REPO / "build" / "toolchains" / "zig-0.16.0",
+def ensure_ghostty(rev: str) -> tuple[Path, str]:
+    """Clone the pinned Ghostty revision if absent; return the directory and its tree digest."""
+    return ensure_pinned_repo(GHOSTTY_REPO, rev, ghostty_dir(rev), "Ghostty")
+
+
+def ensure_opentui(rev: str = OPENTUI_REVISION) -> tuple[Path, str]:
+    """Clone the pinned OpenTUI revision if absent; return the directory and its tree digest."""
+    return ensure_pinned_repo(OPENTUI_REPO, rev, CACHE / f"opentui-{rev}", "OpenTUI")
+
+
+def _zig_archive_hint(version: str) -> str:
+    machine = platform.machine().lower()
+    arch = "aarch64" if machine in ("arm64", "aarch64") else "x86_64"
+    if sys.platform == "darwin":
+        name = f"zig-{arch}-macos-{version}.tar.xz"
+    elif sys.platform == "win32":
+        name = f"zig-{arch}-windows-{version}.zip"
+    else:
+        name = f"zig-{arch}-linux-{version}.tar.xz"
+    return (
+        f"Download https://ziglang.org/download/{version}/{name} and extract it under "
+        f"{REPO / 'build' / 'toolchains'} (or set BASHWINK_ZIG_{'PTY' if version == WANT_ZIG_PTY else 'OPENTUI'})."
+    )
+
+
+def zig_executable(wanted: str = WANT_ZIG_PTY) -> Path | None:
+    """Locate an exact Zig version (`0.16.0` or `0.17.0`). Absent returns None."""
+    env_var = "BASHWINK_ZIG_PTY" if wanted == WANT_ZIG_PTY else "BASHWINK_ZIG_OPENTUI"
+    explicit = os.environ.get(env_var)
+    if explicit:
+        path = Path(explicit)
+        if not path.is_file():
+            return None
+        try:
+            out = subprocess.run([str(path), "version"], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return path if (out.returncode == 0 and out.stdout.strip() == wanted) else None
+
+    exe = "zig.exe" if sys.platform == "win32" else "zig"
+    candidates: list[Path] = []
+    for root in (
+        Path("/tmp/zig-install"),
+        REPO / "build" / "toolchains",
+        Path.home() / ".local" / "share" / "zig",
     ):
-        if candidate.is_dir() and (candidate / "zig").is_file():
-            return candidate / "zig"
-    which = subprocess.run(["which", "zig"], capture_output=True, text=True)
-    return Path(which.stdout.strip()) if which.returncode == 0 and which.stdout.strip() else None
+        if not root.is_dir():
+            continue
+        for candidate in sorted(root.glob("zig-*")):
+            binary = candidate / exe
+            if binary.is_file():
+                candidates.append(binary)
+    on_path = shutil.which("zig")
+    if on_path:
+        candidates.append(Path(on_path))
+
+    for binary in candidates:
+        try:
+            out = subprocess.run([str(binary), "version"], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if out.returncode == 0 and out.stdout.strip() == wanted:
+            return binary
+    return None
 
 
 def check(rev: str) -> dict:
@@ -182,20 +271,201 @@ def env_exports(rev: str, zig: Path | None) -> list[str]:
     return exports
 
 
+def _ffmpeg_markers(path: Path) -> set[str]:
+    found: set[str] = set()
+    with path.open("rb") as handle:
+        while chunk := handle.read(8 << 20):
+            for marker in FFMPEG_MARKERS:
+                if marker in chunk:
+                    found.add(marker.decode())
+    return found
+
+
+def _extract_opentui_zig_deps(native_dir: Path) -> None:
+    deps_dir = native_dir / "zig-deps"
+    archive = native_dir / "src" / "vendor" / "zig-deps.tar.gz"
+    marker = deps_dir / ".ready"
+    archive_digest = sha256_file(archive)
+    if marker.is_file() and marker.read_text(encoding="utf-8").strip() == archive_digest:
+        return
+    if deps_dir.exists():
+        shutil.rmtree(deps_dir)
+    deps_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive, "r:gz") as tar:
+        tar.extractall(deps_dir, filter="data")
+    marker.write_text(archive_digest + "\n", encoding="utf-8")
+
+
+def _find_built_opentui_lib(opentui_root: Path, output_name: str) -> Path:
+    candidates: list[Path] = []
+    for base in (opentui_root / "packages" / "native" / "zig-out", opentui_root / "packages"):
+        if not base.is_dir():
+            continue
+        for ext in ("dylib", "so", "dll"):
+            candidates.extend(sorted(base.rglob(f"{output_name}/*.{ext}")))
+    if not candidates:
+        raise FetchRefused(
+            f"OpenTUI build finished for {output_name}, but no shared library was found under {opentui_root / 'packages'}"
+        )
+    return candidates[0]
+
+
+def _install_clean_opentui_lib(pkg_name: str, built_lib: Path) -> int:
+    targets: list[Path] = []
+    direct = VENDOR / "node_modules" / "@opentui" / pkg_name
+    if direct.is_dir():
+        targets.append(direct)
+    bun_store = VENDOR / "node_modules" / ".bun"
+    if bun_store.is_dir():
+        for directory in sorted(bun_store.glob(f"@opentui+{pkg_name}@*/node_modules/@opentui/{pkg_name}")):
+            if directory.is_dir():
+                targets.append(directory)
+    replaced = 0
+    for target_dir in targets:
+        existing = [
+            p
+            for pattern in ("*.dylib", "*.so", "*.dll")
+            for p in sorted(target_dir.glob(pattern))
+        ]
+        dest_names = [p.name for p in existing] if existing else [built_lib.name]
+        for old in existing:
+            old.unlink()
+        for name in dest_names:
+            shutil.copy2(built_lib, target_dir / name)
+            replaced += 1
+    return replaced
+
+
+def check_native_toolchains() -> tuple[str, str, Path, Path]:
+    cargo = shutil.which("cargo")
+    rustc = shutil.which("rustc")
+    if not cargo or not rustc:
+        raise FetchRefused(
+            "Rust and Cargo (>= 1.90.0) are required to build the local PTY helper.\n"
+            "Install Rust with rustup (https://rustup.rs) and ensure rustc 1.90.0+ is on PATH."
+        )
+    zig_pty = zig_executable(WANT_ZIG_PTY)
+    if zig_pty is None:
+        raise FetchRefused(
+            f"Zig {WANT_ZIG_PTY} is required to build Ghostty for the local PTY helper.\n"
+            + _zig_archive_hint(WANT_ZIG_PTY)
+        )
+    zig_opentui = zig_executable(WANT_ZIG_OPENTUI)
+    if zig_opentui is None:
+        raise FetchRefused(
+            f"Zig {WANT_ZIG_OPENTUI} is required to build the no-FFmpeg OpenTUI library.\n"
+            + _zig_archive_hint(WANT_ZIG_OPENTUI)
+        )
+    return cargo, rustc, zig_pty, zig_opentui
+
+
+def prepare_engine_inputs(target: str, bun: str | None = None) -> dict:
+    """Prepare a clean checkout to build the local engine: vendor deps, PTY helper, clean libopentui."""
+    if target not in OPENTUI_TARGET_BUILDS:
+        raise FetchRefused(f"unsupported target {target!r}")
+    cargo, _rustc, zig_pty, zig_opentui = check_native_toolchains()
+    bun_bin = bun or os.environ.get("BASHWINK_BUN") or shutil.which("bun")
+    if not bun_bin:
+        raise FetchRefused("Bun 1.4.4 is required to install vendor/engine dependencies and build the engine.")
+
+    env = dict(os.environ)
+    if Path(bun_bin).is_file():
+        env["PATH"] = f"{Path(bun_bin).resolve().parent}{os.pathsep}{env.get('PATH', '')}"
+
+    # 1. Install vendored OpenCode workspace dependencies when absent (including cross-libc on musl).
+    builds = OPENTUI_TARGET_BUILDS[target]
+    need_vendor_install = not (VENDOR / "node_modules" / ".bun").is_dir() or any(
+        not list((VENDOR / "node_modules" / ".bun").glob(f"@opentui+{pkg}@*"))
+        for _, _, pkg in builds
+    )
+    if need_vendor_install:
+        print("prepare  installing vendor/engine JS dependencies", flush=True)
+        install_cmd = [bun_bin, "install", "--frozen-lockfile", "--os=*", "--cpu=*", "--libc=*"]
+        res = subprocess.run(install_cmd, cwd=VENDOR, env=env)
+        if res.returncode != 0:
+            raise FetchRefused(f"`{' '.join(install_cmd)}` failed in {VENDOR} (exit {res.returncode})")
+
+    # 2. Build local PTY helper (process-daemon + Ghostty) if absent.
+    pty_name = "opencode-pty.exe" if target.startswith("win32-") else "opencode-pty"
+    pty_out = REPO / "build" / "pty" / target / pty_name
+    if not pty_out.is_file():
+        print(f"prepare  building {pty_name} with Zig {WANT_ZIG_PTY}", flush=True)
+        rev = ghostty_revision()
+        ghostty, _ = ensure_ghostty(rev)
+        pty_env = dict(env)
+        pty_env["GHOSTTY_SOURCE_DIR"] = str(ghostty)
+        pty_env["ZIG_GLOBAL_CACHE_DIR"] = str(CACHE / "zig-cache")
+        pty_env["PATH"] = f"{zig_pty.resolve().parent}{os.pathsep}{pty_env.get('PATH', '')}"
+        cargo_res = subprocess.run([cargo, "build", "--locked", "--release"], cwd=DAEMON, env=pty_env)
+        if cargo_res.returncode != 0:
+            raise FetchRefused(f"`cargo build --locked --release` failed in {DAEMON} (exit {cargo_res.returncode})")
+        built_pty = DAEMON / "target" / "release" / pty_name
+        if not built_pty.is_file():
+            raise FetchRefused(f"Cargo finished, but {built_pty} was not produced")
+        pty_out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(built_pty, pty_out)
+
+    # 3. Rebuild FFmpeg-free libopentui and replace stock registry native libraries.
+    need_clean_opentui = False
+    for _, _, pkg in builds:
+        libs = list((VENDOR / "node_modules" / ".bun").glob(f"@opentui+{pkg}@*/node_modules/@opentui/{pkg}/*"))
+        native_libs = [p for p in libs if p.suffix in (".dylib", ".so", ".dll")]
+        if not native_libs or any(_ffmpeg_markers(p) for p in native_libs):
+            need_clean_opentui = True
+            break
+
+    if need_clean_opentui:
+        print(f"prepare  building FFmpeg-free libopentui with Zig {WANT_ZIG_OPENTUI}", flush=True)
+        opentui_root, _ = ensure_opentui(OPENTUI_REVISION)
+        native_dir = opentui_root / "packages" / "native"
+        _extract_opentui_zig_deps(native_dir)
+        zig_env = dict(os.environ)
+        zig_env["ZIG_GLOBAL_CACHE_DIR"] = str(CACHE / "zig-cache")
+        for zig_target, output_name, pkg_name in builds:
+            zig_res = subprocess.run(
+                [str(zig_opentui), "build", "-Doptimize=ReleaseFast", f"-Dlibrary-target={zig_target}"],
+                cwd=native_dir,
+                env=zig_env,
+            )
+            if zig_res.returncode != 0:
+                raise FetchRefused(
+                    f"building FFmpeg-free libopentui failed for {zig_target} (exit {zig_res.returncode})"
+                )
+            built_lib = _find_built_opentui_lib(opentui_root, output_name)
+            markers = _ffmpeg_markers(built_lib)
+            if markers:
+                raise FetchRefused(f"rebuilt {built_lib} unexpectedly contained FFmpeg markers {sorted(markers)}")
+            replaced = _install_clean_opentui_lib(pkg_name, built_lib)
+            if replaced == 0:
+                raise FetchRefused(
+                    f"could not find @opentui/{pkg_name} under {VENDOR / 'node_modules'} to install {built_lib.name}"
+                )
+
+    return {"pty": str(pty_out), "target": target}
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--fetch", action="store_true", help="clone the pinned inputs")
     ap.add_argument("--check", action="store_true", help="report state; exit 1 when incomplete")
     ap.add_argument("--env", action="store_true", help="print shell exports for the build")
+    ap.add_argument("--prepare", action="store_true", help="prepare clean checkout inputs (deps, PTY, no-FFmpeg OpenTUI)")
+    ap.add_argument("--target", help="manifest target key for --prepare (e.g. darwin-arm64)")
+    ap.add_argument("--bun", help="path to pinned Bun 1.4.4 executable for --prepare")
     args = ap.parse_args(argv)
 
     try:
+        if args.prepare:
+            if not args.target:
+                raise FetchRefused("--prepare requires --target")
+            print(json.dumps(prepare_engine_inputs(args.target, args.bun), indent=2))
+            return 0
         rev = ghostty_revision()
         if args.fetch:
             target, digest = ensure_ghostty(rev)
             print(f"ghostty {rev} -> {target}")
             print(f"treeDigest {digest}")
-        zig = zig_executable()
+        zig = zig_executable(WANT_ZIG_PTY)
         if args.env:
             for line in env_exports(rev, zig):
                 print(line)

@@ -48,7 +48,7 @@ class Live(q.Scenario):
 
     def __enter__(self):
         for rel, text in CODING_FILES.items():
-            (self.project / rel).write_text(text, encoding="utf-8", newline="\n")
+            (self.project / rel).write_bytes(text.replace("\r\n", "\n").encode("utf-8"))
         for step in (["init", "-q", "."], ["config", "user.name", "qual"], ["config", "user.email", "qual@bashwink.invalid"],
                      ["config", "core.autocrlf", "false"], ["add", "-A"], ["commit", "-q", "-m", "baseline"]):
             subprocess.run(["git", *step], cwd=self.project, check=True, capture_output=True)

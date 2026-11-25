@@ -19,7 +19,6 @@ export const UPSTREAM_CREDENTIAL_VARIABLES = [
   "OPENCODE_ACCOUNT_TOKEN",
 ] as const
 
-
 const CLIENT_COMMANDS = new Set(["run", "models", "stats", "session"])
 
 const CONTROL_COMMANDS = new Set([
@@ -188,6 +187,8 @@ export function launchEnvironment(
   // (`packages/ai/src/providers/opencode.ts`). Removed at the one point every backend passes
   // through, so no launch path can reintroduce it.
   for (const name of UPSTREAM_CREDENTIAL_VARIABLES) delete environment[name]
+  // Never auto-select OpenCode's hosted free-model gateway on a clean first run.
+  environment["OPENCODE_DISABLE_FREE_MODELS"] = "1"
 
   const content = (JSON.parse(environment["OPENCODE_CONFIG_CONTENT"] ?? "{}") ?? {}) as Record<
     string,

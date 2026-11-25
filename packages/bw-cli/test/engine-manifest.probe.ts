@@ -51,7 +51,9 @@ function caseFrom(name: string, expect: "resolve" | "refuse", mutate?: (dir: str
       const ok = expect === "resolve"
       rows.push({ name, expect, command: path.relative(dir, runtime.command) || runtime.command })
       console.log(`  ${ok ? "PASS" : "FAIL"}  ${name}`)
-      console.log(`        resolved: source=${runtime.source} command=${path.relative(dir, runtime.command)}`)
+      console.log(
+        `        resolved: source=${runtime.source} command=${path.relative(dir, runtime.command)}`,
+      )
       console.log(`        sha256:   ${runtime.sha256}`)
       return ok
     } catch (error) {
@@ -84,7 +86,9 @@ results.push(
 )
 
 results.push(
-  caseFrom("4. no manifest at all", "refuse", (dir) => rmSync(path.join(dir, "engine-manifest.json"))),
+  caseFrom("4. no manifest at all", "refuse", (dir) =>
+    rmSync(path.join(dir, "engine-manifest.json")),
+  ),
 )
 
 results.push(

@@ -34,6 +34,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -205,15 +206,17 @@ def _toolchain_versions(
         explicit = os.environ.get(f"BASHWINK_{name.upper()}")
         if explicit and Path(explicit).is_file():
             return explicit
+        candidates = (f"{name}.exe", f"{name}.cmd", name) if sys.platform == "win32" else (name,)
         search = [toolchain_path] if toolchain_path else []
         search.extend(os.environ.get("PATH", "").split(os.pathsep))
         for directory in search:
             if not directory:
                 continue
-            candidate = Path(directory) / name
-            if candidate.is_file() and os.access(candidate, os.X_OK):
-                return str(candidate)
-        return None
+            for item in candidates:
+                candidate = Path(directory) / item
+                if candidate.is_file() and (sys.platform == "win32" or os.access(candidate, os.X_OK)):
+                    return str(candidate)
+        return shutil.which(name)
 
     def version_of(executable: str | None) -> tuple[str | None, str | None]:
         if not executable:
@@ -238,12 +241,13 @@ def _toolchain_versions(
     # the host default. Probing `rustc` from the repo root reports the *host* toolchain, which is
     # not what compiled the helper — and recording it as if it were would be a false provenance
     # claim. Resolve it from that directory instead.
-    daemon_dir = engine_dir / "packages" / "process-daemon"
+    daemon_dir = (engine_dir / "packages" / "process-daemon") if engine_dir else None
     daemon_rustc = None
-    if daemon_dir.is_dir():
+    rustc_exe = rustc_path or "rustc"
+    if daemon_dir and daemon_dir.is_dir():
         try:
             out = subprocess.run(
-                ["rustc", "--version"], cwd=daemon_dir, capture_output=True, text=True, timeout=60
+                [rustc_exe, "--version"], cwd=daemon_dir, capture_output=True, text=True, timeout=60
             )
             if out.returncode == 0 and out.stdout.strip():
                 daemon_rustc = out.stdout.strip().splitlines()[0]
@@ -279,29 +283,35 @@ WANT_ZIG_OPENTUI = "0.17.0"
 
 
 def default_zig(wanted: str) -> str | None:
-    """Find a Zig of exactly `wanted` under the known toolchain roots, or return None.
+    """Find a Zig of exactly `wanted` under the known toolchain roots or PATH, or return None.
 
     Wrong versions are skipped rather than accepted. A build recorded against an unverified
     toolchain is not attributable, and "close enough" here silently changes what the compiler emits.
     """
+    exe = "zig.exe" if sys.platform == "win32" else "zig"
     roots = [
         Path("/tmp/zig-install"),
         repo_root() / "build" / "toolchains",
         Path.home() / ".local" / "share" / "zig",
     ]
+    candidates: list[Path] = []
     for root in roots:
         if not root.is_dir():
             continue
         for candidate in sorted(root.glob("zig-*")):
-            binary = candidate / "zig"
-            if not binary.is_file():
-                continue
-            try:
-                out = subprocess.run([str(binary), "version"], capture_output=True, text=True, timeout=30)
-            except (OSError, subprocess.SubprocessError):
-                continue
-            if out.stdout.strip() == wanted:
-                return str(binary)
+            binary = candidate / exe
+            if binary.is_file():
+                candidates.append(binary)
+    on_path = shutil.which("zig")
+    if on_path:
+        candidates.append(Path(on_path))
+    for binary in candidates:
+        try:
+            out = subprocess.run([str(binary), "version"], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if out.stdout.strip() == wanted:
+            return str(binary)
     return None
 
 
@@ -311,6 +321,12 @@ def manifest_for_target(target: str, *, zig_daemon: str | None = None, zig_opent
     zig_daemon = zig_daemon or default_zig(WANT_ZIG_PTY)
     zig_opentui = zig_opentui or default_zig(WANT_ZIG_OPENTUI)
     pins = _vendor_pins()
+    upstream_json = repo_root() / UPSTREAM_MANIFEST
+    notices = (
+        {"inventory": str(UPSTREAM_MANIFEST), "sha256": sha256_file(upstream_json)}
+        if upstream_json.is_file()
+        else {"inventory": None, "sha256": None}
+    )
     return {
         "schemaVersion": SCHEMA_VERSION,
         "target": target,
@@ -322,7 +338,7 @@ def manifest_for_target(target: str, *, zig_daemon: str | None = None, zig_opent
         "toolchains": _toolchain_versions(
             zig_daemon, zig_opentui, engine_dir=repo_root() / "vendor" / "engine"
         ),
-        "notices": {"inventory": None, "sha256": None},
+        "notices": notices,
         "buildInputs": {},
     }
 
@@ -366,7 +382,7 @@ def preflight(*, engine_dir: Path, pty_dir: Path, target: str) -> dict[str, Path
             # worse problem.
             *(
                 (engine_dir / "node_modules" / ".bun").glob(
-                    f"@opentui+core-{spec['os']}-{spec['arch']}@*/node_modules/@opentui/core-{spec['os']}-{spec['arch']}"
+                    f"@opentui+core-{spec['os']}-{spec['arch']}*@*/node_modules/@opentui/core-{spec['os']}-{spec['arch']}*"
                 )
             ),
         }
@@ -428,6 +444,7 @@ def build(
     allow_download: bool = False,
     outdir: Path | None = None,
     dry_run: bool = False,
+    bun: str | None = None,
 ) -> dict:
     """Validate inputs, then drive the stock build script. Returns the manifest.
 
@@ -491,8 +508,13 @@ def build(
     )
     manifest["buildInputs"]["opentui"] = str(Path(inputs["opentui"]).name)
 
+    bun_executable = bun or os.environ.get("BASHWINK_BUN") or shutil.which("bun") or "bun"
+    env = dict(os.environ)
+    env["BASHWINK_BUN"] = bun_executable
+    if Path(bun_executable).is_file():
+        env["PATH"] = f"{Path(bun_executable).resolve().parent}{os.pathsep}{env.get('PATH', '')}"
     command = [
-        "bun",
+        bun_executable,
         "run",
         "script/build.ts",
         "--single" if _is_host_target(spec) else "--skip-install",
@@ -500,7 +522,6 @@ def build(
         "--skip-web-ui",
         f"--outdir={target_out / 'dist'}",
     ]
-    env = dict(os.environ)
     env["OPENCODE_TARGET"] = to_opencode_target(target)
     env["BASHWINK_PTY_DIR"] = str(pty_dir)
     env.setdefault("OPENCODE_VERSION", _vendor_version())
@@ -576,7 +597,10 @@ def build(
 
 def _is_host_target(spec: dict[str, str]) -> bool:
     host_os = {"darwin": "darwin", "linux": "linux", "win32": "win32"}.get(sys.platform, sys.platform)
-    host_arch = {"arm64": "arm64", "x86_64": "x64", "AMD64": "x64"}.get(os.uname().machine, os.uname().machine)
+    machine = platform.machine().lower()
+    host_arch = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x64", "amd64": "x64"}.get(
+        machine, machine
+    )
     return spec["os"] == host_os and spec["arch"] == host_arch
 
 
@@ -595,6 +619,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--engine", help="engine source tree (default: vendor/engine)")
     ap.add_argument("--pty-dir", help="directory holding the locally built opencode-pty")
     ap.add_argument("--outdir", help="output root (default: build/engine)")
+    ap.add_argument("--bun", help="path to the pinned Bun executable")
     ap.add_argument("--dry-run", action="store_true", help="validate and write the manifest, do not build")
     ap.add_argument("--manifest-only", action="store_true", help="print the manifest skeleton and exit")
     args = ap.parse_args(argv)
@@ -609,6 +634,7 @@ def main(argv: list[str]) -> int:
             pty_dir=Path(args.pty_dir) if args.pty_dir else None,
             outdir=Path(args.outdir) if args.outdir else None,
             dry_run=args.dry_run,
+            bun=args.bun,
         )
     except BuildRefused as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)

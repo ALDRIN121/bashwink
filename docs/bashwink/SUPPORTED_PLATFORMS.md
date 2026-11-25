@@ -65,3 +65,14 @@ packages that the launcher does not select); case-insensitive path handling in w
 Use `release/tester-kit/` (README, `windows-qualify.ps1`, `WINDOWS_TESTER_CHECKLIST.md`): Node 22 and Git only, no Python, WSL or
 Docker; the script writes a result file with no key in it; the checklist covers the screen, permissions, Ctrl+C, closing the
 terminal, sessions, paths and uninstall. Do not disable SmartScreen or antivirus; report any prompt verbatim.
+
+## v0.1.0-alpha.1 local-engine source-build qualification status (`local-engine/task-0`)
+
+| Target | Install | Bare `bashwink` launch | Coding task (controlled) | Upgrade | Uninstall | Host type / Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| macOS Apple Silicon (`darwin-arm64`) | PASS | PASS | PASS | PASS | PASS | Physical Apple Silicon host (`Darwin 27.0.0 arm64`); spaces + `npm_config_ignore_scripts=true` + scripted mock (`npm_qual.py` 72/72). Live paid model requires authorization. |
+| macOS Intel (`darwin-x64`) | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | No x64 macOS host available locally; prepare command `python3 scripts/build_npm_package.py --install`. |
+| Windows 11 x64 (`win32-x64`) | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | Source/manifest fixes applied (`windows-x64` mapping, `platform.machine()`, Zig/MSVC checks); run `python scripts/build_npm_package.py --install` in PowerShell or CI `npm package (windows-latest)`. |
+| Linux x64 glibc (`linux-x64`) | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | No Linux host available locally; run CI `npm package (ubuntu-latest)` or `python3 scripts/build_npm_package.py --install`. |
+| Linux ARM64 glibc (`linux-arm64`) | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | No Linux ARM64 host available locally; run `python3 scripts/build_npm_package.py --install`. |
+| Linux x64 / ARM64 musl (`linux-*-musl`) | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | Musl detection in `platform_arch()`, `engine-manifest.ts`, `bashwink.js`, and dual `gnu`+`musl` OpenTUI rebuild implemented; run on Alpine host/container to verify. |

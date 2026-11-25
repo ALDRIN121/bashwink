@@ -15,6 +15,8 @@ export function SidebarOnboarding(props: { context: Plugin.Context; sessionID: s
   const integrations = createMemo(() =>
     props.context.data.location.integration.list(session()?.location ?? props.context.location),
   )
+  const disableFree = () =>
+    ["1", "true"].includes(process.env.OPENCODE_DISABLE_FREE_MODELS?.toLowerCase() ?? "")
   const showOnboarding = createMemo(() => {
     if (dimensions().height < 22) return false
     const list = integrations()
@@ -54,10 +56,24 @@ export function SidebarOnboarding(props: { context: Plugin.Context; sessionID: s
               ✕
             </text>
           </box>
-          <text fg={props.context.theme.text.muted}>OpenCode includes free models so you can start immediately.</text>
-          <text fg={props.context.theme.text.muted}>
-            Connect from 75+ providers to use other models, including Claude, GPT, Gemini etc
-          </text>
+          <Show
+            when={!disableFree()}
+            fallback={
+              <>
+                <text fg={props.context.theme.text.muted}>
+                  Connect a model provider to get started.
+                </text>
+                <text fg={props.context.theme.text.muted}>
+                  Use Anthropic, OpenAI, Google, or a local/custom provider via /connect
+                </text>
+              </>
+            }
+          >
+            <text fg={props.context.theme.text.muted}>OpenCode includes free models so you can start immediately.</text>
+            <text fg={props.context.theme.text.muted}>
+              Connect from 75+ providers to use other models, including Claude, GPT, Gemini etc
+            </text>
+          </Show>
           <box
             id="sidebar.footer.getting-started.connect"
             flexDirection="row"

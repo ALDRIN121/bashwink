@@ -29,7 +29,7 @@ const SURFACES = [
     url: "models.opencode.ai",
     where: "vendor/engine/packages/core/src/models-dev.ts",
     state: "closed",
-    how: 'OPENCODE_DISABLE_MODELS_FETCH=1 on every launch path, so the timer never starts; the engine boots from the pinned snapshot compiled into the binary.',
+    how: "OPENCODE_DISABLE_MODELS_FETCH=1 on every launch path, so the timer never starts; the engine boots from the pinned snapshot compiled into the binary.",
     test: "test/engine-environment.test.ts",
   },
   {
@@ -37,7 +37,7 @@ const SURFACES = [
     url: "opencode.ai/update",
     where: "vendor/engine/packages/cli/src/services/updater.ts",
     state: "closed",
-    how: 'OPENCODE_DISABLE_AUTOUPDATE=1 returns before `latest()` is called, so no request is made even if the command is invoked.',
+    how: "OPENCODE_DISABLE_AUTOUPDATE=1 returns before `latest()` is called, so no request is made even if the command is invoked.",
     test: "test/engine-environment.test.ts",
   },
   {
@@ -100,8 +100,15 @@ test("the catalog fetch and updater are disabled at every launch point that spaw
   ]
   for (const file of spawners) {
     const source = read(file)
-    expect(source, `${file} lost OPENCODE_DISABLE_AUTOUPDATE`).toContain("OPENCODE_DISABLE_AUTOUPDATE")
-    expect(source, `${file} lost OPENCODE_DISABLE_MODELS_FETCH`).toContain("OPENCODE_DISABLE_MODELS_FETCH")
+    expect(source, `${file} lost OPENCODE_DISABLE_AUTOUPDATE`).toContain(
+      "OPENCODE_DISABLE_AUTOUPDATE",
+    )
+    expect(source, `${file} lost OPENCODE_DISABLE_MODELS_FETCH`).toContain(
+      "OPENCODE_DISABLE_MODELS_FETCH",
+    )
+    expect(source, `${file} lost OPENCODE_DISABLE_FREE_MODELS`).toContain(
+      "OPENCODE_DISABLE_FREE_MODELS",
+    )
   }
 })
 
@@ -126,6 +133,9 @@ test("no telemetry client is present at all", () => {
     const found = Bun.spawnSync(["git", "grep", "-nE", pattern, "--", "packages/bw-cli/src"], {
       cwd: repo,
     })
-    expect(found.exitCode, `telemetry route ${pattern} appeared in bw-cli:\n${found.stdout.toString()}`).not.toBe(0)
+    expect(
+      found.exitCode,
+      `telemetry route ${pattern} appeared in bw-cli:\n${found.stdout.toString()}`,
+    ).not.toBe(0)
   }
 })

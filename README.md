@@ -11,46 +11,77 @@ The local execution foundation is tracked in [BW-018](docs/bashwink/BW-018_IMPLE
 and [BW-030](docs/bashwink/BW-030_EXECUTION_BACKEND_DESIGN.md). See `docs/bashwink/IMPLEMENTATION_STATUS.md` and
 `docs/bashwink/NEXT_STEPS.md`.
 
-## v0.1.0-alpha.1 private npm candidate
+## v0.1.0-alpha.1 quick start (build & run from checkout)
 
-### Build the installer from source
+### 1. Prerequisites
 
-Use Node.js 22 with npm, Git, Python 3.12, and internet access. From a clean clone of the
-private repository, run the command for your platform.
+Install these tools once before building from a clean checkout (no external OpenCode install, sibling checkout, or prebuilt tarball is needed):
 
-**Windows 11 x64 (PowerShell)**
+- **Node.js >= 22** (with `npm`)
+- **Python >= 3.12** (`python3` on macOS/Linux, `python` on Windows)
+- **Git**
+- **Rust & Cargo >= 1.90.0** (`https://rustup.rs`; plus Xcode Command Line Tools on macOS or Visual Studio C++ Build Tools on Windows)
+- **Zig `0.16.0` and Zig `0.17.0`** unpacked under `build/toolchains/` (or `~/.local/share/zig/` or on `PATH`), from `https://ziglang.org/download/`
+- **Bun `1.4.4`**: optional — if absent, the installer prompts `[y/N]` to install a temporary build copy via npm
 
-```powershell
-python scripts/build_npm_package.py --install
-```
+### 2. Install
 
-**macOS (Terminal)**
+From the repository root:
+
+- **macOS / Linux:**
+  ```sh
+  python3 scripts/build_npm_package.py --install
+  ```
+- **Windows 11 x64 (PowerShell):**
+  ```powershell
+  python scripts/build_npm_package.py --install
+  ```
+
+This builds the local `opencode-pty` helper, FFmpeg-free `libopentui`, and vendored `opencode` engine, audits the npm tarball, and installs `bashwink` onto your npm global `PATH`. Verify with:
 
 ```sh
-python3 scripts/build_npm_package.py --install
+bashwink --version
+bashwink doctor
 ```
 
-If Bun 1.4.4 is unavailable, the script asks before installing a temporary build copy with npm.
-It fetches the native Bun package for your platform, which needs no npm lifecycle scripts.
-It then installs locked build dependencies, builds and audits the tarball, and installs Bashwink
-globally with npm. To check the installation, run `bashwink.cmd doctor` on Windows or
-`bashwink doctor` on macOS. Try Bashwink in a disposable Git project.
+(Use `bashwink.cmd` in Windows PowerShell.)
 
-### Install on Windows 11 x64
+### 3. Launch `bashwink`
 
-To use a prebuilt installer, get `bashwink-0.1.0-alpha.1.tgz` and `SHA256SUMS` from the
-maintainer. Use Node.js 22 with npm, Git, PowerShell, and internet access. Open PowerShell in
-the folder containing both files. npm fetches the pinned Bun and OpenCode runtimes during
-installation. Windows ARM64 is unsupported.
+Open a fresh terminal inside a Git project (or any ordinary folder) and run:
 
-1. Verify the tarball. Stop if the two hashes differ, ignoring letter case.
+```sh
+bashwink
+```
+
+Confirm the first-run project trust prompt (`y`) when asked (`[STANDARD - native, not a sandbox]`). Then connect a model provider inside the UI with `/connect` (for example Anthropic, OpenAI, or Google — or configure a custom/local endpoint beforehand with `bashwink auth add`).
+
+### 4. Complete your first coding task
+
+Type a task in the prompt (for example, ask Bashwink to inspect a failing test and fix it). Review and approve file edits and commands when prompted. Bashwink runs the checks, records hash-chained evidence under your user profile, and prints request/token usage on exit.
+
+### 5. Uninstall
+
+```sh
+npm uninstall -g bashwink
+```
+
+This removes the `bashwink` command and installed package while preserving your configuration, trust decisions, sessions, and evidence logs under `~/.config/bashwink` and `~/.local/share/bashwink`.
+
+---
+
+### Install from a prebuilt Windows archive
+
+If a maintainer gave you `bashwink-0.1.0-alpha.1.tgz` and `SHA256SUMS`, open PowerShell in that directory (Node.js 22+ and Git required; Windows ARM64 is unsupported):
+
+1. Verify the tarball hash:
 
    ```powershell
    Get-FileHash -Algorithm SHA256 .\bashwink-0.1.0-alpha.1.tgz
    Get-Content .\SHA256SUMS
    ```
 
-2. Install Bashwink and check that the version and diagnostics commands run.
+2. Install and check:
 
    ```powershell
    npm.cmd install -g .\bashwink-0.1.0-alpha.1.tgz
@@ -58,26 +89,9 @@ installation. Windows ARM64 is unsupported.
    bashwink.cmd doctor
    ```
 
-3. Open a disposable Git project in PowerShell and run `bashwink.cmd`. Review each approval.
-   In standard mode, approved shell commands run with your user account's access.
+3. Run `bashwink.cmd` in a disposable Git project. Live coding checks use your own provider key with a spending limit. [Windows tester kit](release/tester-kit/README.md) · [Platform results](docs/bashwink/SUPPORTED_PLATFORMS.md) · [Qualification report](docs/bashwink/FINAL_ALPHA_QUALIFICATION_REPORT.md)
 
-The install checks need no model key. To help qualify Windows, follow the tester kit and return
-the generated JSON and completed checklist. Live coding checks use your own provider key and a
-spending limit set with your provider. [Windows tester kit](release/tester-kit/README.md)
-
-**Windows invited alpha is blocked.** A later revision on `main` passed the hosted Windows
-package checks with a build produced in CI. The local `npm-rc2` tarball passed live headless
-testing on one Apple Silicon Mac. Hosted CI on the exact candidate, a clean Windows 11 x64 run,
-a live Windows model test, and licensing acceptance for the private alpha are still pending.
-[Hosted CI results](https://github.com/ALDRIN121/bashwink/actions/runs/45578123343)
-· [Qualification report](docs/bashwink/FINAL_ALPHA_QUALIFICATION_REPORT.md)
-· [Platform results](docs/bashwink/SUPPORTED_PLATFORMS.md)
-
-The maintainer's `npm-rc2` files are in `release/standard/0.1.0-alpha.1-npm-rc2/`.
-[Candidate checksum](release/standard/0.1.0-alpha.1-npm-rc2/SHA256SUMS)
-
-The optional VM is a separate Apple Silicon candidate with its own distribution gate.
-[macOS VM qualification report](docs/bashwink/releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md)
+The maintainer's earlier `npm-rc2` files are in `release/standard/0.1.0-alpha.1-npm-rc2/`. The optional VM is a separate Apple Silicon candidate in [macOS VM qualification report](docs/bashwink/releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md).
 
 ## Layout
 
@@ -85,14 +99,14 @@ The optional VM is a separate Apple Silicon candidate with its own distribution 
 bashwink/
   packages/bw-evidence/     OpenCode plugin + recorder: append-only, hash-chained evidence log
   packages/bw-cli/          `bashwink` wrapper, plan/contract/evidence commands, doctor
+  vendor/engine/            Vendored OpenCode engine (v2.3.2) + process-daemon PTY helper
   fixtures/                 Deterministic Git fixtures, real-runtime proofs, local mock provider
-  scripts/                  Documentation verifier, upstream sync report, release gates
+  scripts/                  Build, local-engine provenance, documentation verifier, release gates
   docs/bashwink/            Requirements, ADRs, phase plan, status and evidence registers
-  .github/workflows/        CI: verify (lint, docs, tests, fixtures, runtime health)
+  .github/workflows/        CI: verify (lint, docs, tests, fixtures, runtime health, npm-package)
 ```
 
-The pinned OpenCode foundation is **not** vendored here. It lives beside this repository at
-`~/Developer/bashwink-upstream/opencode` and is consumed by exact version.
+The pinned OpenCode engine is vendored under `vendor/engine/` at v2.3.2 (`c0ad18b402eb2827fc1ee71c171b1177b3fc02d1`) and built locally with its `process-daemon` PTY helper and an FFmpeg-free OpenTUI rebuild — no external OpenCode install or hosted service is needed.
 
 ## Local development quick start
 

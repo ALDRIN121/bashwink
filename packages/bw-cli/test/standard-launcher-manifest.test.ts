@@ -12,7 +12,15 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { createHash } from "node:crypto"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -178,6 +186,36 @@ describe("a missing or tampered manifest stops before any model request", () => 
     // not search PATH, and it must not invent a manifest path.
     expect(result.code).not.toBe(0)
     expect(result.stdout).not.toContain("BASHWINK_ENGINE_MANIFEST=")
-    expect(result.stderr).toMatch(/required runtime package is missing|not found|no OpenCode runtime/i)
+    expect(result.stderr).toMatch(
+      /required runtime package is missing|not found|no OpenCode runtime/i,
+    )
+  })
+
+  test("REGRESSION: standard bundle doctor fails cleanly on missing manifest instead of walking PATH", () => {
+    buildStandardBundle(path.join(pkg, "lib/bashwink.js"))
+    const fakePathDir = mkdtempSync(path.join(tmpdir(), "bw-doctor-path-"))
+    const missingManifest = path.join(fakePathDir, "missing-manifest.json")
+    try {
+      const lookalike = path.join(fakePathDir, "opencode")
+      writeFileSync(lookalike, "#!/bin/sh\necho LOOKALIKE\n")
+      chmodSync(lookalike, 0o755)
+      const result = Bun.spawnSync({
+        cmd: [process.execPath, path.join(pkg, "lib/bashwink.js"), "doctor"],
+        env: {
+          ...process.env,
+          PATH: `${fakePathDir}${path.delimiter}${process.env["PATH"] ?? ""}`,
+          BASHWINK_ENGINE_MANIFEST: missingManifest,
+          BASHWINK_OPENCODE_BIN: undefined,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      expect(result.exitCode).toBe(1)
+      expect(result.stdout.toString()).not.toContain("bun add @opencode/cli")
+      expect(result.stdout.toString()).not.toContain(lookalike)
+      expect(result.stdout.toString()).toMatch(/rebuild the local engine|reinstall Bashwink/i)
+    } finally {
+      rmSync(fakePathDir, { recursive: true, force: true })
+    }
   })
 })

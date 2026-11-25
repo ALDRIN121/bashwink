@@ -3,20 +3,23 @@ Bashwink 0.1.0-alpha.1 (standard npm package): third-party notices
 STATUS: engineering notice, not a legal opinion. No licence sign-off has been given for redistribution of this
 package; it is a private alpha for invited testers and must not be redistributed.
 
-This tarball contains Bashwink's own files (MIT; see LICENSE) and, compiled into lib/bashwink.js, copies of the
-third-party packages listed under "BUNDLED CODE" at the end of this file, with their licence texts. It does NOT contain
-the following, which npm downloads from the public registry at install time and which are governed by their own
-licences:
+This tarball contains Bashwink's own files (MIT; see LICENSE), the locally built Bashwink engine compiled from
+vendored OpenCode source, and, compiled into lib/bashwink.js, copies of the third-party packages listed under
+"BUNDLED CODE" at the end of this file, with their licence texts.
 
-  bun 1.4.4 and @oven/bun-<platform>   MIT for Bun itself. Bun embeds JavaScriptCore (LGPL-2.0) and other components.
-                                        The `bun` and `@oven/bun-*` packages ship no licence or notice file (checked on
-                                        the installed packages), so the texts must come from the Bun project.
-  @opencode/cli 2.3.2 and its           MIT for OpenCode. The stock binary embeds the FFmpeg libraries through its terminal
-  @opencode/cli-<platform> binaries     UI library (LGPL). The `@opencode/cli*` packages likewise ship no licence or notice
-                                        file, so the texts and attributions must come from the OpenCode and OpenTUI projects.
+Locally built engine (libexec/opencode or libexec/opencode.exe):
+  OpenCode v2.3.2 (c0ad18b402eb2827fc1ee71c171b1177b3fc02d1)   MIT   vendor/engine/LICENSE
+  process-daemon v0.6.0 (03d848f7b8d71d31d3e56f2abd8b337efbc1bc32) MIT
+  libghostty-vt (ab0b9da9e88fcb4b0533a1854e84628f663930af)      MIT
+  libopentui v0.8.4 (d4a2af24ba50636da5f222367f91746a1bf89644)  MIT   rebuilt without FFmpeg/video support
 
-Bashwink does not modify, patch or relink either runtime. Obligations for redistributing a bundle that includes them
-(source offers, relinking terms, notices) have not been assessed for this private alpha; the optional isolated-VM
-artifact ships a rebuilt, FFmpeg-free OpenCode instead and is documented separately in the repository.
+The installed package also pulls in the following JavaScript runtime dependency from npm at install time,
+governed by its own licences:
 
-To see exactly what the installed package pulled in: `npm ls -g --all bashwink`.
+  bun 1.4.4 and @oven/bun-<platform>   MIT for Bun itself. Bun embeds JavaScriptCore (LGPL-2.0) and other
+                                        components. Neither package ships notice files inside npm tarballs.
+
+The engine binary embeds the Bun native runtime (including JavaScriptCore, LGPL-2.0). OpenTUI was rebuilt
+without FFmpeg, so FFmpeg libraries are not linked or shipped.
+
+To see the local engine manifest and bundled packages: `bashwink doctor`.

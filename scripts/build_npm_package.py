@@ -59,11 +59,68 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def node_version() -> tuple[int, ...] | None:
+    node = shutil.which("node")
+    if not node:
+        return None
+    try:
+        raw = capture([node, "--version"]).lstrip("v")
+        return tuple(int(part) for part in raw.split(".")[:3])
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return None
+
+
+def check_base_prerequisites() -> None:
+    if sys.version_info < (3, 12):
+        raise SystemExit(
+            f"Python 3.12+ is required (found {sys.version_info.major}.{sys.version_info.minor}). "
+            "Install Python 3.12 or newer and retry."
+        )
+    if not shutil.which("git"):
+        raise SystemExit(
+            "Git is required to prepare native build inputs and record commit provenance, but `git` was not found on PATH.\n"
+            "Install Git: macOS (`xcode-select --install`), Linux (`apt/dnf install git`), Windows (`winget install Git.Git`)."
+        )
+    ver = node_version()
+    if ver is None or ver[0] < 22:
+        found = ".".join(str(x) for x in ver) if ver else "not installed"
+        raise SystemExit(
+            f"Node.js 22+ is required (found {found}). Install Node.js 22 LTS or newer "
+            "(https://nodejs.org) so `node` and `npm` are on PATH, then retry."
+        )
+    if not shutil.which("npm"):
+        raise SystemExit(
+            "npm was not found on PATH. Install Node.js 22 LTS or newer (which includes npm) and retry."
+        )
+
+
+def _is_musl_linux() -> bool:
+    if sys.platform != "linux":
+        return False
+    node = shutil.which("node")
+    if node:
+        try:
+            out = capture([
+                node,
+                "-p",
+                "String(Boolean(process.report && process.report.getReport().header && !process.report.getReport().header.glibcVersionRuntime))",
+            ])
+            if out == "true":
+                return True
+            if out == "false":
+                return False
+        except (OSError, subprocess.CalledProcessError):
+            pass
+    return Path("/etc/alpine-release").exists()
+
+
 def platform_arch() -> str:
     """The manifest target key for this host, spelled the way build_local_engine.py writes it."""
     machine = platform.machine().lower()
     arch = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x64", "amd64": "x64"}.get(machine, machine)
     os_name = {"darwin": "darwin", "linux": "linux", "win32": "win32"}.get(sys.platform, sys.platform)
+    if os_name == "linux" and _is_musl_linux():
+        return f"{os_name}-{arch}-musl"
     return f"{os_name}-{arch}"
 
 
@@ -330,7 +387,7 @@ def engine_is_current(engine_dir: Path, target: str) -> tuple[bool, str]:
     return True, "verified"
 
 
-def resolve_engine_input(explicit: Path | None, target: str, allow_build: bool) -> Path:
+def resolve_engine_input(explicit: Path | None, target: str, allow_build: bool, bun: str | None = None) -> Path:
     """Return a verified engine directory, building one only when allowed and needed.
 
     Fails before any packaging or installation work happens. A source install that cannot get an
@@ -354,21 +411,31 @@ def resolve_engine_input(explicit: Path | None, target: str, allow_build: bool) 
             return candidate
         reasons.append(f"  {candidate}: {why}")
 
-    if not allow_build:
+    if explicit is not None or not allow_build:
         raise SystemExit(
             "no usable local engine for "
             f"{target}. Refusing to package an install that cannot start:\n" + "\n".join(reasons) +
             f"\nBuild one first:\n  python3 scripts/build_local_engine.py --target {target}"
         )
 
-    print("engine   no current artifact; building from the vendored source", flush=True)
+    print("engine   no current artifact; preparing and building from the vendored source", flush=True)
+    preparer = ROOT / "scripts" / "fetch_native_inputs.py"
+    prepare_cmd = [sys.executable, str(preparer), "--prepare", "--target", target]
+    if bun:
+        prepare_cmd.extend(["--bun", bun])
+    prep_result = subprocess.run(prepare_cmd, cwd=ROOT)
+    if prep_result.returncode != 0:
+        raise SystemExit(
+            f"preparing local engine inputs failed (exit {prep_result.returncode}). Nothing was packaged or "
+            "installed; the previous installation is untouched."
+        )
     builder = ROOT / "scripts" / "build_local_engine.py"
     # The builder nests its output one level deeper, per target: <outdir>/<target>/.
     expected = DEFAULT_ENGINE_DIR / target
-    result = subprocess.run(
-        [sys.executable, str(builder), "--target", target, "--outdir", str(DEFAULT_ENGINE_DIR)],
-        cwd=ROOT,
-    )
+    build_cmd = [sys.executable, str(builder), "--target", target, "--outdir", str(DEFAULT_ENGINE_DIR)]
+    if bun:
+        build_cmd.extend(["--bun", bun])
+    result = subprocess.run(build_cmd, cwd=ROOT)
     if result.returncode != 0:
         raise SystemExit(
             f"building the local engine failed (exit {result.returncode}). Nothing was packaged or "
@@ -385,7 +452,7 @@ def build_package(out_dir: Path | None, bun: str, commit: str, install: bool,
     # Resolve the engine before anything is installed or staged. This is the ordering that matters:
     # `--install` used to reach npm with no engine at all and leave a package that exits 127.
     target = engine_target or platform_arch()
-    engine_dir = resolve_engine_input(engine_dir, target, allow_build=True)
+    engine_dir = resolve_engine_input(engine_dir, target, allow_build=True, bun=bun)
     # Carry the resolved target forward: stage_package validates the manifest against it, and the
     # caller's value may be None even though the engine was resolved for this host.
     engine_target = target
@@ -438,16 +505,18 @@ def main() -> int:
         parser.error("--out is required when building without --install")
     if args.install and args.out is not None and args.out.exists():
         parser.error("--out must be a new directory when using --install")
-    status = capture(["git", "status", "--porcelain"], cwd=ROOT)
+    check_base_prerequisites()
+    git = shutil.which("git") or "git"
+    status = capture([git, "status", "--porcelain"], cwd=ROOT)
     if status and not args.allow_dirty:
         raise SystemExit("the working tree has uncommitted changes; commit them or pass --allow-dirty")
-    commit = capture(["git", "rev-parse", "HEAD"], cwd=ROOT) + ("+dirty" if status else "")
+    commit = capture([git, "rev-parse", "HEAD"], cwd=ROOT) + ("+dirty" if status else "")
     with ExitStack() as resources:
         bun = resolve_bun(args.bun, args.install, resources)
         engine_target = args.engine_target
-    if args.engine_dir is not None and engine_target is None:
-        engine_target = platform_arch()
-    return build_package(args.out, bun, commit, args.install, args.engine_dir, engine_target)
+        if args.engine_dir is not None and engine_target is None:
+            engine_target = platform_arch()
+        return build_package(args.out, bun, commit, args.install, args.engine_dir, engine_target)
 
 
 if __name__ == "__main__":

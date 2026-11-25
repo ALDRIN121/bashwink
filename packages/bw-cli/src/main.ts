@@ -527,16 +527,16 @@ export async function main(input: readonly string[]): Promise<MainResult> {
     // Task 4: a packaged build resolves the engine from the local build manifest and verifies it.
     // The old `bundledOnly` path is kept for a bundle that ships no manifest — it still refuses to
     // search PATH, so neither branch can run an engine this build did not produce.
-    const engineManifest =
-      RELEASE_BUILD || STANDARD_BUILD
-        ? (engineManifestFromLauncher ?? path.join(MODULE_DIR, "..", "engine-manifest.json"))
-        : undefined
+    const defaultManifest =
+      engineManifestFromLauncher ?? path.join(MODULE_DIR, "..", "engine-manifest.json")
     runtime = resolveRuntime(
-      RELEASE_BUILD || STANDARD_BUILD
-        ? engineManifest !== undefined && existsSync(engineManifest)
-          ? { engineManifest }
-          : { bundled: path.join(MODULE_DIR, "..", "libexec", "opencode"), bundledOnly: true }
-        : {},
+      STANDARD_BUILD
+        ? { engineManifest: defaultManifest }
+        : RELEASE_BUILD
+          ? existsSync(defaultManifest)
+            ? { engineManifest: defaultManifest }
+            : { bundled: path.join(MODULE_DIR, "..", "libexec", "opencode"), bundledOnly: true }
+          : {},
     )
   } catch (error) {
     if (error instanceof RuntimeNotFoundError) {

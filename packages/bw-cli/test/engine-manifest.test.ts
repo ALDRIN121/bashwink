@@ -11,7 +11,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -26,7 +26,11 @@ import {
 let root: string
 
 /** A real file with a real digest, so the hash check passes for the honest case. */
-function writeBinary(directory: string, name = "opencode", contents = "#!/bin/sh\necho engine\n"): string {
+function writeBinary(
+  directory: string,
+  name = "opencode",
+  contents = "#!/bin/sh\necho engine\n",
+): string {
   const file = path.join(directory, name)
   writeFileSync(file, contents)
   chmodSync(file, 0o755)
@@ -153,7 +157,9 @@ describe("refusals — every one must fail closed", () => {
       path: path.join("..", "..", "elsewhere", "opencode"),
     }
     const manifestPath = writeManifest(manifest)
-    expect(() => resolveEngineFromManifest(manifestPath, { root })).toThrow(/outside|escape|missing/i)
+    expect(() => resolveEngineFromManifest(manifestPath, { root })).toThrow(
+      /outside|escape|missing/i,
+    )
   })
 
   test("a symlink pointing outside the root is refused after resolution", () => {
@@ -196,6 +202,37 @@ describe("refusals — every one must fail closed", () => {
     ;(manifest as { schemaVersion: number }).schemaVersion = 99
     const manifestPath = writeManifest(manifest)
     expect(() => resolveEngineFromManifest(manifestPath, { root })).toThrow(/schema/i)
+  })
+
+  test("a Windows x64 manifest with opencodeTarget 'windows-x64' validates on win32-x64", () => {
+    const binary = writeBinary(root, "opencode.exe", "MZstub")
+    const manifest = manifestFor(binary, {
+      target: "win32-x64",
+      opencodeTarget: "windows-x64",
+      platform: { os: "win32", arch: "x64" },
+    })
+    const manifestPath = writeManifest(manifest)
+    const resolved = resolveEngineFromManifest(manifestPath, { root, hostTarget: "win32-x64" })
+    expect(resolved.target).toBe("win32-x64")
+    expect(resolved.command).toBe(binary)
+  })
+
+  test("a Linux musl manifest validates on a musl host and is rejected on glibc", () => {
+    const binary = writeBinary(root)
+    const manifest = manifestFor(binary, {
+      target: "linux-x64-musl",
+      opencodeTarget: "linux-x64-musl",
+      platform: { os: "linux", arch: "x64", abi: "musl" } as { os: string; arch: string },
+    })
+    const manifestPath = writeManifest(manifest)
+    const resolved = resolveEngineFromManifest(manifestPath, {
+      root,
+      hostTarget: "linux-x64-musl",
+    })
+    expect(resolved.target).toBe("linux-x64-musl")
+    expect(() =>
+      resolveEngineFromManifest(manifestPath, { root, hostTarget: "linux-x64" }),
+    ).toThrow(/platform|target|musl/i)
   })
 })
 

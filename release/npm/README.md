@@ -16,8 +16,10 @@ approve can do anything you can do. Work in a Git repository, keep a backup, and
 Requirements: Node.js (for `npm`; only Node 22 has been tested, 18 or newer is expected to work), and one of macOS
 (Apple Silicon or Intel), Linux (x64 or arm64), or Windows 11 x64. These are the platforms the package is built for, not
 a claim that each is qualified: `share/doc/KNOWN_LIMITATIONS.md` says what has and has not been run.
-**Windows on ARM64 is not supported.** The package installs its own pinned Bun and OpenCode runtimes
-(public packages `bun` and `@opencode/cli`). If one of them is missing, Bashwink names it and exits with status 1.
+**Windows on ARM64 is not supported.** The tarball ships its locally built FFmpeg-free OpenCode engine
+(`libexec/opencode` or `libexec/opencode.exe` with `engine-manifest.json`) and installs the pinned Bun 1.4.4
+runtime from npm (`bun`). No external `@opencode/cli` package is required. If Bun or the verified local engine
+manifest is missing, Bashwink names it and exits with status 1 or 127.
 
 First steps: `bashwink --version`, `bashwink doctor`, then the guide in `share/doc/ALPHA_TESTER_GUIDE.md`
 (inside the installed package directory; `npm root -g` shows where). Known limits: `share/doc/KNOWN_LIMITATIONS.md`.

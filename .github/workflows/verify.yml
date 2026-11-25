@@ -297,10 +297,11 @@ jobs:
           fi
           echo "OK: no credential patterns in the tree (no path exclusions)"
 
-  # The standard (native) npm package, built and installed the way a tester installs it: from the tarball, into a
-  # throwaway prefix, with the pinned `bun` and `@opencode/cli` pulled from the public registry. Windows is
-  # included because the package is Windows-first. A skipped or cancelled leg is NOT a pass: branch protection
-  # must require each matrix leg by name. Nothing here publishes anything.
+  # The standard (native) npm package, built from the vendored local engine and installed the way a
+  # tester installs it: from the tarball, into a throwaway prefix, with only `bun` resolved by npm
+  # (zero `@opencode/*` packages or hosted OpenCode services). Windows is included because the package
+  # is Windows-first. A skipped or cancelled leg is NOT a pass: branch protection must require each
+  # matrix leg by name. Nothing here publishes anything.
   npm-package:
     name: npm package (${{ matrix.os }})
     strategy:
@@ -310,21 +311,57 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-        if: runner.os == 'Linux'
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          toolchain: "1.90.0"
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Install pinned Zig 0.16.0 and 0.17.0 (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/toolchains
+          case "${{ runner.os }}-${{ runner.arch }}" in
+            Linux-X64)    zarch="x86_64-linux" ;;
+            Linux-ARM64)  zarch="aarch64-linux" ;;
+            macOS-ARM64)  zarch="aarch64-macos" ;;
+            macOS-X64)    zarch="x86_64-macos" ;;
+            *) echo "Unsupported runner ${{ runner.os }}-${{ runner.arch }}"; exit 1 ;;
+          esac
+          for ver in 0.16.0 0.17.0; do
+            url="https://ziglang.org/download/${ver}/zig-${zarch}-${ver}.tar.xz"
+            curl -fsSL "$url" -o "/tmp/zig-${ver}.tar.xz"
+            tar -xJf "/tmp/zig-${ver}.tar.xz" -C build/toolchains
+            rm -f "/tmp/zig-${ver}.tar.xz"
+          done
+      - name: Install pinned Zig 0.16.0 and 0.17.0 (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path build\toolchains | Out-Null
+          foreach ($ver in @("0.16.0", "0.17.0")) {
+            $zip = "$env:RUNNER_TEMP\zig-$ver.zip"
+            Invoke-WebRequest -Uri "https://ziglang.org/download/$ver/zig-x86_64-windows-$ver.zip" -OutFile $zip
+            Expand-Archive -Path $zip -DestinationPath build\toolchains -Force
+            Remove-Item $zip -Force
+          }
       - name: Check Bun installation consent
         run: python scripts/test_npm_bun_consent.py
-      - name: Install
+      - name: Check local engine build invariants
+        run: python scripts/test_local_engine_build.py
+      - name: Build and install from source (Linux)
         if: runner.os == 'Linux'
-        run: bun install --frozen-lockfile
+        env:
+          npm_config_ignore_scripts: "true"
+          npm_config_prefix: ${{ runner.temp }}/bashwink-source-install
+        run: |
+          printf 'y\n' | python3 scripts/build_npm_package.py --install --out build/npm
+          "$npm_config_prefix/bin/bashwink" --version
       - name: Build and install from source (Windows)
         if: runner.os == 'Windows'
         env:
@@ -340,17 +377,13 @@ jobs:
           npm_config_ignore_scripts: "true"
           npm_config_prefix: ${{ runner.temp }}/bashwink-source-install
         run: |
-          printf 'y\n' | python scripts/build_npm_package.py --install --out build/npm
+          printf 'y\n' | python3 scripts/build_npm_package.py --install --out build/npm
           "$npm_config_prefix/bin/bashwink" --version
       - uses: oven-sh/setup-bun@v2
-        if: runner.os != 'Linux'
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Portable unit tests (launcher platform plan, plugin staging, home directory)
-        run: bun test packages/bw-cli/test/npm-launcher.test.ts packages/bw-cli/test/plugin-staging.test.ts packages/bw-cli/test/usage-guard.test.ts
-      - name: Build and audit the tarball
-        if: runner.os == 'Linux'
-        run: python scripts/build_npm_package.py --out build/npm
+        run: bun test packages/bw-cli/test/npm-launcher.test.ts packages/bw-cli/test/plugin-staging.test.ts packages/bw-cli/test/usage-guard.test.ts packages/bw-cli/test/engine-manifest.test.ts packages/bw-cli/test/standard-launcher-manifest.test.ts
       - name: Install the tarball and exercise the installed command
         run: python scripts/npm_install_check.py build/npm/bashwink-0.1.0-alpha.1.tgz --out build/npm/install-check.json
       # The installed command against a scripted provider: coding task, session continuation and model switch, the

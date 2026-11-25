@@ -46,14 +46,23 @@ import {
   type FormAnswerField,
 } from "../util/form"
 
-const INTEGRATION_PRIORITY: Record<string, number> = {
-  opencode: 0,
-  "opencode-go": 1,
-  openai: 2,
-  "github-copilot": 3,
-  anthropic: 4,
-  google: 5,
-}
+const OPENCODE_FREE_DISABLED = ["1", "true"].includes(process.env.OPENCODE_DISABLE_FREE_MODELS?.toLowerCase() ?? "")
+
+const INTEGRATION_PRIORITY: Record<string, number> = OPENCODE_FREE_DISABLED
+  ? {
+      openai: 0,
+      anthropic: 1,
+      google: 2,
+      "github-copilot": 3,
+    }
+  : {
+      opencode: 0,
+      "opencode-go": 1,
+      openai: 2,
+      "github-copilot": 3,
+      anthropic: 4,
+      google: 5,
+    }
 
 type ConnectMethod = Exclude<IntegrationInfo["methods"][number], { type: "env" }>
 type IntegrationAttempt = IntegrationOauthConnectOutput["data"]
@@ -106,11 +115,14 @@ export function DialogIntegration(
   const location = currentLocation.ref ?? data.location.default()
   // The MCP dialog signs its servers in through `integrationID`; the connect menu leaves them to it.
   const integrations = createMemo(() =>
-    integrationOptions(data.location.integration.list(location) ?? []).filter((integration) =>
-      props.integrationID === undefined
+    integrationOptions(data.location.integration.list(location) ?? []).filter((integration) => {
+      if (OPENCODE_FREE_DISABLED && (integration.id === "opencode" || integration.id === "opencode-go")) {
+        return false
+      }
+      return props.integrationID === undefined
         ? integration.metadata?.source !== "mcp"
-        : integration.id === props.integrationID,
-    ),
+        : integration.id === props.integrationID
+    }),
   )
 
   createEffect(() => {

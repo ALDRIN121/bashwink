@@ -152,14 +152,20 @@ export function diagnose(options: DoctorOptions = {}): DoctorReport {
       // `doctor` cannot report "no runtime" for an install that launches fine. Falling through to
       // the legacy search first would also tell the user to install a registry @opencode/cli, which
       // a local-engine install must never need.
-      const engineManifest =
-        RELEASE_BUILD || STANDARD_BUILD
-          ? (process.env["BASHWINK_ENGINE_MANIFEST"] ?? path.join(MODULE_DIR, "..", "engine-manifest.json"))
-          : undefined
+      const defaultManifest =
+        env["BASHWINK_ENGINE_MANIFEST"] ?? path.join(MODULE_DIR, "..", "engine-manifest.json")
       const runtime = resolveRuntime(
-        engineManifest !== undefined && existsSync(engineManifest)
-          ? { engineManifest, cwd }
-          : { cwd },
+        STANDARD_BUILD
+          ? { engineManifest: defaultManifest, cwd }
+          : RELEASE_BUILD
+            ? existsSync(defaultManifest)
+              ? { engineManifest: defaultManifest, cwd }
+              : {
+                  bundled: path.join(MODULE_DIR, "..", "libexec", "opencode"),
+                  bundledOnly: true,
+                  cwd,
+                }
+            : { cwd },
       )
       checks.push({
         id: "runtime",

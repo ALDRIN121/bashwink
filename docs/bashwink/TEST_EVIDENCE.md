@@ -1776,3 +1776,16 @@ The Bashwink install printed warnings for blocked Bun and OpenCode wrapper scrip
 The Windows native Bun 1.4.4 npm tarball was inspected and contains `bin/bun.exe` with no
 lifecycle scripts. The revised installer still needs a hosted Windows run and a retry by
 the desktop tester.
+
+### Clean-checkout local-engine source install & first-use verification (2026-11-25, `darwin-arm64`)
+
+Executed on Apple Silicon (`Darwin 27.0.0 arm64`, `node v22.23.2`, `npm 10.9.8`, `Python 3.12.7`, `rustc 1.90.0` via `process-daemon`, `Zig 0.16.0` & `0.17.0`, no ambient `bun` or `opencode` on `PATH`, paths containing spaces):
+
+| Check | Outcome | Details |
+| --- | --- | --- |
+| Clean-checkout `printf "y\n" \| python3 scripts/build_npm_package.py --install` (paths with spaces, no `bun` on `PATH`) | PASS (exit 0) | Consented & fetched temp `bun 1.4.4`, built `opencode-pty` (`2714352` bytes), FFmpeg-free `libopentui`, `libexec/opencode` (`205.9 MB`), installed `bashwink 0.1.0-alpha.1` cleanly. |
+| `scripts/npm_install_check.py <tarball>` & `npm_config_ignore_scripts=true` install | PASS (exit 0) | `npm_install_check.py` 10/10 PASS; `npm_config_ignore_scripts=true` `bashwink --version` & `doctor` passed (0 failures). |
+| Bare `bashwink` PTY test (Git repo + non-Git folder, empty `HOME`, zero credentials) | PASS (exit 0) | Trust prompt (`NOT a sandbox`), `[STANDARD - native, not a sandbox]`, `No provider selected` / `Connect a provider` (no `Big Pickle`), `/connect` excludes `OpenCode Console` & `OpenCode Go`, survives `TIOCSWINSZ` resize, exits `130` with boot evidence + finalized run record. |
+| `python3 fixtures/release/npm_qual.py <tarball>` (scripted provider) | PASS (exit 0) | 72 passed, 0 failed, 0 not run (coding fix diff & test pass, credentials, scope/command denials, cancel, limits, spaces/non-ASCII/symlink, reinstall & uninstall). |
+| Failed/tampered install (`--engine-dir` & missing Zig), repeat install, upgrade (`alpha.1` -> `alpha.2`), uninstall | PASS (exit 0) | Failures preserve prior install untouched; repeat install reuses verified local engine; upgrade & uninstall preserve `~/.config/bashwink` and `~/.local/share/bashwink`. |
+| Bash fixture suites (`runtime-health`, `tool-lifecycle`, `contract`, `idempotent-resume`) | PASS (exit 0) | All passed against the locally built engine (`tool-lifecycle` 19/19, `contract` 14/14, `idempotent-resume` 10/10, `runtime-health` 100%). |

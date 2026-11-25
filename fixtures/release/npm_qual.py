@@ -119,7 +119,7 @@ class Scenario:
         for rel, text in (self.files or {}).items():
             target = self.project / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(text, encoding="utf-8", newline="\n")
+            target.write_bytes(text.replace("\r\n", "\n").encode("utf-8"))
         if self.git:
             for step in (["init", "-q", "."], ["config", "user.name", "qual"], ["config", "user.email", "qual@bashwink.invalid"],
                          ["config", "core.autocrlf", "false"], ["add", "-A"], ["commit", "-q", "--allow-empty", "-m", "baseline"]):

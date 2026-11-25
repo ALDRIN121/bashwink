@@ -76,9 +76,39 @@ export interface ResolvedEngine {
   readonly manifestPath: string
 }
 
-/** The host platform key used in manifests, e.g. `darwin-arm64`. */
-export function hostTarget(platform: string = process.platform, arch: string = process.arch): string {
-  return `${platform}-${arch}`
+function detectMusl(platform: string): boolean {
+  if (platform !== "linux") return false
+  const report =
+    typeof process.report?.getReport === "function"
+      ? (process.report.getReport() as { header?: { glibcVersionRuntime?: string } })
+      : undefined
+  if (report?.header?.glibcVersionRuntime) return false
+  // Bun's process.report.getReport() omits header.glibcVersionRuntime, so inspect /proc/self/maps
+  // to tell glibc (libc.so / ld-linux) apart from musl (ld-musl-*) without trusting env vars.
+  try {
+    const maps = readFileSync("/proc/self/maps", "utf8")
+    return maps.includes("ld-musl-") && !maps.includes("ld-linux-") && !maps.includes("libc.so.")
+  } catch {
+    return false
+  }
+}
+
+/** The host platform key used in manifests, e.g. `darwin-arm64` or `linux-x64-musl`. */
+export function hostTarget(
+  platform: string = process.platform,
+  arch: string = process.arch,
+  musl?: boolean,
+): string {
+  const isMusl = musl ?? detectMusl(platform)
+  return isMusl ? `${platform}-${arch}-musl` : `${platform}-${arch}`
+}
+
+/**
+ * Translate a manifest target key into the `OPENCODE_TARGET` string recorded by `build.ts`.
+ * `build.ts` spells Windows as `windows` instead of Node's `win32`.
+ */
+export function expectedOpencodeTarget(target: string): string {
+  return target.startsWith("win32-") ? `windows-${target.slice("win32-".length)}` : target
 }
 
 export function sha256File(file: string): string {
@@ -139,9 +169,10 @@ export function resolveEngineFromManifest(
   // 1. Platform. A manifest built for another OS/arch describes a binary this host cannot run, and
   //    an arm64 Mach-O labelled as Linux is the failure that looks most like success.
   const expected = options.hostTarget ?? hostTarget()
-  if (manifest.target !== expected || manifest.opencodeTarget !== expected)
+  const expectedOpencode = expectedOpencodeTarget(expected)
+  if (manifest.target !== expected || manifest.opencodeTarget !== expectedOpencode)
     throw new EngineManifestError(
-      `the engine manifest is for '${manifest.target}' but this host is '${expected}'. ` +
+      `the engine manifest is for '${manifest.target}' (${manifest.opencodeTarget}) but this host is '${expected}'. ` +
         `A locally built engine runs only on the platform it was built for.`,
     )
 

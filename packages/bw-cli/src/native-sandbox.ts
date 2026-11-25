@@ -121,6 +121,7 @@ export async function probeNativeSandbox(runtimePath?: string) {
       LC_ALL: "C",
       OPENCODE_DISABLE_MODELS_FETCH: "1",
       OPENCODE_DISABLE_AUTOUPDATE: "1",
+      OPENCODE_DISABLE_FREE_MODELS: "1",
     }
     const seatbelt = [
       SEATBELT,

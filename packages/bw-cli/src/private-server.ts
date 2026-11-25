@@ -205,6 +205,7 @@ export async function startPrivateServer(
         // the binary and catalog changes ship as Bashwink updates, so the autonomous refresh of
         // models.opencode.ai must not run here either.
         OPENCODE_DISABLE_MODELS_FETCH: "1",
+        OPENCODE_DISABLE_FREE_MODELS: "1",
         BASHWINK_READINESS: JSON.stringify({
           runId: request.runId,
           workspace: request.workspace,

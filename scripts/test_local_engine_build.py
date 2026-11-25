@@ -31,6 +31,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
@@ -295,6 +296,13 @@ class MissingEngineBeforeInstallTest(unittest.TestCase):
         # The repair command has to be actionable, not "engine missing".
         self.assertIn("build_local_engine.py --target darwin-arm64", message)
 
+    def test_explicit_tampered_engine_dir_refuses_even_when_allow_build_true(self):
+        directory = self._manifest(self.root / "bad-engine")
+        (directory / "opencode").write_bytes(b"tampered")
+        with self.assertRaises(SystemExit) as caught:
+            self.bnp.resolve_engine_input(directory, "darwin-arm64", allow_build=True)
+        self.assertIn("digest does not match", str(caught.exception))
+
     def test_a_wrong_target_engine_is_refused(self):
         directory = self._manifest(self.root / "engine", target="linux-x64")
         ok, why = self.bnp.engine_is_current(directory, "darwin-arm64")
@@ -332,6 +340,31 @@ class MissingEngineBeforeInstallTest(unittest.TestCase):
         ok, why = self.bnp.engine_is_current(directory, "darwin-arm64")
         self.assertFalse(ok)
         self.assertIn("unreadable manifest", why)
+
+    def test_notices_reflect_local_no_ffmpeg_engine_not_registry_opencode(self):
+        notices_file = REPO / "release" / "npm" / "THIRD_PARTY_NOTICES.txt"
+        text = self.bnp.notice_text(notices_file.read_text(encoding="utf-8"), {})
+        self.assertIn("without FFmpeg", text)
+        self.assertIn("process-daemon", text)
+        self.assertNotIn("downloads from the public registry", text)
+
+    def test_missing_zig_version_is_detected_early_with_recovery_hint(self):
+        import fetch_native_inputs as fni
+
+        with (
+            patch("shutil.which", side_effect=lambda name: f"/bin/{name}"),
+            patch.object(fni, "zig_executable", side_effect=[Path("/tmp/zig-0.16"), None]),
+        ):
+            with self.assertRaises(fni.FetchRefused) as caught:
+                fni.check_native_toolchains()
+            self.assertIn("0.17.0", str(caught.exception))
+            self.assertIn("ziglang.org", str(caught.exception))
+
+    def test_is_host_target_works_without_os_uname_on_windows(self):
+        mod = load_builder()
+        with patch.object(sys, "platform", "win32"), patch("platform.machine", return_value="AMD64"):
+            self.assertTrue(mod._is_host_target({"os": "win32", "arch": "x64"}))
+            self.assertFalse(mod._is_host_target({"os": "win32", "arch": "arm64"}))
 
 
 if __name__ == "__main__":

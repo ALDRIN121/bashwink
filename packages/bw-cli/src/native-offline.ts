@@ -192,6 +192,7 @@ export async function runNativeOffline(options: ReturnType<typeof parseOffline>,
       OPENCODE_CONFIG_PROJECT_DISABLE: "1",
       OPENCODE_DISABLE_MODELS_FETCH: "1",
       OPENCODE_DISABLE_AUTOUPDATE: "1",
+      OPENCODE_DISABLE_FREE_MODELS: "1",
       OPENCODE_CONFIG_CONTENT: JSON.stringify({
         plugins: [plugin],
         providers: {

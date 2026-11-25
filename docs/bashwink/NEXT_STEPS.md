@@ -151,7 +151,8 @@ drive the interactive screen with a live model (the owner can simply use `bashwi
 
 ## 2026-11-25: source build and install
 
-The `--install` path now downloads the native Bun package, and a clean macOS arm64 checkout
-passed with npm 12's default lifecycle policy. Next, verify the revised path in the hosted
-Windows and macOS package jobs with scripts disabled, then repeat it on the reporter's
-Windows 11 x64 machine.
+Clean-checkout local-engine source build, first-use TUI isolation (`OPENCODE_DISABLE_FREE_MODELS=1`), PTY launch, `npm_qual.py` (72/72), failed/repeat/upgrade/uninstall lifecycle, and `npm_config_ignore_scripts=true` now pass on Apple Silicon (`darwin-arm64`). Next steps:
+1. With explicit push authorization, run `.github/workflows/verify.yml` (`npm-package` matrix on `ubuntu-latest`, `macos-15`, `windows-latest` with Rust `1.90.0` + Zig `0.16.0`/`0.17.0`).
+2. Verify native desktop/host builds for Windows 11 x64 (`python scripts/build_npm_package.py --install` in PowerShell), macOS Intel (`darwin-x64`), and Linux x64/ARM64 (`glibc` and `musl`) — currently marked **UNVERIFIED**.
+3. Complete live-model smoke check with owner API key (`fixtures/release/npm_live.py`) and licensing sign-off before wider distribution.
+4. Keep `BW-031`, `BW-032`, `BW-075`, `BW-076` open in their respective phase gates (`AGENTS.md`).

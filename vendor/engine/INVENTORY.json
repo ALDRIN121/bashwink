@@ -17827,7 +17827,11 @@
       "upstreamPath": "packages/tui/src/component/dialog-integration.tsx",
       "sourceCommit": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
       "sourceDigest": "8a396a6a31dbfe389e2da1b24a3d143c473d714b3d7a08cee71b5603ffff0c22",
-      "bytes": 44420
+      "bytes": 44831,
+      "patch": true,
+      "patchedDigest": "2e4b65be42496877235b619544f927b1c99fb125c3644db4dc404ae382c39833",
+      "patchedFrom": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
+      "note": "Hide OpenCode Console and OpenCode Go integrations from /connect when OPENCODE_DISABLE_FREE_MODELS=1 so Bashwink never prompts users to sign in to OpenCode hosted services."
     },
     "packages/tui/src/component/dialog-mcp.tsx": {
       "upstreamPath": "packages/tui/src/component/dialog-mcp.tsx",
@@ -18415,7 +18419,11 @@
       "upstreamPath": "packages/tui/src/feature-plugins/sidebar/footer.tsx",
       "sourceCommit": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
       "sourceDigest": "918f637c390ea5eeaafd7cfc1a6451e0b622f70a4eaec960b14c784fec63ce85",
-      "bytes": 4655
+      "bytes": 5247,
+      "patch": true,
+      "patchedDigest": "adf3118cc3cc6f7972a09799c6fe899337063bb67e04a176bc12d67554e442c9",
+      "patchedFrom": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
+      "note": "Bashwink disables OpenCode free models via OPENCODE_DISABLE_FREE_MODELS=1, so sidebar onboarding must guide users to connect their own provider instead of advertising OpenCode free models."
     },
     "packages/tui/src/feature-plugins/sidebar/limit.tsx": {
       "upstreamPath": "packages/tui/src/feature-plugins/sidebar/limit.tsx",
@@ -32375,6 +32383,16 @@
       "path": "packages/server/package.json",
       "kind": "modified",
       "reason": "Removed the @opencode/pty devDependency: no test may resolve the registry PTY package, or a green suite would hide the dependency the migration removes."
+    },
+    {
+      "path": "packages/tui/src/component/dialog-integration.tsx",
+      "kind": "modified",
+      "reason": "Hide OpenCode Console and OpenCode Go integrations from /connect when OPENCODE_DISABLE_FREE_MODELS=1 so Bashwink never prompts users to sign in to OpenCode hosted services."
+    },
+    {
+      "path": "packages/tui/src/feature-plugins/sidebar/footer.tsx",
+      "kind": "modified",
+      "reason": "Bashwink disables OpenCode free models via OPENCODE_DISABLE_FREE_MODELS=1, so sidebar onboarding must guide users to connect their own provider instead of advertising OpenCode free models."
     }
   ]
 }

@@ -137,6 +137,7 @@ export const makeBackend = (
             // VM backends already set it; leaving it out here made the shipped product phone home
             // for a catalog it does not need.
             OPENCODE_DISABLE_MODELS_FETCH: "1",
+            OPENCODE_DISABLE_FREE_MODELS: "1",
             OPENCODE_PASSWORD: endpoint.password,
           }
         }

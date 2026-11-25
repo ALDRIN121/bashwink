@@ -90,18 +90,23 @@ test("the engine is started with its autonomous catalog refresh and updater disa
     // Absent would mean the upstream default, which is an active network refresh.
     expect(probe.env!["OPENCODE_DISABLE_MODELS_FETCH"]).toBe("1")
     expect(probe.env!["OPENCODE_DISABLE_AUTOUPDATE"]).toBe("1")
+    expect(probe.env!["OPENCODE_DISABLE_FREE_MODELS"]).toBe("1")
   } finally {
     probe.cleanup()
   }
 })
 
-test("an inherited setting cannot re-enable the upstream catalog fetch", () => {
+test("an inherited setting cannot re-enable the upstream catalog fetch or free gateway", () => {
   // The product decides this, not the ambient shell. An inherited 0 would otherwise silently
-  // restore the refresh the previous test proves is off.
-  const probe = envSeenByEngine({ OPENCODE_DISABLE_MODELS_FETCH: "0" })
+  // restore the refresh or free-model gateway the previous test proves is off.
+  const probe = envSeenByEngine({
+    OPENCODE_DISABLE_MODELS_FETCH: "0",
+    OPENCODE_DISABLE_FREE_MODELS: "0",
+  })
   try {
     expect(probe.env, `engine never started: ${probe.stderr.slice(0, 300)}`).toBeDefined()
     expect(probe.env!["OPENCODE_DISABLE_MODELS_FETCH"]).toBe("1")
+    expect(probe.env!["OPENCODE_DISABLE_FREE_MODELS"]).toBe("1")
   } finally {
     probe.cleanup()
   }

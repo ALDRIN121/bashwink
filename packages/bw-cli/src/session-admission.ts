@@ -14,6 +14,13 @@ export function sessionAction(method: string, pathname: string): string | undefi
   return method === "POST" && SESSION_ACTION.test(suffix) ? id : undefined
 }
 
+const MODEL_WORK = /\/(?:prompt|synthetic|compact|skill)$/
+
+/** True for the session actions that make the runtime call the model. */
+export function startsModelWork(method: string, pathname: string): boolean {
+  return method === "POST" && MODEL_WORK.test(pathname)
+}
+
 function inWorkspace(directory: unknown, workspace: string): boolean {
   if (typeof directory !== "string") return false
   try {
@@ -44,6 +51,8 @@ export function startAdmission(
   clientAuth: string,
   workspace: string,
   admitted: () => Promise<boolean> = async () => true,
+  /** A reason to refuse new model work (a usage limit was reached), or undefined to admit it. */
+  blocked: () => string | undefined = () => undefined,
 ) {
   const refused = () =>
     Response.json(
@@ -85,6 +94,10 @@ export function startAdmission(
         let body: string | undefined
         const method = request.method
         const session = sessionAction(method, url.pathname)
+        if (session !== undefined && startsModelWork(method, url.pathname)) {
+          const reason = blocked()
+          if (reason !== undefined) return Response.json({ message: reason }, { status: 429 })
+        }
         if (method === "POST" && url.pathname === "/api/session") {
           const record = (await request.json()) as Record<string, unknown>
           const location = record["location"] as

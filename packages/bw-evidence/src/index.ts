@@ -13,7 +13,14 @@
 import { Plugin } from "@opencode/plugin"
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
-import { EvidenceRecorder, onToolAfter, onToolBefore, verify, type ModelRef } from "./recorder.js"
+import {
+  EvidenceRecorder,
+  onToolAfter,
+  onToolBefore,
+  registerSecretValues,
+  verify,
+  type ModelRef,
+} from "./recorder.js"
 import {
   evaluate,
   parseLaunchPolicy,
@@ -111,6 +118,16 @@ export function create(options: EvidencePluginOptions = {}) {
     async setup(ctx) {
       const lease = readLease()
       if (lease === undefined && process.env["BASHWINK_EVIDENCE_EXPECTED"] === "0") return
+      // Provider credentials arrive through the environment. Keep their values out of the log, and out of the
+      // environment of any shell command the model runs: an approved `printenv` must not be able to read them.
+      const secretNames = (process.env["BASHWINK_SECRET_ENV"] ?? "")
+        .split(",")
+        .filter((name) => name !== "")
+      registerSecretValues(secretNames.map((name) => process.env[name]))
+      if (secretNames.length > 0)
+        await ctx.shell.hook("create.before", (invocation) => {
+          for (const name of secretNames) invocation.env[name] = ""
+        })
       const recorder = new EvidenceRecorder({
         directory: directory(options, ctx.location?.directory),
         ...(options.maxText === undefined ? {} : { maxText: options.maxText }),

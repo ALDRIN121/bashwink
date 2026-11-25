@@ -588,3 +588,22 @@ describe("boot records: proving the plugin initialised", () => {
     expect(entry.call.id).toBe("boot_pid_7")
   })
 })
+
+describe("literal secret redaction", () => {
+  test("a registered provider key is masked wherever it appears, whatever shape it has", async () => {
+    const { registerSecretValues, clearSecretValues, redact } = await import("../src/recorder.js")
+    try {
+      registerSecretValues(["synthetic-canary-not-a-secret", "short"])
+      const masked = redact({
+        output: "key=synthetic-canary-not-a-secret and again synthetic-canary-not-a-secret",
+        nested: ["x synthetic-canary-not-a-secret"],
+      }) as { output: string; nested: string[] }
+      expect(JSON.stringify(masked)).not.toContain("synthetic-canary")
+      // Values shorter than 8 characters are never registered: masking them would wreck the log.
+      expect(redact("a short value")).toBe("a short value")
+    } finally {
+      clearSecretValues()
+    }
+    expect(redact("synthetic-canary-not-a-secret")).toBe("synthetic-canary-not-a-secret")
+  })
+})

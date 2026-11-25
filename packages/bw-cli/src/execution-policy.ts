@@ -43,6 +43,11 @@ function firstPosition(argv: readonly string[]): string | undefined {
   return undefined
 }
 
+/** True for the commands that talk to the private server without taking over the terminal (`run`, `models`, ...). */
+export function isClientCommand(argv: readonly string[]): boolean {
+  return CLIENT_COMMANDS.has(firstPosition(argv) ?? "")
+}
+
 export function standaloneArguments(argv: readonly string[]): string[] {
   const delimiter = argv.indexOf("--")
   const flags = argv.slice(0, delimiter < 0 ? argv.length : delimiter)

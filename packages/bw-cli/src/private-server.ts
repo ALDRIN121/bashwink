@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto"
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { startAdmission } from "./session-admission.js"
+import type { GuardTarget } from "./usage-guard.js"
 
 export interface ReadinessRequest {
   readonly runId: string
@@ -11,6 +12,12 @@ export interface ReadinessRequest {
   readonly pluginDirectory: string
   readonly logFile: string
   readonly resumeSession?: string
+  /** Usage limits: told where the server is once it is attested, and asked before new model work is admitted. */
+  readonly guard?: {
+    attach(target: GuardTarget): void
+    detach(): void
+    blocked(): string | undefined
+  }
 }
 
 interface Identity {
@@ -218,6 +225,8 @@ export async function startPrivateServer(
   void drainEndpoint(child.stdout, endpoint)
 
   const stopping = async () => {
+    // The event stream is about to end because the server is stopping, not because events were lost.
+    request.guard?.detach()
     try {
       await closeAdmission()
       // Intentional lease closure permits orderly plugin teardown.
@@ -355,7 +364,13 @@ export async function startPrivateServer(
                 authorization(clientPassword),
                 request.workspace,
                 async () => (await gate.promise) && accepting,
+                request.guard === undefined ? undefined : () => request.guard?.blocked(),
               )
+              request.guard?.attach({
+                url,
+                authorization: headers.Authorization,
+                workspace: request.workspace,
+              })
               return { url: admission.url.origin, password: clientPassword }
             }
           }

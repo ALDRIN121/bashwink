@@ -64,6 +64,42 @@ function writeConfig(configDirectory: string, config: RuntimeConfig): string {
 }
 
 /** Parse a `--model id[:protocol][:context]` style declaration. */
+/**
+ * `--price <model>=<input>:<output>`: US dollars per million tokens, as the provider publishes them.
+ *
+ * Bashwink never guesses a price. Without one the runtime reports cost 0, and a cost limit then refuses to
+ * run rather than pretend to protect anything.
+ */
+export function applyPrices(
+  models: ProviderSpec["models"],
+  prices: readonly string[],
+): ProviderSpec["models"] {
+  const byModel = new Map<string, { input: number; output: number }>()
+  for (const raw of prices) {
+    const match = /^([^=\s]+)=([0-9]+(?:\.[0-9]+)?):([0-9]+(?:\.[0-9]+)?)$/.exec(raw)
+    if (match === null)
+      throw new Error(
+        `--price '${raw}' must look like <model>=<input>:<output> (US dollars per million tokens)`,
+      )
+    const [, id, input, output] = match as unknown as [string, string, string, string]
+    if (!models.some((model) => model.id === id))
+      throw new Error(`--price names '${id}', which is not one of the --model entries`)
+    const price = { input: Number(input), output: Number(output) }
+    if (
+      !Number.isFinite(price.input) ||
+      !Number.isFinite(price.output) ||
+      price.input > 100_000 ||
+      price.output > 100_000
+    )
+      throw new Error(`--price '${raw}' is not a plausible price per million tokens`)
+    byModel.set(id, price)
+  }
+  return models.map((model) => {
+    const price = byModel.get(model.id)
+    return price === undefined ? model : { ...model, price }
+  })
+}
+
 function parseModelSpec(raw: string, fallback: Protocol): ProviderSpec["models"][number] {
   const [id, protocolText, contextText, outputText] = raw.split(":")
   if (id === undefined || id === "")
@@ -110,7 +146,7 @@ export function runAuthCommand(args: readonly string[]): CommandResult {
     const id = rest[0]
     if (id === undefined)
       return usage(
-        "usage: bashwink auth add <provider-id> --base-url <url> (--env <VAR> | --key-file <path>) [--model id[:protocol[:context[:output]]]]... [--anthropic|--openai]",
+        "usage: bashwink auth add <provider-id> --base-url <url> (--env <VAR> | --key-file <path>) [--model id[:protocol[:context[:output]]]]... [--price <model>=<input>:<output>]... [--anthropic|--openai]",
       )
     try {
       validateProviderID(id)
@@ -142,6 +178,11 @@ export function runAuthCommand(args: readonly string[]): CommandResult {
       return fail(error instanceof Error ? error.message : String(error))
     }
     if (models.length === 0) return usage("declare at least one --model id[:protocol]")
+    try {
+      models = applyPrices(models, flagValues(rest, "--price"))
+    } catch (error) {
+      return fail(error instanceof Error ? error.message : String(error))
+    }
 
     let config: RuntimeConfig
     try {

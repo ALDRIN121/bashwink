@@ -61,6 +61,12 @@ export interface ProviderModelSpec {
   readonly protocol?: Protocol
   readonly context?: number
   readonly output?: number
+  /**
+   * What the provider charges, in US dollars per million tokens. Declaring it is what lets the runtime report a
+   * cost at all, and so what makes a cost limit enforceable. Never guessed: a model without a price reports
+   * cost 0, which Bashwink treats as "unknown", not "free".
+   */
+  readonly price?: { readonly input: number; readonly output: number }
 }
 
 export interface ProviderSpec {
@@ -100,6 +106,7 @@ interface RawModel {
   readonly name?: string
   readonly package?: string
   readonly limit?: { readonly context?: number; readonly output?: number }
+  readonly cost?: { readonly input: number; readonly output: number }
 }
 
 /** Config file shape, limited to the keys this module reads or writes. */
@@ -107,6 +114,15 @@ export interface RuntimeConfig {
   readonly model?: unknown
   readonly providers?: Readonly<Record<string, RawProvider>>
   readonly [key: string]: unknown
+}
+
+/** Names of the environment variables the configured providers read their keys from. Names only, never values. */
+export function declaredCredentialVariables(config: RuntimeConfig): string[] {
+  const names = new Set<string>()
+  for (const provider of Object.values(config.providers ?? {}))
+    for (const name of provider.env ?? [])
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) names.add(name)
+  return [...names].sort()
 }
 
 export function configFile(configDirectory: string): string {
@@ -188,6 +204,9 @@ export function toRuntimeProvider(spec: ProviderSpec): RawProvider {
               ...(model.output === undefined ? {} : { output: model.output }),
             },
           }),
+      ...(model.price === undefined
+        ? {}
+        : { cost: { input: model.price.input, output: model.price.output } }),
     }
   }
   return {
@@ -301,6 +320,8 @@ export type CredentialState =
        * silence about it would be the wrong default.
        */
       readonly groupOrWorldReadable: boolean
+      /** False where file modes mean nothing (Windows): the protection is then unknown, not "fine". */
+      readonly modeChecked: boolean
     }
   | { readonly kind: "literal"; readonly present: true }
   | { readonly kind: "none" }
@@ -322,7 +343,8 @@ export function credentialRef(value: unknown): CredentialState {
       kind: "file",
       file: resolved,
       present: fileHasContent(resolved),
-      groupOrWorldReadable: isGroupOrWorldReadable(resolved),
+      groupOrWorldReadable: process.platform !== "win32" && isGroupOrWorldReadable(resolved),
+      modeChecked: process.platform !== "win32",
     }
   }
   return { kind: "literal", present: true }
@@ -395,9 +417,11 @@ export function describeCredential(
       if (!state.present) return `key file ${state.file} is missing or empty`
       return (
         `key file ${state.file} (${fileSize(state.file)} bytes` +
-        (state.groupOrWorldReadable
-          ? ", WARNING: readable by group/others — chmod 600 it"
-          : ", mode 600") +
+        (!state.modeChecked
+          ? ", protection not checked on Windows: keep it in your user profile, not in a project or shared folder"
+          : state.groupOrWorldReadable
+            ? ", WARNING: readable by group/others — chmod 600 it"
+            : ", mode 600") +
         ")"
       )
     case "literal":

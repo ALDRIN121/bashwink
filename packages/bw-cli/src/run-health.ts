@@ -25,6 +25,7 @@ import path from "node:path"
 import { verify } from "@bashwink/evidence"
 import type { Paths } from "./paths.js"
 import type { BackendResult } from "./execution-backend.js"
+import type { UsageSummary } from "./usage-guard.js"
 
 /** What the wrapper knows about evidence for a run. */
 export type EvidenceOutcome =
@@ -59,6 +60,8 @@ export interface RunRecord {
   readonly evidenceEntries?: number
   /** Head hash at reconciliation, so a later export can be tied to this record. */
   readonly evidenceHead?: string
+  /** Model requests, tokens and cost the runtime reported for this launch, and the limit that stopped it, if any. */
+  readonly usage?: UsageSummary
 }
 
 export interface BeginRunInput {
@@ -215,6 +218,7 @@ export function finishRun(input: {
   readonly expected: boolean
   readonly boot?: BootCheck
   readonly detail?: string
+  readonly usage?: UsageSummary
   readonly now?: () => Date
 }): RunRecord {
   const file = runRecordFile(input.resolved, input.runId)
@@ -235,6 +239,7 @@ export function finishRun(input: {
     expected: input.expected,
     ...(existing?.plugin === undefined ? {} : { plugin: existing.plugin }),
     ...(input.detail === undefined ? {} : { detail: input.detail }),
+    ...(input.usage === undefined ? {} : { usage: input.usage }),
     ...(input.boot?.ok === true
       ? {
           bootSeq: input.boot.seq,

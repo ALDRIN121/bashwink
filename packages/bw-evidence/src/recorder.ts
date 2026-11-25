@@ -185,10 +185,30 @@ export function sha256(text: string): string {
  * pass matters because agents routinely echo a whole `.env` file or a curl command as
  * a tool argument under an innocuous key such as `content`.
  */
+/**
+ * Exact secret values the log must never contain, whatever shape they have. Pattern matching cannot recognise a
+ * provider key that does not look like a known key, so the wrapper names the environment variables that hold
+ * the provider credentials and the plugin registers their values here. Values shorter than 8 characters are
+ * ignored: masking a very short string everywhere would destroy the log without protecting anything.
+ */
+const LITERAL_SECRETS = new Set<string>()
+
+export function registerSecretValues(values: Iterable<string | undefined>): number {
+  for (const value of values)
+    if (value !== undefined && value.length >= 8) LITERAL_SECRETS.add(value)
+  return LITERAL_SECRETS.size
+}
+
+export function clearSecretValues(): void {
+  LITERAL_SECRETS.clear()
+}
+
 export function redact(value: unknown, depth = 0): unknown {
   if (depth > 12) return "[DEPTH_LIMIT]"
   if (typeof value === "string") {
     let text = value
+    for (const secret of LITERAL_SECRETS)
+      if (text.includes(secret)) text = text.split(secret).join(REDACTED)
     for (const pattern of SECRET_VALUE) text = text.replace(pattern, REDACTED)
     return text
   }

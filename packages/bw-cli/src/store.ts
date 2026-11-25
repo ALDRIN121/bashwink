@@ -261,7 +261,13 @@ export class Store {
     // WAL keeps a killed process from corrupting the file — directly relevant to BW-019.
     if (options.file !== ":memory:") this.db.run("PRAGMA journal_mode = WAL")
     this.db.run("PRAGMA foreign_keys = ON")
-    this.migrate()
+    try {
+      this.migrate()
+    } catch (error) {
+      // A refused schema must not leave the file open: on Windows an open handle blocks deleting or replacing it.
+      this.db.close()
+      throw error
+    }
   }
 
   /** Apply pending migrations atomically. Safe to call on every start. */

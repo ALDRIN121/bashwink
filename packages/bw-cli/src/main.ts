@@ -29,6 +29,7 @@ import {
   renderMissingEvidence,
   runtimeLogHint,
 } from "./run-health.js"
+import { parseLimits, renderUsage, UsageGuard, type UsageLimits } from "./usage-guard.js"
 import {
   runAuthCommand,
   runModelCommand,
@@ -42,10 +43,11 @@ import {
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { existsSync } from "node:fs"
-import { preflightCredential, readRuntimeConfig } from "./providers.js"
+import { declaredCredentialVariables, preflightCredential, readRuntimeConfig } from "./providers.js"
 import { findRuntimeFailure, renderRuntimeFailure } from "./service-health.js"
 import {
   admitInteractiveConfig,
+  isClientCommand,
   launchEnvironment,
   prepareLaunchPolicy,
   standaloneArguments,
@@ -482,6 +484,7 @@ export async function main(input: readonly string[]): Promise<MainResult> {
   }
   let backend
   let timeoutMs
+  let limits: UsageLimits
   try {
     backend = selectBackend(
       STANDARD_BUILD
@@ -495,6 +498,7 @@ export async function main(input: readonly string[]): Promise<MainResult> {
       return { exitCode: 0, handled: true }
     }
     timeoutMs = executionTimeout(process.env["BASHWINK_TIMEOUT_MS"])
+    limits = parseLimits(process.env)
     runtimeArgs = standaloneArguments(argv)
   } catch (error) {
     err(error instanceof Error ? error.message : String(error))
@@ -669,16 +673,37 @@ export async function main(input: readonly string[]): Promise<MainResult> {
   err(hostMode.banner)
   if (process.stderr.isTTY) process.stderr.write(`\x1b]0;bashwink [${hostMode.short}]\x07`)
   environment["BASHWINK_EXECUTION_MODE"] = hostMode.mode
+  try {
+    // Names only. The plugin looks the values up itself, to mask them in the evidence log and to keep them out of
+    // the environment of shell commands the model runs.
+    environment["BASHWINK_SECRET_ENV"] = declaredCredentialVariables(
+      readRuntimeConfig(resolved.config),
+    ).join(",")
+  } catch {
+    // An unreadable config is reported by the runtime launch itself; there is nothing to protect by name here.
+  }
   beginRun({
     resolved,
     runId,
     plugin: { id: evidencePlugin.id, entry: evidencePlugin.entry, stagedPath: evidencePlugin.path },
   })
 
+  // Usage limits. The terminal UI owns the screen while it runs, so a stop notice is printed at once only for
+  // the non-interactive commands; for the UI it is in the summary printed when the UI exits.
+  const noninteractive = isClientCommand(runtimeArgs)
+  const guard = new UsageGuard(limits, {
+    onStop: (reason) => {
+      if (noninteractive) err(`bashwink: stopped: ${reason}`)
+    },
+  })
   const controller = new AbortController()
   const interrupt = () => controller.abort()
-  process.on("SIGINT", interrupt)
-  process.on("SIGTERM", interrupt)
+  const stopSignals: NodeJS.Signals[] = [
+    "SIGINT",
+    "SIGTERM",
+    ...(process.platform === "win32" ? (["SIGBREAK"] as const) : []),
+  ]
+  for (const signal of stopSignals) process.on(signal, interrupt)
   const execution = await runWithBackend(
     backend,
     {
@@ -691,6 +716,7 @@ export async function main(input: readonly string[]): Promise<MainResult> {
         scopesDirectory: path.join(resolved.data, "scopes"),
         pluginDirectory: evidencePlugin.path,
         logFile: runtimeLogHint(resolved),
+        guard,
       },
       env: {
         ...environment,
@@ -700,10 +726,14 @@ export async function main(input: readonly string[]): Promise<MainResult> {
     },
     { signal: controller.signal, timeoutMs },
   ).finally(() => {
-    process.off("SIGINT", interrupt)
-    process.off("SIGTERM", interrupt)
+    for (const signal of stopSignals) process.off(signal, interrupt)
   })
-  const { exitCode } = execution
+  await guard.stop()
+  const usage = guard.summary()
+  if (usage.requests > 0 || usage.stopped !== undefined) err(renderUsage(usage))
+  const { exitCode: runtimeExit } = execution
+  // A run that a limit stopped must not look like a success to a script.
+  const exitCode = usage.stopped === undefined ? runtimeExit : 4
   if (execution.outcome !== "exited")
     err(
       `execution ${execution.outcome} (${execution.backend.mode}): ${execution.detail ?? "no detail"}`,
@@ -718,6 +748,7 @@ export async function main(input: readonly string[]): Promise<MainResult> {
     expected: true,
     execution,
     boot,
+    usage,
     ...(execution.detail !== undefined
       ? { detail: execution.detail }
       : boot.ok

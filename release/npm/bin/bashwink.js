@@ -104,8 +104,13 @@ function main(argv) {
   // The runtime owns the session and finalizes its run record on SIGINT/SIGTERM/SIGHUP. Forward those signals
   // instead of dying with the launcher, and exit with whatever the runtime exits with. (Ctrl+C in a terminal
   // reaches both processes; a signal sent to this process alone reaches the runtime only through this.)
-  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  // On Windows `child.kill(signal)` terminates the child abruptly instead of delivering a signal, which would skip its
+  // cleanup (finalizing the run record, stopping the private server). A console Ctrl+C or Ctrl+Break already reaches
+  // every process in the console's group, so the launcher only has to stay alive until the child has finished.
+  const windows = process.platform === "win32";
+  for (const signal of windows ? ["SIGINT", "SIGBREAK", "SIGHUP"] : ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(signal, () => {
+      if (windows) return;
       try {
         child.kill(signal);
       } catch {

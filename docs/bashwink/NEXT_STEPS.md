@@ -151,7 +151,7 @@ drive the interactive screen with a live model (the owner can simply use `bashwi
 
 ## 2026-11-25: source build and install
 
-The new `--install` path passed from a clean macOS arm64 checkout with Bun absent from PATH.
-Next, verify the consent and install path in the hosted Windows and macOS package jobs, then
-have an independent tester run it from a clean Windows 11 x64 clone. The earlier hosted package
-results apply to the prior build and install steps.
+The `--install` path now downloads the native Bun package, and a clean macOS arm64 checkout
+passed with npm 12's default lifecycle policy. Next, verify the revised path in the hosted
+Windows and macOS package jobs with scripts disabled, then repeat it on the reporter's
+Windows 11 x64 machine.

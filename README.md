@@ -31,6 +31,7 @@ python3 scripts/build_npm_package.py --install
 ```
 
 If Bun 1.4.4 is unavailable, the script asks before installing a temporary build copy with npm.
+It fetches the native Bun package for your platform, which needs no npm lifecycle scripts.
 It then installs locked build dependencies, builds and audits the tarball, and installs Bashwink
 globally with npm. To check the installation, run `bashwink.cmd doctor` on Windows or
 `bashwink doctor` on macOS. Try Bashwink in a disposable Git project.

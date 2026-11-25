@@ -33,9 +33,9 @@ it. `--check` fails if it drifts from the register.
 <!-- END GENERATED:status -->
 
 The standard npm builder now supports a single source build and install command. When the pinned
-Bun version is unavailable, the installer offers a temporary build copy. From a clean macOS arm64
-checkout with Bun absent from PATH, accepting the prompt installed Bashwink and the CLI's version
-check passed. Hosted Windows and macOS checks for this path are pending.
+Bun version is unavailable, the installer offers a temporary build copy from the native npm
+package. The revised installer passed on macOS arm64 with npm 12's default lifecycle policy.
+Hosted checks with npm lifecycle scripts disabled are pending.
 [Test evidence](TEST_EVIDENCE.md#2026-11-25-source-build-and-install)
 
 ## Direction change (2026-11-25)

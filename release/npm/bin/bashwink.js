@@ -76,9 +76,13 @@ function findBinary(packageName, name, executable, start = ROOT) {
   return undefined;
 }
 
-function main(argv) {
+function runtimePlan() {
   const report = process.report && typeof process.report.getReport === "function" ? process.report.getReport() : undefined;
-  const plan = resolvePlatform(process.platform, process.arch, isMusl(report));
+  return resolvePlatform(process.platform, process.arch, isMusl(report));
+}
+
+function main(argv) {
+  const plan = runtimePlan();
   if (plan.unsupported) {
     process.stderr.write(`bashwink: ${plan.unsupported}\n`);
     return 1;
@@ -129,7 +133,7 @@ function main(argv) {
   return undefined;
 }
 
-module.exports = { resolvePlatform, searchRoots, findBinary, SUPPORTED };
+module.exports = { resolvePlatform, runtimePlan, searchRoots, findBinary, SUPPORTED };
 
 if (require.main === module) {
   const code = main(process.argv.slice(2));

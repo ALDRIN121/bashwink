@@ -328,6 +328,7 @@ jobs:
       - name: Build and install from source (Windows)
         if: runner.os == 'Windows'
         env:
+          npm_config_ignore_scripts: "true"
           npm_config_prefix: ${{ runner.temp }}\bashwink-source-install
         run: |
           'y' | python scripts/build_npm_package.py --install --out build/npm
@@ -336,6 +337,7 @@ jobs:
       - name: Build and install from source (macOS)
         if: runner.os == 'macOS'
         env:
+          npm_config_ignore_scripts: "true"
           npm_config_prefix: ${{ runner.temp }}/bashwink-source-install
         run: |
           printf 'y\n' | python scripts/build_npm_package.py --install --out build/npm

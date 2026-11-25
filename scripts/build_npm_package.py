@@ -154,16 +154,32 @@ def audit(tarball: Path) -> dict:
     return {"files": len(names), "names": sorted(names)}
 
 
-def resolve_bun(override: str | None, offer_install: bool, resources: ExitStack) -> str:
-    bun = override or shutil.which("bun")
-    version = None
+def bun_version(bun: str | None) -> str | None:
     if bun is not None:
         try:
-            version = capture([bun, "--version"])
+            return capture([bun, "--version"])
         except (OSError, subprocess.CalledProcessError):
             pass
-        if version == BUN_VERSION:
-            return bun
+    return None
+
+
+def build_runtime_plan() -> dict[str, str]:
+    try:
+        plan = json.loads(capture([
+            "node", "-p", "JSON.stringify(require(process.argv[1]).runtimePlan())", TEMPLATE / "bin/bashwink.js",
+        ]))
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
+        raise SystemExit("Could not detect the build platform. Check that Node.js 22 runs with node --version.") from None
+    if "unsupported" in plan:
+        raise SystemExit(plan["unsupported"])
+    return plan
+
+
+def resolve_bun(override: str | None, offer_install: bool, resources: ExitStack) -> str:
+    bun = override or shutil.which("bun")
+    version = bun_version(bun)
+    if bun is not None and version == BUN_VERSION:
+        return bun
 
     found = f" (found {version})" if version else ""
     required = f"Bun {BUN_VERSION} is required for building{found}."
@@ -176,13 +192,27 @@ def resolve_bun(override: str | None, offer_install: bool, resources: ExitStack)
     if answer.strip().lower() not in ("y", "yes"):
         raise SystemExit(f"Setup stopped. Install Bun {BUN_VERSION} and retry, or answer yes to use a temporary copy.")
 
+    npm_missing = "npm was not found. Install Node.js 22 with npm, reopen your terminal, and retry."
+    if shutil.which(NPM) is None:
+        raise SystemExit(npm_missing)
+    plan = build_runtime_plan()
+    package = plan["bun"]
     tools = Path(resources.enter_context(tempfile.TemporaryDirectory(prefix="bashwink-build-tools-")))
-    run([NPM, "install", "--prefix", tools, "--no-save", f"bun@{BUN_VERSION}"], cwd=tools)
-    # A full path selects the npm shim in this prefix, including bun.cmd on Windows.
-    shim = "bun.cmd" if sys.platform == "win32" else "bun"
-    bun = shutil.which(str(tools / "node_modules" / ".bin" / shim))
-    if bun is None or capture([bun, "--version"]) != BUN_VERSION:
-        raise SystemExit(f"npm did not provide a usable Bun {BUN_VERSION} in the temporary directory.")
+    try:
+        # The generic bun package needs a postinstall to replace its placeholder executable.
+        run([NPM, "install", "--prefix", tools, "--no-save", "--ignore-scripts", f"{package}@{BUN_VERSION}"],
+            cwd=tools)
+    except FileNotFoundError:
+        raise SystemExit(npm_missing) from None
+    except subprocess.CalledProcessError as error:
+        raise SystemExit(
+            f"npm could not install Bun {BUN_VERSION} (exit {error.returncode}). See the npm error above."
+        ) from None
+    except OSError as error:
+        raise SystemExit(f"Could not start npm: {error}") from None
+    bun = str(tools / "node_modules" / package / "bin" / f"bun{plan['executable']}")
+    if bun_version(bun) != BUN_VERSION:
+        raise SystemExit(f"The Bun {BUN_VERSION} binary from {package} could not run on this machine.")
     return bun
 
 

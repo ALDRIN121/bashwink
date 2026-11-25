@@ -1756,3 +1756,23 @@ temporary build tool directory was removed, and the checkout stayed clean. Decli
 answer, and closed input stopped before installing. `python3 scripts/test_npm_bun_consent.py`
 passed both tests, and `bun test packages` passed 571 tests (both exit 0). Hosted Windows and
 macOS results for this version are pending.
+
+Hosted run [45586263382](https://github.com/ALDRIN121/bashwink/actions/runs/45586263382) on
+`b3520c7` later passed all three package jobs, including the Windows Bun prompt. A Windows
+desktop tester then reported that npm skipped Bun's postinstall and the wrapper could not
+execute `bun.exe`. Locally the old installer reproduced the failure with
+`npm_config_ignore_scripts=true` (exit 1 at the wrapper's version check).
+
+The revised installer builds with the pinned native Bun package. In a disposable clean macOS
+arm64 clone (`5b6b0c2`) without Bun on PATH, the following checks ran under npm 12.2.2.
+The Bashwink install printed warnings for blocked Bun and OpenCode wrapper scripts.
+
+| Command | Exit | Result |
+| --- | ---: | --- |
+| `python3 scripts/build_npm_package.py --install --out <new-directory>`, answer `y` | 0 | Downloaded native Bun 1.4.4, audited the tarball, and installed Bashwink into a disposable npm prefix. |
+| `bashwink --version` and `bashwink doctor` from that prefix | 0 / 0 | CLI version `0.1.0-alpha.1`; both runtimes and the evidence plugin found, with zero diagnostic failures. |
+| `python3 scripts/test_npm_bun_consent.py` | 0 | Four tests cover consent, build-only mode, missing npm, and npm download failure. |
+
+The Windows native Bun 1.4.4 npm tarball was inspected and contains `bin/bun.exe` with no
+lifecycle scripts. The revised installer still needs a hosted Windows run and a retry by
+the desktop tester.

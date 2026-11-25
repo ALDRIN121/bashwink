@@ -22,6 +22,7 @@ import { checkWorkspaceWritePath, sanitizeSecretText, type BoundaryContext } fro
 import type {
   ChatMessage,
   CommandOutcomeRecord,
+  DiffPreviewRecord,
   RunActionRecord,
   RunSummaryRecord,
   TaskResult,
@@ -50,6 +51,7 @@ export interface SessionTurn {
   readonly model: string
   readonly messageCountBefore: number
   readonly changedFiles: readonly string[]
+  readonly diffPreviews?: readonly DiffPreviewRecord[]
   readonly commands: readonly CommandOutcomeRecord[]
   readonly actions: readonly RunActionRecord[]
   readonly checkpoints: readonly FileCheckpoint[]
@@ -178,6 +180,14 @@ export function saveSession(
       ...t,
       userPrompt: sanitizeSecretText(t.userPrompt, activeSecret),
       assistantText: sanitizeSecretText(t.assistantText, activeSecret),
+      ...(t.diffPreviews
+        ? {
+            diffPreviews: t.diffPreviews.map((d) => ({
+              ...d,
+              patch: sanitizeSecretText(d.patch, activeSecret),
+            })),
+          }
+        : {}),
       ...(t.stopReason === undefined
         ? {}
         : { stopReason: sanitizeSecretText(t.stopReason, activeSecret) }),
@@ -275,6 +285,7 @@ export function appendTurnToSession(
     model: turnInput.model,
     messageCountBefore,
     changedFiles: [...turnInput.result.changedFiles],
+    ...(turnInput.result.diffPreviews ? { diffPreviews: [...turnInput.result.diffPreviews] } : {}),
     commands: [...turnInput.result.commands],
     actions: [...(turnInput.result.actions ?? [])],
     checkpoints: [...turnInput.checkpoints],

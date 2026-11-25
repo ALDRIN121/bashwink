@@ -60,12 +60,16 @@ import {
   SYNC_END,
   SYNC_START,
   colorsEnabled,
+  countDiffChanges,
   createStyle,
   getTerminalLayout,
   padPlainRight,
+  renderOpenCodeDiff,
   truncatePathMiddle,
   truncatePlain,
   type ParsedKeyEvent,
+  type PromptMetadataInput,
+  type StatusFooterInput,
   type TerminalLayout,
   type TuiStyle,
 } from "./tui-theme.ts"
@@ -960,7 +964,15 @@ function renderTaskOutcome(result: TaskResult, io: TerminalIO): void {
         ? style.yellow(outcomeLine)
         : style.red(outcomeLine)
   io.write(`${outcomeColored}\n`)
-  io.write(`Changed   ${result.changedFiles.length > 0 ? result.changedFiles.join(", ") : "none"}\n`)
+  if (result.diffPreviews && result.diffPreviews.length > 0) {
+    const fileSummaries = result.diffPreviews.map((d) => {
+      const c = countDiffChanges(d.patch)
+      return `${d.path} (${style.green(`+${c.additions}`)} ${style.red(`-${c.deletions}`)})`
+    })
+    io.write(`Changed   ${fileSummaries.join(", ")}\n`)
+  } else {
+    io.write(`Changed   ${result.changedFiles.length > 0 ? result.changedFiles.join(", ") : "none"}\n`)
+  }
   if (result.changedTests.length > 0) {
     io.write(`Tests     modified test files: ${result.changedTests.join(", ")} (verify independently)\n`)
   }
@@ -1028,6 +1040,49 @@ function buildStatusSummary(
   return `${session.title} (${session.turns.length}t) · ${modelText} · ${trustText}${costText} · ctrl+p palette · ctrl+o sessions · ctrl+t transcript · esc×2 rewind`
 }
 
+function buildComposerMetadata(
+  trusted: boolean,
+  config?: StandaloneConfig,
+): PromptMetadataInput {
+  return {
+    agent: "build",
+    model: config ? config.model : "no model selected (/model)",
+    ...(config?.providerId ? { provider: config.providerId } : {}),
+    trustLabel: trusted ? "trusted" : "read-only",
+    trusted,
+  }
+}
+
+function formatCompactTokens(tokens: number): string {
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k tok`
+  return `${tokens} tok`
+}
+
+function buildComposerStatusFooter(
+  workspace: string,
+  env: NodeJS.ProcessEnv,
+  session: SessionRecord,
+): Omit<StatusFooterInput, "statusMessage"> {
+  const home = env["HOME"] || ""
+  const shortDir = home !== "" && workspace.startsWith(home) ? `~${workspace.slice(home.length) || "/"}` : workspace
+  const branchTag = session.gitBranch ? ` (${session.gitBranch})` : ""
+  const location = `${shortDir}${branchTag}`
+  const tokens = session.usageTotals.totalTokens
+  const tokensText = tokens > 0 ? formatCompactTokens(tokens) : undefined
+  const costText = session.usageTotals.costUsd !== undefined ? `$${session.usageTotals.costUsd.toFixed(4)}` : undefined
+  return {
+    location,
+    turnsCount: session.turns.length,
+    ...(tokensText ? { tokensText } : {}),
+    ...(costText ? { costText } : {}),
+    shortcuts: [
+      { key: "ctrl+p", label: "commands" },
+      { key: "ctrl+o", label: "sessions" },
+      { key: "esc×2", label: "rewind" },
+    ],
+  }
+}
+
 function buildPaletteItems(): PaletteCommandItem[] {
   return SLASH_COMMANDS.map((c) => ({
     id: c.name,
@@ -1038,7 +1093,7 @@ function buildPaletteItems(): PaletteCommandItem[] {
   }))
 }
 
-function buildDiffModalLines(session: SessionRecord, style: TuiStyle): string[] {
+function buildDiffModalLines(session: SessionRecord, style: TuiStyle, maxWidth = 90): string[] {
   const lines: string[] = []
   if (session.turns.length === 0) {
     lines.push(style.muted("  No turns or file changes recorded in this session yet."))
@@ -1047,14 +1102,29 @@ function buildDiffModalLines(session: SessionRecord, style: TuiStyle): string[] 
   for (let i = 0; i < session.turns.length; i += 1) {
     const t = session.turns[i]!
     if (t.changedFiles.length === 0 && t.commands.length === 0) continue
-    lines.push(style.accentBold(`  Turn ${i + 1} · ${formatRelativeTime(t.createdAt)} · ${truncatePlain(t.userPrompt.replace(/\n/g, " "), 60)}`))
-    for (const f of t.changedFiles) {
-      lines.push(style.green(`    [edited] ${f}`))
+    lines.push(
+      style.accentBold(
+        `  Turn ${i + 1} · ${formatRelativeTime(t.createdAt)} · ${truncatePlain(t.userPrompt.replace(/\n/g, " "), Math.max(20, maxWidth - 28))}`,
+      ),
+    )
+    if (t.diffPreviews && t.diffPreviews.length > 0) {
+      for (const d of t.diffPreviews) {
+        const rendered = renderOpenCodeDiff(
+          sanitizeTerminalText(d.patch),
+          { path: d.path, create: d.create, maxWidth: Math.max(36, maxWidth - 4) },
+          style,
+        )
+        for (const rLine of rendered) lines.push(`  ${rLine}`)
+      }
+    } else {
+      for (const f of t.changedFiles) {
+        lines.push(style.green(`    [edited] ${f}`))
+      }
     }
     for (const cmd of t.commands) {
       const cmdStr = [cmd.command, ...cmd.args].join(" ")
       const status = cmd.decision === "denied" ? "declined" : `exit ${cmd.exitCode ?? "null"}`
-      lines.push(style.cyan(`    [cmd] ${cmdStr} -> ${status}`))
+      lines.push(style.cyan(`    $ ${cmdStr} -> ${status}`))
     }
     lines.push("")
   }
@@ -1489,7 +1559,7 @@ export async function runStandalone(
               io.raw,
               io.style,
               `Session Changes (${activeSession.title})`,
-              buildDiffModalLines(activeSession, io.style),
+              buildDiffModalLines(activeSession, io.style, io.raw.cols()),
             )
           } else {
             const changed = [...new Set(activeSession.turns.flatMap((t) => t.changedFiles))]
@@ -1557,6 +1627,8 @@ export async function runStandalone(
             promptLabel,
             statusSummary: buildStatusSummary(activeSession, trusted, activeConfig, io.raw.layout()),
             getStatusSummary: (layout) => buildStatusSummary(activeSession, trusted, activeConfig, layout),
+            getMetadata: () => buildComposerMetadata(trusted, activeConfig),
+            getStatusFooter: () => buildComposerStatusFooter(canonical, env, activeSession),
             workspace: canonical,
             history: promptHistory,
             initialDraft: draftBuffer,
@@ -1766,9 +1838,16 @@ export async function runStandalone(
                   }
                   startSpinnerAndCancel()
                 } else if (event.type === "tool_completed") {
-                  if (event.result.tool === "list_files" || event.result.tool === "read_file") {
-                    clearSpinnerLine()
-                    io.write(`${event.result.tool} -> ${event.result.status}\n`)
+                  clearSpinnerLine()
+                  const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+                  if (event.result.tool === "edit_file") {
+                    const icon = event.result.status === "ok" ? style.green("✓") : style.red("✗")
+                    io.write(`${icon} ${event.result.output}\n`)
+                  } else if (event.result.tool === "run_command") {
+                    const icon = event.result.status === "ok" ? style.green("✓") : style.yellow("!")
+                    io.write(`${icon} ${sanitizeTerminalText(event.result.output.split("\n")[0] ?? "run_command")}\n`)
+                  } else if (event.result.tool === "list_files" || event.result.tool === "read_file") {
+                    io.write(`${style.muted("→")} ${event.result.tool} -> ${event.result.status}\n`)
                   }
                 }
               },
@@ -1776,14 +1855,23 @@ export async function runStandalone(
                 pauseSpinnerAndCancel()
                 try {
                   if (req.kind === "edit_file") {
-                    io.write(`\nEdit     ${sanitizeTerminalText(req.prepared.relativePath)}\n`)
-                    const diffLines = sanitizeTerminalText(req.prepared.diffPreview).split("\n")
-                    if (io instanceof RawTerminalIO) {
-                      io.write(diffLines.map((l) => io.style.diffLine(l)).join("\n") + "\n")
-                    } else {
-                      io.write(`${diffLines.join("\n")}\n`)
-                    }
-                    const ans = await askYesNo(io, "Apply this change? [y/N] ", currentAbort?.signal)
+                    const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+                    const cleanPatch = sanitizeTerminalText(req.prepared.diffPreview)
+                    const rendered = renderOpenCodeDiff(
+                      cleanPatch,
+                      {
+                        path: req.prepared.relativePath,
+                        create: req.prepared.create,
+                        maxWidth: terminalCols(io),
+                      },
+                      style,
+                    )
+                    io.write(`\n${rendered.join("\n")}\n`)
+                    const ans = await askYesNo(
+                      io,
+                      "Apply this change? [y/N] ",
+                      currentAbort?.signal,
+                    )
                     const approved = isYes(ans)
                     if (approved) {
                       const cp = captureFileCheckpoint(

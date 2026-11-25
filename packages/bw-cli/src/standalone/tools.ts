@@ -282,19 +282,27 @@ function renderSimpleDiff(relPath: string, beforeText: string | null, afterText:
   const removed = beforeLines.slice(prefix, beforeLines.length - suffix)
   const added = afterLines.slice(prefix, afterLines.length - suffix)
   const header = beforeText === null ? `+++ ${relPath} (new file)` : `--- ${relPath}\n+++ ${relPath}`
-  const ctxBefore = beforeLines.slice(Math.max(0, prefix - 2), prefix).map((l) => `  ${l}`)
+  const ctxStart = Math.max(0, prefix - 3)
+  const ctxBefore = beforeLines.slice(ctxStart, prefix).map((l) => `  ${l}`)
+  const ctxAfterCount = beforeText === null ? 0 : Math.min(3, suffix)
   const ctxAfter = afterLines
-    .slice(afterLines.length - suffix, Math.min(afterLines.length, afterLines.length - suffix + 2))
+    .slice(afterLines.length - suffix, afterLines.length - suffix + ctxAfterCount)
     .map((l) => `  ${l}`)
+  const shownRemoved = removed.slice(0, 60)
+  const shownAdded = added.slice(0, 60)
+  const oldStart = beforeText === null ? 0 : ctxStart + 1
+  const oldCount = beforeText === null ? 0 : ctxBefore.length + shownRemoved.length + ctxAfter.length
+  const newStart = ctxStart + 1
+  const newCount = ctxBefore.length + shownAdded.length + ctxAfter.length
   const body = [
     ...ctxBefore,
-    ...removed.slice(0, 40).map((l) => `- ${l}`),
-    ...(removed.length > 40 ? [`... (${removed.length - 40} more removed lines)`] : []),
-    ...added.slice(0, 40).map((l) => `+ ${l}`),
-    ...(added.length > 40 ? [`... (${added.length - 40} more added lines)`] : []),
+    ...shownRemoved.map((l) => `- ${l}`),
+    ...(removed.length > 60 ? [`... (${removed.length - 60} more removed lines)`] : []),
+    ...shownAdded.map((l) => `+ ${l}`),
+    ...(added.length > 60 ? [`... (${added.length - 60} more added lines)`] : []),
     ...ctxAfter,
   ]
-  return `${header}\n@@ line ${prefix + 1} @@\n${body.join("\n")}`
+  return `${header}\n@@ -${oldStart},${oldCount} +${newStart},${newCount} @@\n${body.join("\n")}`
 }
 
 export function prepareEditFile(

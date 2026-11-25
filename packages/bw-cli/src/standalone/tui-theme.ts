@@ -355,6 +355,403 @@ export function wrapComposerLines(
   return { visualRows, visualCursorRow, visualCursorCol }
 }
 
+export interface PromptMetadataInput {
+  readonly agent?: string
+  readonly model: string
+  readonly provider?: string
+  readonly variant?: string
+  readonly trustLabel?: string
+  readonly trusted?: boolean
+}
+
+/**
+ * Progressive prompt metadata bar ported from OpenCode v2.3.2
+ * (`packages/tui/src/component/prompt/metadata.tsx`, MIT license, Copyright (c) 2025 opencode).
+ */
+export function formatPromptMetadata(
+  input: PromptMetadataInput,
+  maxWidth: number,
+  style: TuiStyle,
+): string {
+  const width = Math.max(12, maxWidth)
+  const agent = width < 40 ? undefined : input.agent
+  const provider = width < 40 ? undefined : input.provider
+  const candidates: Array<{
+    agent?: string | undefined
+    model: string
+    provider?: string | undefined
+    variant?: string | undefined
+    trust?: string | undefined
+  }> = [
+    { agent, model: input.model, provider, variant: input.variant, trust: input.trustLabel },
+    { agent, model: input.model, provider: provider?.split(" / ").at(-1), variant: input.variant, trust: input.trustLabel },
+    { agent, model: input.model, variant: input.variant, trust: input.trustLabel },
+    { agent, model: input.model },
+  ]
+  const plainLen = (c: (typeof candidates)[number]) =>
+    [c.agent, c.model, c.provider, c.variant, c.trust].filter(Boolean).join(" · ").length
+
+  let chosen = candidates.find((c) => plainLen(c) <= width)
+  if (!chosen) {
+    const pfxLen = agent ? agent.length + 3 : 0
+    chosen = {
+      ...(agent ? { agent } : {}),
+      model: truncatePlain(input.model, Math.max(9, width - pfxLen)),
+    }
+  }
+
+  const segs: string[] = []
+  if (chosen.agent) segs.push(style.cyan(chosen.agent))
+  segs.push(style.bold(chosen.model))
+  if (chosen.provider) segs.push(style.muted(chosen.provider))
+  if (chosen.variant) segs.push(style.yellow(chosen.variant))
+  if (chosen.trust) segs.push(input.trusted ? style.green(chosen.trust) : style.yellow(chosen.trust))
+  return segs.join(style.dim(" · "))
+}
+
+export interface StatusFooterInput {
+  readonly location: string
+  readonly statusMessage?: string
+  readonly turnsCount?: number
+  readonly tokensText?: string
+  readonly costText?: string
+  readonly shortcuts: readonly { readonly key: string; readonly label: string }[]
+}
+
+/**
+ * Two-column progressive footer statusline ported from OpenCode v2.3.2
+ * (`packages/tui/src/mini/footer.width.ts` & `component/prompt/index.tsx`, MIT license).
+ */
+export function formatStatusFooterLine(
+  input: StatusFooterInput,
+  totalCols: number,
+  style: TuiStyle,
+): string {
+  const cols = Math.max(20, totalCols)
+  const hasTransient = Boolean(input.statusMessage && input.statusMessage !== "")
+  const rawLeft = hasTransient ? input.statusMessage! : input.location
+  const leftPlainMax = Math.max(12, Math.floor(cols * 0.48))
+  const leftPlain = hasTransient
+    ? truncatePlain(rawLeft, Math.min(cols - 2, leftPlainMax + 14))
+    : truncatePathMiddle(rawLeft, leftPlainMax)
+  const styledLeft = hasTransient ? style.yellow(leftPlain) : style.muted(leftPlain)
+  const availRight = Math.max(0, cols - visibleWidth(leftPlain) - 2)
+  if (availRight < 6) {
+    return hasTransient
+      ? style.yellow(truncatePlain(rawLeft, cols))
+      : style.muted(truncatePathMiddle(rawLeft, cols))
+  }
+
+  const selected: Array<{ id: string; plain: string; styled: string }> = []
+  const candidates: Array<{ id: string; plain: string; styled: string }> = []
+  if (input.turnsCount !== undefined) {
+    const tStr = `${input.turnsCount}t`
+    candidates.push({ id: "turns", plain: tStr, styled: style.muted(tStr) })
+  }
+  if (input.tokensText) {
+    candidates.push({ id: "tokens", plain: input.tokensText, styled: style.muted(input.tokensText) })
+  }
+  if (input.costText) {
+    candidates.push({ id: "cost", plain: input.costText, styled: style.muted(input.costText) })
+  }
+  for (let i = 0; i < input.shortcuts.length; i += 1) {
+    const sc = input.shortcuts[i]!
+    const plain = `${sc.key} ${sc.label}`
+    const styled = `${style.bold(sc.key)} ${style.muted(sc.label)}`
+    candidates.push({ id: `sc_${i}`, plain, styled })
+  }
+
+  const sep = " · "
+  for (const cand of candidates) {
+    const nextList = [...selected, cand]
+    const totalPlain = nextList.map((s) => s.plain).join(sep)
+    if (visibleWidth(totalPlain) <= availRight) {
+      selected.push(cand)
+    } else {
+      break
+    }
+  }
+
+  if (selected.length === 0) return styledLeft
+  const rightPlainLen = visibleWidth(selected.map((s) => s.plain).join(sep))
+  const gap = Math.max(2, cols - visibleWidth(leftPlain) - rightPlainLen)
+  const rightStyled = selected.map((s) => s.styled).join(style.dim(sep))
+  return `${styledLeft}${" ".repeat(gap)}${rightStyled}`
+}
+
+export interface DiffChangeCounts {
+  readonly additions: number
+  readonly deletions: number
+}
+
+interface ParsedDiffRow {
+  readonly kind: "hunk" | "context" | "removed" | "added" | "note"
+  readonly oldLine?: number
+  readonly newLine?: number
+  readonly text: string
+}
+
+/** Count added and deleted code lines in a unified patch (excluding `+++` / `---` headers). */
+export function countDiffChanges(patch: string): DiffChangeCounts {
+  let additions = 0
+  let deletions = 0
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) additions += 1
+    else if (line.startsWith("-") && !line.startsWith("---")) deletions += 1
+  }
+  return { additions, deletions }
+}
+
+function parsePatchRows(patch: string): ParsedDiffRow[] {
+  const rows: ParsedDiffRow[] = []
+  let oldNum = 1
+  let newNum = 1
+
+  for (const raw of patch.split("\n")) {
+    if (raw.startsWith("--- ") || raw.startsWith("+++ ")) continue
+    const hunkMatch = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/.exec(raw)
+    if (hunkMatch) {
+      oldNum = Math.max(1, Number(hunkMatch[1]))
+      newNum = Math.max(1, Number(hunkMatch[2]))
+      rows.push({ kind: "hunk", text: raw })
+      continue
+    }
+    const legacyLineMatch = /^@@ line (\d+) @@$/.exec(raw)
+    if (legacyLineMatch) {
+      oldNum = Math.max(1, Number(legacyLineMatch[1]))
+      newNum = oldNum
+      rows.push({ kind: "hunk", text: raw })
+      continue
+    }
+    if (raw.startsWith("+ ")) {
+      rows.push({ kind: "added", newLine: newNum, text: raw.slice(2) })
+      newNum += 1
+      continue
+    }
+    if (raw.startsWith("+")) {
+      rows.push({ kind: "added", newLine: newNum, text: raw.slice(1) })
+      newNum += 1
+      continue
+    }
+    if (raw.startsWith("- ")) {
+      rows.push({ kind: "removed", oldLine: oldNum, text: raw.slice(2) })
+      oldNum += 1
+      continue
+    }
+    if (raw.startsWith("-")) {
+      rows.push({ kind: "removed", oldLine: oldNum, text: raw.slice(1) })
+      oldNum += 1
+      continue
+    }
+    if (raw.startsWith("  ")) {
+      rows.push({ kind: "context", oldLine: oldNum, newLine: newNum, text: raw.slice(2) })
+      oldNum += 1
+      newNum += 1
+      continue
+    }
+    if (raw.startsWith(" ")) {
+      rows.push({ kind: "context", oldLine: oldNum, newLine: newNum, text: raw.slice(1) })
+      oldNum += 1
+      newNum += 1
+      continue
+    }
+    if (raw.startsWith("...")) {
+      rows.push({ kind: "note", text: raw })
+    }
+  }
+  return rows
+}
+
+function highlightInlineDiffPair(
+  oldText: string,
+  newText: string,
+  widthLimit: number,
+  style: TuiStyle,
+): { readonly oldRendered: string; readonly newRendered: string } {
+  const a = truncatePlain(oldText, widthLimit)
+  const b = truncatePlain(newText, widthLimit)
+  if (!style.enabled || a === b) {
+    return { oldRendered: a, newRendered: b }
+  }
+  const ac = Array.from(a)
+  const bc = Array.from(b)
+  let prefix = 0
+  while (prefix < ac.length && prefix < bc.length && ac[prefix] === bc[prefix]) prefix += 1
+  let suffix = 0
+  while (
+    suffix < ac.length - prefix &&
+    suffix < bc.length - prefix &&
+    ac[ac.length - 1 - suffix] === bc[bc.length - 1 - suffix]
+  ) {
+    suffix += 1
+  }
+  const paintPair = (chars: string[], isAdd: boolean): string => {
+    const head = chars.slice(0, prefix).join("")
+    const mid = chars.slice(prefix, chars.length - suffix).join("")
+    const tail = suffix > 0 ? chars.slice(-suffix).join("") : ""
+    const baseOpen = isAdd ? "\x1b[38;5;114;48;5;22m" : "\x1b[38;5;203;48;5;52m"
+    const hiOpen = isAdd ? "\x1b[1;38;5;156;48;5;28m" : "\x1b[1;38;5;217;48;5;88m"
+    const reset = "\x1b[22;39;49m"
+    return `${baseOpen}${head}${mid ? `${hiOpen}${mid}${baseOpen}` : ""}${tail}${reset}`
+  }
+  return {
+    oldRendered: paintPair(ac, false),
+    newRendered: paintPair(bc, true),
+  }
+}
+
+export interface OpenCodeDiffOptions {
+  readonly path: string
+  readonly create?: boolean | undefined
+  readonly maxWidth?: number | undefined
+  readonly view?: "auto" | "unified" | "split" | undefined
+}
+
+/**
+ * Render an OpenCode-inspired diff card (`← Edit <path>  +X -Y`) with line-numbered gutters,
+ * subtle row tinting, inline changed-token highlights, and automatic split-vs-unified layout
+ * modeled on OpenCode v2.3.2 (`component/patch-diff.tsx` & `routes/session/index.tsx`, MIT).
+ */
+export function renderOpenCodeDiff(
+  patch: string,
+  options: OpenCodeDiffOptions,
+  style: TuiStyle,
+): string[] {
+  const maxWidth = Math.max(36, options.maxWidth ?? 90)
+  const counts = countDiffChanges(patch)
+  const rows = parsePatchRows(patch)
+  const useSplit =
+    options.view === "split"
+      ? true
+      : options.view === "unified"
+        ? false
+        : maxWidth > 110 && !options.create
+
+  const badgeParts: string[] = []
+  if (counts.additions > 0) badgeParts.push(style.green(`+${counts.additions}`))
+  if (counts.deletions > 0) badgeParts.push(style.red(`-${counts.deletions}`))
+  const badgeStr = badgeParts.length > 0 ? `  ${badgeParts.join(" ")}` : ""
+  const actionLabel = options.create ? "# Created" : "← Edit"
+  const rail = style.accent("┃ ")
+  const titleText = `${style.cyan(actionLabel)} ${style.bold(truncatePathMiddle(options.path, Math.max(16, maxWidth - 22)))}${badgeStr}`
+
+  const maxLineNum = Math.max(1, ...rows.map((r) => Math.max(r.oldLine ?? 1, r.newLine ?? 1)))
+  const numWidth = Math.max(2, String(maxLineNum).length)
+  const out: string[] = [`${rail}${titleText}`]
+
+  const tintLine = (kind: "added" | "removed" | "context", num: string, sign: string, code: string, rowW: number): string => {
+    if (!style.enabled) {
+      return `${rail}${num} ${sign} ${truncatePlain(code, Math.max(12, rowW - numWidth - 6))}`
+    }
+    if (kind === "added") {
+      return `${rail}\x1b[38;5;244;48;5;22m${num}\x1b[38;5;114m + \x1b[0m\x1b[48;5;22m${code}\x1b[49m`
+    }
+    if (kind === "removed") {
+      return `${rail}\x1b[38;5;244;48;5;52m${num}\x1b[38;5;203m - \x1b[0m\x1b[48;5;52m${code}\x1b[49m`
+    }
+    return `${rail}${style.dim(num)}   ${code}`
+  }
+
+  // Group contiguous removed+added runs so single pairs get inline word/token highlights
+  let idx = 0
+  while (idx < rows.length) {
+    const row = rows[idx]!
+    if (row.kind === "hunk") {
+      out.push(`${rail}${style.cyan(truncatePlain(row.text, Math.max(16, maxWidth - 4)))}`)
+      idx += 1
+      continue
+    }
+    if (row.kind === "note") {
+      out.push(`${rail}${style.muted(truncatePlain(row.text, Math.max(16, maxWidth - 4)))}`)
+      idx += 1
+      continue
+    }
+    if (row.kind === "context") {
+      const nStr = String(row.newLine ?? row.oldLine ?? "").padStart(numWidth, " ")
+      if (useSplit) {
+        const halfW = Math.max(16, Math.floor((maxWidth - 7) / 2))
+        const leftTxt = padPlainRight(`${nStr}   ${row.text}`, halfW)
+        const rightTxt = truncatePlain(`${nStr}   ${row.text}`, halfW)
+        out.push(`${rail}${style.dim(leftTxt)} ${style.dim("│")} ${rightTxt}`)
+      } else {
+        out.push(tintLine("context", nStr, " ", truncatePlain(row.text, Math.max(12, maxWidth - numWidth - 6)), maxWidth))
+      }
+      idx += 1
+      continue
+    }
+
+    // Gather contiguous removed + added block
+    const removedRun: ParsedDiffRow[] = []
+    const addedRun: ParsedDiffRow[] = []
+    while (idx < rows.length && rows[idx]!.kind === "removed") {
+      removedRun.push(rows[idx]!)
+      idx += 1
+    }
+    while (idx < rows.length && rows[idx]!.kind === "added") {
+      addedRun.push(rows[idx]!)
+      idx += 1
+    }
+
+    const codeAvail = useSplit
+      ? Math.max(12, Math.floor((maxWidth - 9) / 2) - numWidth - 3)
+      : Math.max(16, maxWidth - numWidth - 6)
+
+    if (useSplit) {
+      const pairCount = Math.max(removedRun.length, addedRun.length)
+      const halfW = Math.max(16, Math.floor((maxWidth - 7) / 2))
+      for (let k = 0; k < pairCount; k += 1) {
+        const r = removedRun[k]
+        const a = addedRun[k]
+        const pairHi =
+          r && a && removedRun.length === addedRun.length
+            ? highlightInlineDiffPair(r.text, a.text, codeAvail, style)
+            : undefined
+        const leftNum = r ? String(r.oldLine ?? "").padStart(numWidth, " ") : " ".repeat(numWidth)
+        const rightNum = a ? String(a.newLine ?? "").padStart(numWidth, " ") : " ".repeat(numWidth)
+        const leftBody = r
+          ? pairHi
+            ? pairHi.oldRendered
+            : style.red(truncatePlain(r.text, codeAvail))
+          : ""
+        const rightBody = a
+          ? pairHi
+            ? pairHi.newRendered
+            : style.green(truncatePlain(a.text, codeAvail))
+          : ""
+        const leftPad = " ".repeat(
+          Math.max(0, halfW - visibleWidth(leftNum) - 3 - visibleWidth(r ? truncatePlain(r.text, codeAvail) : "")),
+        )
+        const leftCell = r ? `${style.dim(leftNum)}${style.red(" - ")}${leftBody}${leftPad}` : " ".repeat(halfW)
+        const rightCell = a ? `${style.dim(rightNum)}${style.green(" + ")}${rightBody}` : ""
+        out.push(`${rail}${leftCell} ${style.dim("│")} ${rightCell}`)
+      }
+      continue
+    }
+
+    // Unified view (pair 1-to-1 inline highlights when block counts match & small)
+    const canPair = removedRun.length > 0 && removedRun.length === addedRun.length && removedRun.length <= 4
+    const pairs = canPair
+      ? removedRun.map((r, k) => highlightInlineDiffPair(r.text, addedRun[k]!.text, codeAvail, style))
+      : undefined
+
+    for (let k = 0; k < removedRun.length; k += 1) {
+      const r = removedRun[k]!
+      const nStr = String(r.oldLine ?? "").padStart(numWidth, " ")
+      const body = pairs ? pairs[k]!.oldRendered : truncatePlain(r.text, codeAvail)
+      out.push(tintLine("removed", nStr, "-", body, maxWidth))
+    }
+    for (let k = 0; k < addedRun.length; k += 1) {
+      const a = addedRun[k]!
+      const nStr = String(a.newLine ?? "").padStart(numWidth, " ")
+      const body = pairs ? pairs[k]!.newRendered : truncatePlain(a.text, codeAvail)
+      out.push(tintLine("added", nStr, "+", body, maxWidth))
+    }
+  }
+
+  out.push(style.dim(`╹${"▀".repeat(Math.min(Math.max(20, maxWidth - 2), 76))}`))
+  return out
+}
+
 export type ParsedKeyEvent =
   | { readonly kind: "char"; readonly text: string }
   | { readonly kind: "paste"; readonly text: string }

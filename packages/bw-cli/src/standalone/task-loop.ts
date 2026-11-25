@@ -37,6 +37,7 @@ import type {
   ChatMessage,
   CommandOutcomeRecord,
   ContextProvider,
+  DiffPreviewRecord,
   ProviderCompletion,
   RunActionRecord,
   RunSummaryRecord,
@@ -213,6 +214,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
   deps.onEvent?.({ type: "task_started", runId, workspace: boundary.workspace })
 
   const changedFilesSet = new Set<string>()
+  const appliedDiffs: DiffPreviewRecord[] = []
   const commands: CommandOutcomeRecord[] = []
   const actions: RunActionRecord[] = []
   const turnMessages: ChatMessage[] = [{ role: "user", content: input.prompt }]
@@ -249,6 +251,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
       ...(stopReason === undefined ? {} : { stopReason }),
       changedFiles,
       changedTests,
+      ...(appliedDiffs.length > 0 ? { diffPreviews: appliedDiffs } : {}),
       commands,
       actions,
       requests,
@@ -266,6 +269,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
       ...(stopReason === undefined ? {} : { stopReason }),
       changedFiles,
       changedTests,
+      ...(appliedDiffs.length > 0 ? { diffPreviews: appliedDiffs } : {}),
       commands,
       actions,
       messages: turnMessages,
@@ -620,7 +624,14 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
             output: applied.ok ? `Applied edit to ${applied.changedFile}.` : applied.reason,
             ...(applied.ok ? { changedFile: applied.changedFile } : {}),
           }
-          if (applied.ok) changedFilesSet.add(applied.changedFile)
+          if (applied.ok) {
+            changedFilesSet.add(applied.changedFile)
+            appliedDiffs.push({
+              path: applied.changedFile,
+              patch: sanitizeSecretText(prep.prepared.diffPreview, activeSecret),
+              ...(prep.prepared.create ? { create: true } : {}),
+            })
+          }
           actions.push({
             callId: call.id,
             tool: call.name,

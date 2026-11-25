@@ -24,6 +24,8 @@ import {
   createKeyParserState,
   feedKeyParser,
   flushPendingEscape,
+  formatPromptMetadata,
+  formatStatusFooterLine,
   getTerminalLayout,
   padPlainRight,
   truncatePlain,
@@ -33,6 +35,8 @@ import {
   wrapStyledLine,
   type KeyParserState,
   type ParsedKeyEvent,
+  type PromptMetadataInput,
+  type StatusFooterInput,
   type TerminalLayout,
   type TuiStyle,
 } from "./tui-theme.ts"
@@ -400,6 +404,8 @@ export interface ComposerOptions {
   readonly promptLabel: string
   readonly statusSummary: string
   readonly getStatusSummary?: (layout: TerminalLayout) => string
+  readonly getMetadata?: (layout: TerminalLayout) => PromptMetadataInput
+  readonly getStatusFooter?: (layout: TerminalLayout) => Omit<StatusFooterInput, "statusMessage">
   readonly workspace: string
   readonly history: readonly string[]
   readonly initialDraft?: string
@@ -570,8 +576,10 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
     const layout = raw.layout()
     const cols = layout.cols
     const rows = layout.rows
-    const prefix = opts.promptLabel
-    const contPrefix = " ".repeat(Math.max(0, prefix.length - 2)) + "│ "
+    const railPlain = "┃ "
+    const railStyled = style.accent(railPlain)
+    const firstPrefix = `${railPlain}${opts.promptLabel}`
+    const contPrefix = `${railPlain}${" ".repeat(Math.max(0, opts.promptLabel.length - 2))}│ `
     const { row: curRow, col: curCol, lines: bufLines } = cursorRowCol(buffer, cursor)
 
     const placeholder =
@@ -583,24 +591,33 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
       bufLines,
       curRow,
       curCol,
-      prefix,
+      firstPrefix,
       contPrefix,
       placeholder,
       searchingHistory,
       cols,
-      (s) => style.accentBold(s),
-      (s) => style.dim(s),
+      (s) => `${railStyled}${style.accentBold(s.slice(railPlain.length))}`,
+      (s) => `${railStyled}${style.dim(s.slice(railPlain.length))}`,
       (s) => style.muted(s),
     )
 
     const outLines: string[] = []
-    outLines.push(style.dim("─".repeat(Math.max(16, cols))))
+    if (!layout.isShort && rows >= 14) {
+      outLines.push(railStyled)
+    }
 
     const promptLinesStart = outLines.length
     outLines.push(...wrapped.visualRows)
 
-    const maxAuto = Math.max(2, Math.min(7, rows - wrapped.visualRows.length - 4))
+    const maxAuto = Math.max(2, Math.min(7, rows - wrapped.visualRows.length - 5))
     const auto = getAutocomplete(maxAuto)
+    if (!auto && !searchingHistory && opts.getMetadata && rows >= 14) {
+      const meta = formatPromptMetadata(opts.getMetadata(layout), Math.max(14, cols - 4), style)
+      outLines.push(`${railStyled}${meta}`)
+    }
+
+    outLines.push(style.dim(`╹${"▀".repeat(Math.max(10, cols - 1))}`))
+
     if (auto) {
       if (autoIndex >= auto.items.length) autoIndex = Math.max(0, auto.items.length - 1)
       const autoHint =
@@ -637,12 +654,26 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
       outLines.push(truncatePlain(`${style.cyan(label)} '${searchQuery}': ${matchDisplay}${countTag}`, cols))
     }
 
-    const baseStatus = opts.getStatusSummary ? opts.getStatusSummary(layout) : opts.statusSummary
-    const footerMsg =
-      statusMessage !== ""
-        ? style.yellow(truncatePlain(statusMessage, cols))
-        : style.muted(truncatePlain(baseStatus, cols))
-    outLines.push(footerMsg)
+    if (opts.getStatusFooter) {
+      const footerData = opts.getStatusFooter(layout)
+      outLines.push(
+        formatStatusFooterLine(
+          {
+            ...footerData,
+            ...(statusMessage !== "" ? { statusMessage } : {}),
+          },
+          cols,
+          style,
+        ),
+      )
+    } else {
+      const baseStatus = opts.getStatusSummary ? opts.getStatusSummary(layout) : opts.statusSummary
+      const footerMsg =
+        statusMessage !== ""
+          ? style.yellow(truncatePlain(statusMessage, cols))
+          : style.muted(truncatePlain(baseStatus, cols))
+      outLines.push(footerMsg)
+    }
 
     const targetCursorRow = promptLinesStart + wrapped.visualCursorRow
     const targetCursorCol = Math.min(Math.max(0, cols - 1), wrapped.visualCursorCol)
@@ -675,9 +706,9 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
     const cols = raw.cols()
     const preview = submittedText
       .split("\n")
-      .map((l, idx) => (idx === 0 ? `${opts.promptLabel}${l}` : `  ${l}`))
+      .map((l, idx) => `${style.accent("┃ ")}${idx === 0 ? `${opts.promptLabel}${l}` : `  ${l}`}`)
       .join("\n")
-    raw.write(`${style.dim("─".repeat(Math.min(Math.max(20, cols), 80)))}\n${preview}\n`)
+    raw.write(`${preview}\n${style.dim(`╹${"▀".repeat(Math.min(Math.max(15, cols - 1), 79))}`)}\n`)
   }
 
   return await new Promise<ComposerAction>((resolve) => {

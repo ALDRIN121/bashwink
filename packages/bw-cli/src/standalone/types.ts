@@ -198,6 +198,12 @@ export interface TaskInput {
   readonly signal?: AbortSignal
 }
 
+export interface DiffPreviewRecord {
+  readonly path: string
+  readonly patch: string
+  readonly create?: boolean
+}
+
 export interface TaskResult {
   readonly runId: string
   readonly outcome: RunSummaryRecord["outcome"]
@@ -205,6 +211,7 @@ export interface TaskResult {
   readonly stopReason?: string
   readonly changedFiles: readonly string[]
   readonly changedTests: readonly string[]
+  readonly diffPreviews?: readonly DiffPreviewRecord[]
   readonly commands: readonly CommandOutcomeRecord[]
   readonly actions?: readonly RunActionRecord[]
   readonly messages?: readonly ChatMessage[]

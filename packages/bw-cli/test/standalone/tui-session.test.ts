@@ -28,10 +28,15 @@ import {
   saveSession,
 } from "../../src/standalone/session.ts"
 import {
+  countDiffChanges,
   createKeyParserState,
+  createStyle,
   feedKeyParser,
   flushPendingEscape,
+  formatPromptMetadata,
+  formatStatusFooterLine,
   getTerminalLayout,
+  renderOpenCodeDiff,
   stripAnsiSequences,
   truncatePathMiddle,
   truncatePlain,
@@ -425,8 +430,14 @@ test("real PTY interactive TUI supports multi-turn history, Ctrl+P palette, Ctrl
 
     const steps = [
       { wait: "bashwink> ", send: "change note\r" },
+      { wait: "← Edit" },
+      { wait: "+1" },
       { wait: "Apply this change? [y/N]", send: "y\r" },
       { wait: "TURN_ONE_DONE" },
+      // Inspect `/diff` modal to verify line-numbered diff card persists in session turn
+      { wait: "bashwink> ", send: "/diff\r" },
+      { wait: "Session Changes" },
+      { wait: "note.txt", delay: 0.05, send: "q" },
       { wait: "bashwink> ", send: "follow up\r" },
       { wait: "TURN_TWO_DONE" },
       // Open Command Palette (Ctrl+P) -> select status via typing 'status' + Enter
@@ -502,6 +513,82 @@ test("responsive layout tiers, middle path truncation, styled wrapping, and comp
   assert.ok(view.visualRows.every((r) => visibleWidth(r) <= 18))
   assert.equal(view.visualCursorRow, 1)
   assert.equal(view.visualCursorCol, 4 + (22 - 14))
+
+  const plainStyle = createStyle(false)
+  const wideMeta = formatPromptMetadata(
+    { agent: "build", model: "claude-sonnet-4-6", provider: "anthropic", trustLabel: "trusted", trusted: true },
+    80,
+    plainStyle,
+  )
+  assert.equal(wideMeta, "build · claude-sonnet-4-6 · anthropic · trusted")
+
+  const narrowMeta = formatPromptMetadata(
+    { agent: "build", model: "very-long-model-name-identifier", provider: "openrouter", trustLabel: "trusted" },
+    26,
+    plainStyle,
+  )
+  assert.ok(visibleWidth(narrowMeta) <= 26)
+
+  const wideFooter = formatStatusFooterLine(
+    {
+      location: "~/bashwink (main)",
+      turnsCount: 2,
+      tokensText: "1.4k tok",
+      costText: "$0.0042",
+      shortcuts: [
+        { key: "ctrl+p", label: "commands" },
+        { key: "ctrl+o", label: "sessions" },
+      ],
+    },
+    100,
+    plainStyle,
+  )
+  assert.equal(visibleWidth(wideFooter), 100)
+  assert.ok(wideFooter.startsWith("~/bashwink (main)"))
+  assert.ok(wideFooter.endsWith("ctrl+o sessions"))
+
+  const tightFooter = formatStatusFooterLine(
+    {
+      location: "~/workspace/some/very/deep/project (main)",
+      statusMessage: "Esc×2 to rewind",
+      turnsCount: 3,
+      tokensText: "5.2k tok",
+      shortcuts: [{ key: "ctrl+p", label: "commands" }],
+    },
+    42,
+    plainStyle,
+  )
+  assert.ok(visibleWidth(tightFooter) <= 42)
+  assert.ok(tightFooter.includes("Esc×2 to rewind"))
+
+  const samplePatch = [
+    "--- src/math.ts",
+    "+++ src/math.ts",
+    "@@ -4,3 +4,3 @@",
+    "  export function sum(a: number, b: number) {",
+    "-   return a - b;",
+    "+   return a + b;",
+    "  }",
+  ].join("\n")
+  assert.deepEqual(countDiffChanges(samplePatch), { additions: 1, deletions: 1 })
+
+  const unified = renderOpenCodeDiff(samplePatch, { path: "src/math.ts", maxWidth: 80, view: "unified" }, plainStyle)
+  assert.ok(unified[0]!.includes("← Edit"))
+  assert.ok(unified[0]!.includes("+1 -1"))
+  assert.ok(unified.some((l) => l.includes("5 -   return a - b;")))
+  assert.ok(unified.some((l) => l.includes("5 +   return a + b;")))
+  assert.ok(unified.at(-1)!.startsWith("╹"))
+
+  const split = renderOpenCodeDiff(samplePatch, { path: "src/math.ts", maxWidth: 120, view: "split" }, createStyle(true))
+  assert.ok(split.some((l) => l.includes("│") && l.includes(" - ") && l.includes(" + ")))
+
+  const created = renderOpenCodeDiff(
+    "+++ src/new.ts (new file)\n@@ -0,0 +1,2 @@\n+ const a = 1;\n+ export { a };",
+    { path: "src/new.ts", create: true, maxWidth: 130 },
+    plainStyle,
+  )
+  assert.ok(created[0]!.includes("# Created"))
+  assert.ok(created[0]!.includes("+2"))
 })
 
 test("real PTY auto-adjusts composer and modals live across wide -> narrow -> wide window resizes", async (t) => {
@@ -536,7 +623,11 @@ test("real PTY auto-adjusts composer and modals live across wide -> narrow -> wi
 
     const steps = [
       { wait: "[120×32]" },
+      { wait: "┃ " },
       { wait: "Ask Bashwink to inspect, edit, or test" },
+      { wait: "resize-model" },
+      { wait: "╹▀▀▀▀▀▀" },
+      { wait: "commands" },
       // Shrink live to compact pane (48x16) -> composer immediately switches to compact placeholder
       { resize: [16, 48] as const, delay: 0.08 },
       { wait: "Ask Bashwink (/ cmd, @ file)" },

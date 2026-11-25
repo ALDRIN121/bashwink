@@ -1,5 +1,5 @@
 /**
- * Original line-oriented terminal UI and CLI commands for standalone Bashwink.
+ * Interactive standalone Bashwink terminal UI and CLI commands.
  *
  * Kept strictly decoupled from provider HTTP transport and task-loop orchestration:
  * communicates with `runTask` through plain `TaskInput`, `ApprovalRequest`, and `TaskEvent`s.
@@ -24,20 +24,65 @@ import {
 } from "./config.ts"
 import {
   canonicalWorkspace,
+  createBoundaryContext,
   grantWorkspaceTrust,
   isWorkspaceTrusted,
   verifyEvidenceFile,
 } from "./security.ts"
+import {
+  appendPromptHistory,
+  appendTurnToSession,
+  captureFileCheckpoint,
+  compactSessionMessages,
+  createSession,
+  deleteSession,
+  detectGitBranch,
+  forkSession,
+  listSessions,
+  loadPromptHistory,
+  loadSession,
+  restoreTurnCheckpoints,
+  rewindSessionToTurn,
+  saveSession,
+  type FileCheckpoint,
+  type SessionRecord,
+} from "./session.ts"
 import { runTask, type ApprovalRequest } from "./task-loop.ts"
 import { PROVIDER_CATALOG, findProviderPreset, type ProviderPreset } from "./provider-catalog.ts"
+import {
+  CURSOR_SHOW,
+  SYNC_END,
+  SYNC_START,
+  colorsEnabled,
+  createStyle,
+  truncatePlain,
+  type ParsedKeyEvent,
+  type TuiStyle,
+} from "./tui-theme.ts"
+import {
+  RawTerminalSession,
+  SLASH_COMMANDS,
+  askHybridChoice,
+  askHybridConfirm,
+  formatRelativeTime,
+  openCommandPalette,
+  openScrollableModal,
+  openSessionBrowser,
+  openTimelineRewind,
+  openTranscriptViewer,
+  runInteractiveComposer,
+  type ComposerAction,
+  type HybridChoiceOption,
+  type PaletteCommandItem,
+} from "./tui-widgets.ts"
 import type { CredentialConfig, StandaloneConfig, TaskEvent, TaskResult } from "./types.ts"
 
 export const STANDALONE_VERSION = "0.2.0-alpha.1"
 
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const
+
 /** Strip ANSI escape sequences and unsafe control characters from untrusted model/file/command text. */
 export function sanitizeTerminalText(text: string): string {
-  // Build control character patterns from hex escapes via String.fromCharCode or linear scan
-  // so no literal control bytes appear in source regexes.
   let out = ""
   let i = 0
   while (i < text.length) {
@@ -45,14 +90,12 @@ export function sanitizeTerminalText(text: string): string {
     if (code === 0x1b) {
       const next = text.charCodeAt(i + 1)
       if (next === 0x5b) {
-        // CSI: ESC [ ... [@-~]
         let j = i + 2
         while (j < text.length && !(text.charCodeAt(j) >= 0x40 && text.charCodeAt(j) <= 0x7e)) j += 1
         i = j < text.length ? j + 1 : text.length
         continue
       }
       if (next === 0x5d) {
-        // OSC: ESC ] ... (BEL | ESC \)
         let j = i + 2
         while (j < text.length) {
           if (text.charCodeAt(j) === 0x07) {
@@ -147,6 +190,140 @@ class NodeTerminalIO implements TerminalIO {
   }
 }
 
+class RawTerminalIO implements TerminalIO {
+  readonly isTTY = true
+  readonly raw: RawTerminalSession
+  readonly style: TuiStyle
+
+  constructor(env: NodeJS.ProcessEnv) {
+    this.raw = new RawTerminalSession()
+    this.style = createStyle(colorsEnabled(env, true))
+  }
+
+  write(text: string): void {
+    this.raw.write(text)
+  }
+
+  writeError(text: string): void {
+    process.stderr.write(text)
+  }
+
+  async ask(prompt: string, signal?: AbortSignal): Promise<string | null> {
+    let buffer = ""
+    let cursor = 0
+    let rendered = false
+
+    const redraw = () => {
+      let frame = SYNC_START
+      if (rendered) frame += "\r\x1b[2K"
+      frame += prompt + buffer
+      const back = buffer.length - cursor
+      if (back > 0) frame += `\x1b[${back}D`
+      frame += CURSOR_SHOW + SYNC_END
+      this.raw.write(frame)
+      rendered = true
+    }
+
+    return await new Promise<string | null>((resolve) => {
+      let done = false
+      const onAbort = () => finish(null)
+      const finish = (val: string | null) => {
+        if (done) return
+        done = true
+        signal?.removeEventListener("abort", onAbort)
+        cleanup()
+        this.raw.write("\n")
+        resolve(val)
+      }
+      if (signal?.aborted) {
+        finish(null)
+        return
+      }
+      signal?.addEventListener("abort", onAbort, { once: true })
+
+      const onKey = (ev: ParsedKeyEvent) => {
+        if (ev.kind === "ctrl") {
+          if (ev.key === "c" || ev.key === "d") return finish(null)
+          if (ev.key === "u") {
+            buffer = buffer.slice(cursor)
+            cursor = 0
+            return redraw()
+          }
+          if (ev.key === "a") {
+            cursor = 0
+            return redraw()
+          }
+          if (ev.key === "e") {
+            cursor = buffer.length
+            return redraw()
+          }
+          return
+        }
+        if (ev.kind === "paste") {
+          const clean = ev.text.replace(/[\r\n]+/g, "")
+          buffer = buffer.slice(0, cursor) + clean + buffer.slice(cursor)
+          cursor += clean.length
+          return redraw()
+        }
+        if (ev.kind === "char") {
+          buffer = buffer.slice(0, cursor) + ev.text + buffer.slice(cursor)
+          cursor += ev.text.length
+          return redraw()
+        }
+        if (ev.kind === "key") {
+          if (ev.name === "escape") return finish(null)
+          if (ev.name === "enter") return finish(buffer)
+          if (ev.name === "backspace") {
+            if (cursor > 0) {
+              buffer = buffer.slice(0, cursor - 1) + buffer.slice(cursor)
+              cursor -= 1
+              redraw()
+            }
+            return
+          }
+          if (ev.name === "delete") {
+            if (cursor < buffer.length) {
+              buffer = buffer.slice(0, cursor) + buffer.slice(cursor + 1)
+              redraw()
+            }
+            return
+          }
+          if (ev.name === "left" && cursor > 0) {
+            cursor -= 1
+            return redraw()
+          }
+          if (ev.name === "right" && cursor < buffer.length) {
+            cursor += 1
+            return redraw()
+          }
+          if (ev.name === "home") {
+            cursor = 0
+            return redraw()
+          }
+          if (ev.name === "end") {
+            cursor = buffer.length
+            return redraw()
+          }
+        }
+      }
+      const cleanup = this.raw.beginCapture(onKey, redraw)
+      redraw()
+    })
+  }
+
+  async askChoice(prompt: string, options: readonly HybridChoiceOption[]): Promise<string | null> {
+    return await askHybridChoice(this.raw, this.style, prompt, options)
+  }
+
+  async askConfirm(prompt: string, signal?: AbortSignal): Promise<string | null> {
+    return await askHybridConfirm(this.raw, this.style, prompt, signal)
+  }
+
+  close(): void {
+    this.raw.dispose()
+  }
+}
+
 export function renderVersion(): string {
   return `bashwink ${STANDALONE_VERSION}\n`
 }
@@ -156,7 +333,9 @@ export function renderHelp(configDir: string, dataDir: string): string {
     `bashwink ${STANDALONE_VERSION} — standalone evidence-first coding CLI`,
     "",
     "USAGE",
-    "  bashwink                 Open Bashwink interactive CLI (prompts to configure model if unset)",
+    "  bashwink                 Open Bashwink interactive TUI (prompts to configure model if unset)",
+    "  bashwink --continue      Resume the most recent session in this workspace",
+    "  bashwink --resume [id]   Open session browser or resume a specific session ID",
     "  bashwink setup           Configure or update provider, endpoint URL, model, and credentials",
     "  bashwink connect         Alias for setup (interactive OpenCode-compatible provider picker)",
     "  bashwink doctor          Check Node, saved profile, credential reference, trust, and evidence",
@@ -167,9 +346,28 @@ export function renderHelp(configDir: string, dataDir: string): string {
     "  bashwink --help          Print this help",
     "",
     "INTERACTIVE COMMANDS",
+    "  /sessions, /resume       Browse, search, preview, rename, fork, or switch sessions (Ctrl+O)",
+    "  /timeline, /rewind       Navigate turns, rewind chat/files, or fork from a turn (Esc Esc)",
+    "  /transcript              Open scrollable full transcript & turn navigator (Ctrl+T)",
+    "  /new, /clear, /fork      Create, reset, or branch the active session",
+    "  /rename [title]          Rename the active session",
+    "  /diff, /compact, /status Inspect edits, compact context, or view session & budget status",
     "  /model, /connect         Choose provider preset (OpenAI, OpenRouter, DeepSeek, Groq, xAI, Ollama, LM Studio, vLLM, or custom)",
-    "  /trust                   Trust current project for interactive edit/command approvals",
+    "  /trust, /evidence        Trust workspace or verify hash-chained evidence.jsonl",
     "  /help, /exit             Show help or quit",
+    "",
+    "KEYBOARD SHORTCUTS",
+    "  Ctrl+P                   Command palette (fuzzy search all commands)",
+    "  Ctrl+O                   Session browser & switcher",
+    "  Esc Esc                  Timeline & checkpoint rewind",
+    "  Ctrl+T / PgUp            Scrollable full transcript & turn navigator",
+    "  Ctrl+R                   Reverse search prompt history",
+    "  Up / Down                Cycle prompt history (or navigate menus)",
+    "  / and @                  Inline slash command & workspace file autocomplete",
+    "  Ctrl+J / Shift+Enter     Insert newline in prompt composer",
+    "  Ctrl+L                   Redraw & clear screen",
+    "  Ctrl+C                   Cancel running task or clear prompt",
+    "  Ctrl+D                   Exit when input is empty",
     "",
     "BUILT-IN TOOLS",
     "  list_files, read_file, edit_file (diff + approval), run_command (argv + approval)",
@@ -194,6 +392,13 @@ function isYes(answer: string | null): boolean {
   return clean === "y" || clean === "yes"
 }
 
+async function askYesNo(io: TerminalIO, prompt: string, signal?: AbortSignal): Promise<string | null> {
+  if (io instanceof RawTerminalIO) {
+    return await io.askConfirm(prompt, signal)
+  }
+  return await io.ask(prompt, signal)
+}
+
 function parseCredentialChoice(cred: CredentialConfig): string {
   if (cred.kind === "none") return "None (unauthenticated)"
   if (cred.kind === "env") return `Environment variable ${cred.variable}`
@@ -205,20 +410,31 @@ function renderCliHeader(
   workspace: string,
   trusted: boolean,
   config?: StandaloneConfig,
+  session?: SessionRecord,
 ): void {
+  const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
   const modelLine = config
     ? `${config.providerId ? `${config.providerId} / ` : ""}${config.model} (${formatDestination(config.baseURL)})`
     : "none configured"
   const trustLine = trusted
-    ? "trusted (edits & commands confirm)"
-    : "not trusted (read-only until /trust)"
-  io.write("\n╭──────────────────────────────────────────────────────────────────╮\n")
-  io.write(`│ Bashwink ${STANDALONE_VERSION}  (standalone CLI)                                │\n`)
-  io.write(`│ Project  ${sanitizeTerminalText(workspace)}\n`)
-  io.write(`│ Trust    ${trustLine}\n`)
-  io.write(`│ Model    ${sanitizeTerminalText(modelLine)}\n`)
-  io.write("╰──────────────────────────────────────────────────────────────────╯\n")
-  io.write("Commands: /model  /connect  /trust  /help  /exit\n")
+    ? style.green("trusted (edits & commands confirm)")
+    : style.yellow("not trusted (read-only until /trust)")
+  const sessionLine = session
+    ? `${session.title} (${session.id}, ${session.turns.length} turn${session.turns.length === 1 ? "" : "s"}${session.gitBranch ? `, ${session.gitBranch}` : ""})`
+    : "new session"
+
+  io.write(`\n${style.dim("╭──────────────────────────────────────────────────────────────────╮")}\n`)
+  io.write(
+    `${style.dim("│")} ${style.accentBold(`Bashwink ${STANDALONE_VERSION}`)}  ${style.muted("(standalone TUI)")}                                ${style.dim("│")}\n`,
+  )
+  io.write(`${style.dim("│")} Project  ${sanitizeTerminalText(workspace)}\n`)
+  io.write(`${style.dim("│")} Session  ${sanitizeTerminalText(sessionLine)}\n`)
+  io.write(`${style.dim("│")} Trust    ${trustLine}\n`)
+  io.write(`${style.dim("│")} Model    ${sanitizeTerminalText(modelLine)}\n`)
+  io.write(`${style.dim("╰──────────────────────────────────────────────────────────────────╯")}\n`)
+  io.write(
+    `${style.muted("Commands: /sessions  /timeline  /transcript  /model  /connect  /trust  /help  /exit")}\n`,
+  )
 }
 
 export async function runInteractiveSetup(
@@ -242,7 +458,7 @@ export async function runInteractiveSetup(
       for (const item of legacy) {
         io.write(`  - ${sanitizeTerminalText(item.id)}: ${sanitizeTerminalText(item.model)} at ${sanitizeTerminalText(item.baseURL)}\n`)
       }
-      const importAns = await io.ask("Import one of these references? [y/N] ")
+      const importAns = await askYesNo(io, "Import one of these references? [y/N] ")
       if (importAns === null) return { status: "cancelled" }
       if (isYes(importAns)) {
         const chosen = legacy[0]!
@@ -254,7 +470,7 @@ export async function runInteractiveSetup(
           io.write(`  Endpoint    ${normalizedURL}\n`)
           io.write(`  Model       ${model}\n`)
           io.write(`  Credentials ${parseCredentialChoice(chosen.credential)}\n`)
-          const confirm = await io.ask("Save and use this imported connection? [y/N] ")
+          const confirm = await askYesNo(io, "Save and use this imported connection? [y/N] ")
           if (isYes(confirm)) {
             const cfg: StandaloneConfig = {
               version: 1,
@@ -277,17 +493,27 @@ export async function runInteractiveSetup(
 
   let preset: ProviderPreset | undefined
   while (preset === undefined) {
-    io.write("\nHosted providers (HTTPS):\n")
-    for (const p of PROVIDER_CATALOG.filter((c) => c.endpointType === "hosted")) {
-      const tag = p.defaultBaseURL ?? p.note
-      io.write(`  ${String(p.index).padStart(2, " ")}) ${p.name.padEnd(23, " ")} ${tag}\n`)
+    let choice: string | null
+    if (io instanceof RawTerminalIO) {
+      io.write("\nProviders (Hosted HTTPS & Local loopback):\n")
+      const opts: HybridChoiceOption[] = PROVIDER_CATALOG.map((p) => ({
+        value: String(p.index),
+        display: `${String(p.index).padStart(2, " ")}) ${p.name.padEnd(23, " ")} ${p.endpointType === "hosted" ? "HTTPS" : "local"}  ${p.defaultBaseURL ?? p.note}`,
+      }))
+      choice = await io.askChoice("Select provider [1-10 or id] (or 'cancel'): ", opts)
+    } else {
+      io.write("\nHosted providers (HTTPS):\n")
+      for (const p of PROVIDER_CATALOG.filter((c) => c.endpointType === "hosted")) {
+        const tag = p.defaultBaseURL ?? p.note
+        io.write(`  ${String(p.index).padStart(2, " ")}) ${p.name.padEnd(23, " ")} ${tag}\n`)
+      }
+      io.write("\nLocal servers (loopback HTTP/HTTPS):\n")
+      for (const p of PROVIDER_CATALOG.filter((c) => c.endpointType === "local")) {
+        const tag = p.defaultBaseURL ?? p.note
+        io.write(`  ${String(p.index).padStart(2, " ")}) ${p.name.padEnd(23, " ")} ${tag}\n`)
+      }
+      choice = await io.ask("Select provider [1-10 or id] (or 'cancel'): ")
     }
-    io.write("\nLocal servers (loopback HTTP/HTTPS):\n")
-    for (const p of PROVIDER_CATALOG.filter((c) => c.endpointType === "local")) {
-      const tag = p.defaultBaseURL ?? p.note
-      io.write(`  ${String(p.index).padStart(2, " ")}) ${p.name.padEnd(23, " ")} ${tag}\n`)
-    }
-    const choice = await io.ask("Select provider [1-10 or id] (or 'cancel'): ")
     if (choice === null) return { status: "cancelled" }
     const t = choice.trim().toLowerCase()
     if (t === "cancel" || t === "q" || t === "quit") return { status: "cancelled" }
@@ -321,17 +547,30 @@ export async function runInteractiveSetup(
 
   let model: string | undefined
   while (model === undefined) {
-    if (preset.defaultModels.length > 0) {
+    let rawModel: string | null
+    if (preset.defaultModels.length > 0 && io instanceof RawTerminalIO) {
       io.write(`\nSuggested ${preset.name} models:\n`)
-      preset.defaultModels.forEach((m, idx) => {
-        io.write(`  ${idx + 1}) ${m}\n`)
-      })
+      const modelOpts: HybridChoiceOption[] = preset.defaultModels.map((m, idx) => ({
+        value: m,
+        display: `${idx + 1}) ${m}`,
+      }))
+      rawModel = await io.askChoice(
+        `Model ID or number [Enter for ${preset.defaultModels[0]}]: `,
+        modelOpts,
+      )
+    } else {
+      if (preset.defaultModels.length > 0) {
+        io.write(`\nSuggested ${preset.name} models:\n`)
+        preset.defaultModels.forEach((m, idx) => {
+          io.write(`  ${idx + 1}) ${m}\n`)
+        })
+      }
+      const modelPrompt =
+        preset.defaultModels.length > 0
+          ? `Model ID or number [Enter for ${preset.defaultModels[0]}]: `
+          : "Model ID (for example gpt-4o-mini or qwen-coder): "
+      rawModel = await io.ask(modelPrompt)
     }
-    const modelPrompt =
-      preset.defaultModels.length > 0
-        ? `Model ID or number [Enter for ${preset.defaultModels[0]}]: `
-        : "Model ID (for example gpt-4o-mini or qwen-coder): "
-    const rawModel = await io.ask(modelPrompt)
     if (rawModel === null) return { status: "cancelled" }
     const trimmed = rawModel.trim()
     if (trimmed.toLowerCase() === "cancel") return { status: "cancelled" }
@@ -353,13 +592,22 @@ export async function runInteractiveSetup(
 
   let credential: CredentialConfig | undefined
   while (credential === undefined) {
-    io.write("\nAuthentication:\n")
-    io.write(
-      `  1) Environment variable name${preset.defaultEnvVar ? ` (e.g. ${preset.defaultEnvVar})` : ""}\n`,
-    )
-    io.write("  2) Key file path\n")
-    io.write("  3) None (no key needed)\n")
-    const mode = await io.ask("Choose [1/2/3] (or 'cancel'): ")
+    let mode: string | null
+    const envLabel = `1) Environment variable name${preset.defaultEnvVar ? ` (e.g. ${preset.defaultEnvVar})` : ""}`
+    if (io instanceof RawTerminalIO) {
+      io.write("\nAuthentication:\n")
+      mode = await io.askChoice("Choose [1/2/3] (or 'cancel'): ", [
+        { value: "1", display: envLabel },
+        { value: "2", display: "2) Key file path" },
+        { value: "3", display: "3) None (no key needed)" },
+      ])
+    } else {
+      io.write("\nAuthentication:\n")
+      io.write(`  ${envLabel}\n`)
+      io.write("  2) Key file path\n")
+      io.write("  3) None (no key needed)\n")
+      mode = await io.ask("Choose [1/2/3] (or 'cancel'): ")
+    }
     if (mode === null) return { status: "cancelled" }
     const m = mode.trim().toLowerCase()
     if (m === "cancel") return { status: "cancelled" }
@@ -400,7 +648,7 @@ export async function runInteractiveSetup(
   if (credCheck.warning) {
     io.write(`  Warning     ${credCheck.warning}\n`)
   }
-  const confirm = await io.ask("Save and use this model? [y/N] ")
+  const confirm = await askYesNo(io, "Save and use this model? [y/N] ")
   if (!isYes(confirm)) {
     io.write("Setup cancelled; profile unchanged.\n")
     return { status: "cancelled" }
@@ -482,11 +730,19 @@ function runDoctor(cwd: string, env: NodeJS.ProcessEnv, io: TerminalIO): number 
 }
 
 function renderTaskOutcome(result: TaskResult, io: TerminalIO): void {
+  const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
   if (result.finalText.trim() !== "") {
     io.write(`\n${sanitizeTerminalText(result.finalText.trim())}\n`)
   }
-  io.write("\n--- Task Summary ---\n")
-  io.write(`Outcome   ${result.outcome}${result.stopReason ? ` — ${sanitizeTerminalText(result.stopReason)}` : ""}\n`)
+  io.write(`\n${style.dim("--- Task Summary ---")}\n`)
+  const outcomeLine = `Outcome   ${result.outcome}${result.stopReason ? ` — ${sanitizeTerminalText(result.stopReason)}` : ""}`
+  const outcomeColored =
+    result.outcome === "completed"
+      ? style.green(outcomeLine)
+      : result.outcome === "cancelled"
+        ? style.yellow(outcomeLine)
+        : style.red(outcomeLine)
+  io.write(`${outcomeColored}\n`)
   io.write(`Changed   ${result.changedFiles.length > 0 ? result.changedFiles.join(", ") : "none"}\n`)
   if (result.changedTests.length > 0) {
     io.write(`Tests     modified test files: ${result.changedTests.join(", ")} (verify independently)\n`)
@@ -516,6 +772,79 @@ function renderTaskOutcome(result: TaskResult, io: TerminalIO): void {
   io.write(`Run       ${result.runRecordFile}\n`)
 }
 
+function renderResumedSessionContext(io: TerminalIO, session: SessionRecord): void {
+  const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+  if (session.turns.length === 0) {
+    io.write(style.muted(`\nResumed empty session: ${session.title} (${session.id})\n`))
+    return
+  }
+  io.write(style.accentBold(`\nResumed session: ${sanitizeTerminalText(session.title)} (${session.turns.length} turn(s))\n`))
+  const recent = session.turns.slice(-3)
+  if (session.turns.length > recent.length) {
+    io.write(style.muted(`  … ${session.turns.length - recent.length} earlier turn(s) — press Ctrl+T for full transcript\n`))
+  }
+  for (const turn of recent) {
+    io.write(`  ${style.bold("You:")} ${sanitizeTerminalText(truncatePlain(turn.userPrompt.replace(/\n/g, " "), 76))}\n`)
+    if (turn.assistantText.trim() !== "") {
+      io.write(`  ${style.green("Asst:")} ${sanitizeTerminalText(truncatePlain(turn.assistantText.replace(/\n/g, " "), 76))}\n`)
+    }
+  }
+}
+
+function buildStatusSummary(
+  session: SessionRecord,
+  trusted: boolean,
+  config?: StandaloneConfig,
+): string {
+  const modelText = config ? config.model : "no model"
+  const trustText = trusted ? "trusted" : "read-only"
+  const costText =
+    session.usageTotals.costUsd !== undefined ? ` · $${session.usageTotals.costUsd.toFixed(4)}` : ""
+  return `${session.title} (${session.turns.length}t) · ${modelText} · ${trustText}${costText} · ctrl+p palette · ctrl+o sessions · ctrl+t transcript · esc×2 rewind`
+}
+
+function buildPaletteItems(): PaletteCommandItem[] {
+  return SLASH_COMMANDS.map((c) => ({
+    id: c.name,
+    title: `/${c.name}${c.argumentHint ? ` ${c.argumentHint}` : ""}`,
+    category: c.category,
+    description: c.description,
+    ...(c.shortcut === undefined ? {} : { shortcut: c.shortcut }),
+  }))
+}
+
+function buildDiffModalLines(session: SessionRecord, style: TuiStyle): string[] {
+  const lines: string[] = []
+  if (session.turns.length === 0) {
+    lines.push(style.muted("  No turns or file changes recorded in this session yet."))
+    return lines
+  }
+  for (let i = 0; i < session.turns.length; i += 1) {
+    const t = session.turns[i]!
+    if (t.changedFiles.length === 0 && t.commands.length === 0) continue
+    lines.push(style.accentBold(`  Turn ${i + 1} · ${formatRelativeTime(t.createdAt)} · ${truncatePlain(t.userPrompt.replace(/\n/g, " "), 60)}`))
+    for (const f of t.changedFiles) {
+      lines.push(style.green(`    [edited] ${f}`))
+    }
+    for (const cmd of t.commands) {
+      const cmdStr = [cmd.command, ...cmd.args].join(" ")
+      const status = cmd.decision === "denied" ? "declined" : `exit ${cmd.exitCode ?? "null"}`
+      lines.push(style.cyan(`    [cmd] ${cmdStr} -> ${status}`))
+    }
+    lines.push("")
+  }
+  if (lines.length === 0) {
+    lines.push(style.muted("  No file edits or commands were executed in this session."))
+  }
+  return lines
+}
+
+function buildHelpModalLines(configDir: string, dataDir: string, style: TuiStyle): string[] {
+  return renderHelp(configDir, dataDir)
+    .split("\n")
+    .map((l) => (l === l.toUpperCase() && l.trim() !== "" ? style.accentBold(`  ${l}`) : `  ${l}`))
+}
+
 export async function runStandalone(
   argv: readonly string[],
   options: {
@@ -527,7 +856,8 @@ export async function runStandalone(
 ): Promise<number> {
   const cwd = path.resolve(options.cwd ?? process.cwd())
   const env = options.env ?? process.env
-  const io = options.io ?? new NodeTerminalIO()
+  const autoTTY = !options.io && Boolean(process.stdin.isTTY && process.stdout.isTTY)
+  const io: TerminalIO = options.io ?? (autoTTY ? new RawTerminalIO(env) : new NodeTerminalIO())
   const resolved = resolveStandalonePaths(env)
 
   try {
@@ -601,14 +931,17 @@ export async function runStandalone(
       )
       return outcome.status === "saved" ? 0 : 0
     }
-    if (first !== undefined) {
+
+    const resumeFlag = first === "--resume" || first === "-r"
+    const continueFlag = first === "--continue" || first === "-c"
+    if (first !== undefined && !resumeFlag && !continueFlag) {
       io.writeError(
         `bashwink: '${first}' is not part of the standalone alpha CLI (run 'bashwink --help'). No external runtime was invoked.\n`,
       )
       return 2
     }
 
-    // Bare `bashwink`: open interactive CLI workspace immediately, prompting for model configuration on first launch.
+    // Bare `bashwink` (or `--continue`/`--resume`): open interactive CLI workspace
     if (!io.isTTY) {
       const cfg = loadStandaloneConfig(resolved.config)
       if (cfg.status !== "ok") {
@@ -634,6 +967,25 @@ export async function runStandalone(
 
     const canonical = canonicalWorkspace(cwd)
     ensurePaths(resolved)
+    const gitBranch = detectGitBranch(canonical)
+
+    let activeSession: SessionRecord = createSession(canonical, gitBranch)
+    if (continueFlag) {
+      const existing = listSessions(resolved.data, { workspace: canonical })[0]
+      if (existing) activeSession = existing
+    } else if (resumeFlag && argv[1]) {
+      const targetId = argv[1]
+      const direct = loadSession(resolved.data, targetId)
+      const matched = direct ?? listSessions(resolved.data).find((s) => s.id.startsWith(targetId))
+      if (matched) {
+        activeSession = matched
+      } else {
+        io.writeError(`Session '${targetId}' not found; starting a new session.\n`)
+      }
+    }
+
+    let promptHistory = loadPromptHistory(resolved.data)
+    let draftBuffer = ""
 
     let currentAbort: AbortController | undefined
     let interruptedAtPrompt = false
@@ -649,59 +1001,388 @@ export async function runStandalone(
       }
     }
     const onResize = () => {
-      // Line-oriented UI adapts naturally to width changes; keep running cleanly on SIGWINCH.
+      // Raw components redraw on resize through RawTerminalSession; fallback mode flows naturally.
     }
     process.on("SIGINT", onSigint)
     process.on("SIGTERM", onSigint)
     process.stdout.on("resize", onResize)
 
     try {
-      renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig)
+      renderCliHeader(
+        io,
+        canonical,
+        isWorkspaceTrusted(resolved.config, canonical),
+        activeConfig,
+        activeSession,
+      )
       if (!activeConfig) {
         io.write("\nWelcome to Bashwink! Configure a model to get started\n")
         io.write("  (0 outbound requests sent; ambient env keys are ignored).\n")
         io.write("Type /model or /connect (or press Enter) to select a provider and model.\n")
       }
+      if (activeSession.turns.length > 0) {
+        renderResumedSessionContext(io, activeSession)
+      }
+
+      if (resumeFlag && !argv[1] && io instanceof RawTerminalIO) {
+        const all = listSessions(resolved.data, { includeArchived: false })
+        if (all.length > 0) {
+          const picked = await openSessionBrowser(io.raw, io.style, {
+            sessions: all,
+            activeSessionId: activeSession.id,
+            currentWorkspace: canonical,
+          })
+          if (picked.action === "select") {
+            const loaded = loadSession(resolved.data, picked.sessionId)
+            if (loaded) {
+              activeSession = loaded
+              renderResumedSessionContext(io, activeSession)
+            }
+          }
+        }
+      }
+
+      const handleSessionBrowser = async () => {
+        if (!(io instanceof RawTerminalIO)) {
+          const list = listSessions(resolved.data, { workspace: canonical })
+          io.write(`\nSessions in ${canonical}: ${list.length}\n`)
+          for (const s of list.slice(0, 10)) {
+            io.write(`  ${s.id}  ${s.title} (${s.turns.length} turns, ${formatRelativeTime(s.updatedAt)})\n`)
+          }
+          return
+        }
+        while (true) {
+          const sessions = listSessions(resolved.data, { includeArchived: false })
+          const res = await openSessionBrowser(io.raw, io.style, {
+            sessions,
+            activeSessionId: activeSession.id,
+            currentWorkspace: canonical,
+          })
+          if (res.action === "cancel") return
+          if (res.action === "new") {
+            activeSession = createSession(canonical, detectGitBranch(canonical))
+            io.write("\x1b[2J\x1b[H")
+            renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig, activeSession)
+            return
+          }
+          if (res.action === "select") {
+            const loaded = loadSession(resolved.data, res.sessionId)
+            if (loaded) {
+              activeSession = loaded
+              io.write("\x1b[2J\x1b[H")
+              renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig, activeSession)
+              renderResumedSessionContext(io, activeSession)
+            }
+            return
+          }
+          if (res.action === "rename") {
+            const target = loadSession(resolved.data, res.sessionId) ?? (res.sessionId === activeSession.id ? activeSession : undefined)
+            if (target) {
+              const renamed: SessionRecord = {
+                ...target,
+                title: res.title,
+                customTitle: true,
+                updatedAt: new Date().toISOString(),
+              }
+              saveSession(resolved.data, renamed)
+              if (renamed.id === activeSession.id) activeSession = renamed
+            }
+            continue
+          }
+          if (res.action === "fork") {
+            const target = loadSession(resolved.data, res.sessionId) ?? (res.sessionId === activeSession.id ? activeSession : undefined)
+            if (target) {
+              const forked = forkSession(target)
+              saveSession(resolved.data, forked)
+              activeSession = forked
+              io.write("\x1b[2J\x1b[H")
+              renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig, activeSession)
+              renderResumedSessionContext(io, activeSession)
+            }
+            return
+          }
+          if (res.action === "delete") {
+            deleteSession(resolved.data, res.sessionId)
+            if (res.sessionId === activeSession.id) {
+              activeSession = createSession(canonical, detectGitBranch(canonical))
+            }
+            continue
+          }
+        }
+      }
+
+      const handleTimelineRewind = async () => {
+        if (!(io instanceof RawTerminalIO)) {
+          if (activeSession.turns.length === 0) {
+            io.write("No turns in this session yet.\n")
+            return
+          }
+          activeSession.turns.forEach((t, idx) => {
+            io.write(`  [${idx + 1}] ${t.outcome} · ${truncatePlain(t.userPrompt, 60)}\n`)
+          })
+          return
+        }
+        const res = await openTimelineRewind(io.raw, io.style, activeSession)
+        if (res.action === "close") return
+        if (res.action === "inspect") {
+          await openTranscriptViewer(io.raw, io.style, activeSession, res.turnIndex)
+          return
+        }
+        if (res.action === "fork") {
+          const forked = forkSession(activeSession, res.turnIndex + 1)
+          saveSession(resolved.data, forked)
+          activeSession = forked
+          io.write("\x1b[2J\x1b[H")
+          renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig, activeSession)
+          renderResumedSessionContext(io, activeSession)
+          return
+        }
+        if (res.action === "rewind_conversation" || res.action === "rewind_all") {
+          const { updated, revertedTurns, promptToRestore } = rewindSessionToTurn(activeSession, res.turnIndex)
+          activeSession = updated
+          saveSession(resolved.data, activeSession)
+          draftBuffer = promptToRestore
+          if (res.action === "rewind_all" && activeConfig) {
+            const boundary = createBoundaryContext(canonical, resolved, activeConfig, env)
+            const restored = restoreTurnCheckpoints(boundary, revertedTurns)
+            io.write(
+              `\nRewound ${revertedTurns.length} turn(s); restored ${restored.restored.length} file(s)` +
+                (restored.removed.length > 0 ? `, removed ${restored.removed.length} created file(s)` : "") +
+                (restored.skipped.length > 0 ? `, skipped ${restored.skipped.length}` : "") +
+                ".\n",
+            )
+          } else {
+            io.write(`\nRewound conversation ${revertedTurns.length} turn(s); prompt restored to composer.\n`)
+          }
+        }
+      }
+
+      const dispatchSlashCommand = async (cmdName: string, cmdArgs: string): Promise<"continue" | "exit"> => {
+        if (cmdName === "exit" || cmdName === "quit" || cmdName === "q") {
+          return "exit"
+        }
+        if (cmdName === "help" || cmdName === "?") {
+          if (io instanceof RawTerminalIO) {
+            await openScrollableModal(
+              io.raw,
+              io.style,
+              "Bashwink Help & Shortcuts",
+              buildHelpModalLines(resolved.config, resolved.data, io.style),
+            )
+          } else {
+            io.write(renderHelp(resolved.config, resolved.data))
+          }
+          return "continue"
+        }
+        if (cmdName === "trust") {
+          const user = env["USER"] ?? env["USERNAME"] ?? "terminal-user"
+          grantWorkspaceTrust(resolved.config, canonical, user)
+          io.write(`Trusted ${canonical}.\n`)
+          return "continue"
+        }
+        if (cmdName === "setup" || cmdName === "connect" || cmdName === "model" || cmdName === "models") {
+          const res = await runInteractiveSetup(io, resolved.config, env, activeConfig)
+          if (res.status === "saved") {
+            activeConfig = res.config
+            renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig, activeSession)
+          }
+          return "continue"
+        }
+        if (cmdName === "sessions" || cmdName === "resume" || cmdName === "continue") {
+          await handleSessionBrowser()
+          return "continue"
+        }
+        if (cmdName === "new") {
+          activeSession = createSession(canonical, detectGitBranch(canonical))
+          if (io instanceof RawTerminalIO) io.write("\x1b[2J\x1b[H")
+          renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig, activeSession)
+          return "continue"
+        }
+        if (cmdName === "clear") {
+          activeSession = createSession(canonical, detectGitBranch(canonical))
+          if (io instanceof RawTerminalIO) io.write("\x1b[2J\x1b[H")
+          renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig, activeSession)
+          return "continue"
+        }
+        if (cmdName === "fork") {
+          const forked = forkSession(activeSession)
+          saveSession(resolved.data, forked)
+          activeSession = forked
+          io.write(`\nForked into new session ${activeSession.id} (${activeSession.title}).\n`)
+          return "continue"
+        }
+        if (cmdName === "rename") {
+          const newTitle = cmdArgs !== "" ? cmdArgs : (await io.ask("New session title: "))?.trim() ?? ""
+          if (newTitle !== "") {
+            activeSession = {
+              ...activeSession,
+              title: newTitle,
+              customTitle: true,
+              updatedAt: new Date().toISOString(),
+            }
+            saveSession(resolved.data, activeSession)
+            io.write(`Renamed session to '${sanitizeTerminalText(newTitle)}'.\n`)
+          }
+          return "continue"
+        }
+        if (cmdName === "timeline" || cmdName === "rewind" || cmdName === "checkpoint" || cmdName === "undo") {
+          await handleTimelineRewind()
+          return "continue"
+        }
+        if (cmdName === "transcript") {
+          if (io instanceof RawTerminalIO) {
+            await openTranscriptViewer(io.raw, io.style, activeSession)
+          } else {
+            renderResumedSessionContext(io, activeSession)
+          }
+          return "continue"
+        }
+        if (cmdName === "diff") {
+          if (io instanceof RawTerminalIO) {
+            await openScrollableModal(
+              io.raw,
+              io.style,
+              `Session Changes (${activeSession.title})`,
+              buildDiffModalLines(activeSession, io.style),
+            )
+          } else {
+            const changed = [...new Set(activeSession.turns.flatMap((t) => t.changedFiles))]
+            io.write(`Changed files: ${changed.length > 0 ? changed.join(", ") : "none"}\n`)
+          }
+          return "continue"
+        }
+        if (cmdName === "compact") {
+          const compacted = compactSessionMessages(activeSession, 2)
+          if (compacted.summarizedTurns === 0) {
+            io.write("Session has <= 2 turns; nothing to compact.\n")
+          } else {
+            activeSession = compacted.updated
+            saveSession(resolved.data, activeSession)
+            io.write(
+              `Compacted ${compacted.summarizedTurns} earlier turn(s) (${compacted.beforeMessages} -> ${compacted.afterMessages} context messages).\n`,
+            )
+          }
+          return "continue"
+        }
+        if (cmdName === "status") {
+          const trustedNow = isWorkspaceTrusted(resolved.config, canonical)
+          io.write("\n--- Status ---\n")
+          io.write(`Session   ${activeSession.title} (${activeSession.id})\n`)
+          io.write(`Turns     ${activeSession.turns.length} (${activeSession.messages.length} context messages)\n`)
+          io.write(`Workspace ${canonical} (${trustedNow ? "trusted" : "read-only"})\n`)
+          io.write(
+            `Model     ${activeConfig ? `${activeConfig.model} at ${formatDestination(activeConfig.baseURL)}` : "none"}\n`,
+          )
+          io.write(
+            `Usage     ${activeSession.usageTotals.requests} reqs, ${activeSession.usageTotals.totalTokens} tokens` +
+              (activeSession.usageTotals.costUsd !== undefined
+                ? `, est. $${activeSession.usageTotals.costUsd.toFixed(6)}`
+                : "") +
+              "\n",
+          )
+          return "continue"
+        }
+        if (cmdName === "evidence") {
+          const evFile = path.join(resolved.evidence, "evidence.jsonl")
+          if (!existsSync(evFile)) {
+            io.write(`No evidence log yet (${evFile}).\n`)
+            return "continue"
+          }
+          const v = verifyEvidenceFile(evFile)
+          io.write(
+            v.ok
+              ? `Evidence OK: ${v.entries} entries (head ${v.head.slice(0, 12)}…)\n`
+              : `Evidence verification failed: ${v.reason}\n`,
+          )
+          return "continue"
+        }
+        return "continue"
+      }
 
       while (!interruptedAtPrompt) {
         let trusted = isWorkspaceTrusted(resolved.config, canonical)
         const promptLabel = activeConfig ? "bashwink> " : "bashwink (no model)> "
-        const line = await io.ask(`\n${promptLabel}`)
-        if (line === null || interruptedAtPrompt) break
+        let trimmed = ""
 
-        const trimmed = line.trim()
+        if (io instanceof RawTerminalIO) {
+          const action: ComposerAction = await runInteractiveComposer({
+            raw: io.raw,
+            style: io.style,
+            promptLabel,
+            statusSummary: buildStatusSummary(activeSession, trusted, activeConfig),
+            workspace: canonical,
+            history: promptHistory,
+            initialDraft: draftBuffer,
+          })
+          draftBuffer = ""
+          if (action.kind === "exit") break
+          if (action.kind === "clear_screen") {
+            io.write("\x1b[2J\x1b[H")
+            renderCliHeader(io, canonical, trusted, activeConfig, activeSession)
+            continue
+          }
+          if (action.kind === "palette") {
+            const cmdId = await openCommandPalette(io.raw, io.style, buildPaletteItems())
+            if (cmdId) {
+              const res = await dispatchSlashCommand(cmdId, "")
+              if (res === "exit") break
+            }
+            continue
+          }
+          if (action.kind === "sessions") {
+            await handleSessionBrowser()
+            continue
+          }
+          if (action.kind === "timeline") {
+            await handleTimelineRewind()
+            continue
+          }
+          if (action.kind === "transcript") {
+            await openTranscriptViewer(io.raw, io.style, activeSession)
+            continue
+          }
+          if (action.kind === "command") {
+            const res = await dispatchSlashCommand(action.name, action.args)
+            if (res === "exit") break
+            continue
+          }
+          trimmed = action.text.trim()
+        } else {
+          const line = await io.ask(`\n${promptLabel}`)
+          if (line === null || interruptedAtPrompt) break
+          trimmed = line.trim()
+        }
+
         if (trimmed === "") {
           if (!activeConfig) {
             const res = await runInteractiveSetup(io, resolved.config, env, undefined)
             if (res.status === "saved") {
               activeConfig = res.config
-              renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig)
+              renderCliHeader(
+                io,
+                canonical,
+                isWorkspaceTrusted(resolved.config, canonical),
+                activeConfig,
+                activeSession,
+              )
             }
           }
           continue
         }
+
         if (trimmed === "/exit" || trimmed === "exit" || trimmed === "quit") break
-        if (trimmed === "/help") {
-          io.write(renderHelp(resolved.config, resolved.data))
+        if (trimmed === "connect") {
+          const res = await dispatchSlashCommand("connect", "")
+          if (res === "exit") break
           continue
         }
-        if (trimmed === "/trust") {
-          const user = env["USER"] ?? env["USERNAME"] ?? "terminal-user"
-          grantWorkspaceTrust(resolved.config, canonical, user)
-          io.write(`Trusted ${canonical}.\n`)
-          continue
-        }
-        if (
-          trimmed === "/setup" ||
-          trimmed === "/connect" ||
-          trimmed === "/model" ||
-          trimmed === "connect"
-        ) {
-          const res = await runInteractiveSetup(io, resolved.config, env, activeConfig)
-          if (res.status === "saved") {
-            activeConfig = res.config
-            renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig)
-          }
+        if (trimmed.startsWith("/")) {
+          const body = trimmed.slice(1)
+          const space = body.search(/\s/)
+          const cmd = (space === -1 ? body : body.slice(0, space)).toLowerCase()
+          const cmdArgs = space === -1 ? "" : body.slice(space + 1).trim()
+          const res = await dispatchSlashCommand(cmd, cmdArgs)
+          if (res === "exit") break
           continue
         }
 
@@ -710,7 +1391,13 @@ export async function runStandalone(
           const res = await runInteractiveSetup(io, resolved.config, env, undefined)
           if (res.status !== "saved") continue
           activeConfig = res.config
-          renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig)
+          renderCliHeader(
+            io,
+            canonical,
+            isWorkspaceTrusted(resolved.config, canonical),
+            activeConfig,
+            activeSession,
+          )
         }
 
         if (!trusted && !trustPromptShown) {
@@ -719,7 +1406,10 @@ export async function runStandalone(
           io.write(
             "Reads are allowed. File edits and commands require trusting this directory, and approved actions run with your user permissions (not an OS sandbox).\n",
           )
-          const trustAns = await io.ask("Trust this workspace for interactive edit/command approvals? [y/N] ")
+          const trustAns = await askYesNo(
+            io,
+            "Trust this workspace for interactive edit/command approvals? [y/N] ",
+          )
           if (trustAns === null) break
           if (isYes(trustAns)) {
             const user = env["USER"] ?? env["USERNAME"] ?? "terminal-user"
@@ -736,7 +1426,7 @@ export async function runStandalone(
           io.writeError(
             `\nProvider at ${formatDestination(activeConfig.baseURL)} cannot authenticate (${cred.summary}).\n`,
           )
-          const repair = await io.ask("Open /model setup to repair provider credentials? [y/N] ")
+          const repair = await askYesNo(io, "Open /model setup to repair provider credentials? [y/N] ")
           if (isYes(repair)) {
             const res = await runInteractiveSetup(io, resolved.config, env, activeConfig)
             if (res.status === "saved") activeConfig = res.config
@@ -744,53 +1434,153 @@ export async function runStandalone(
           continue
         }
 
+        promptHistory = appendPromptHistory(resolved.data, trimmed)
         currentAbort = new AbortController()
-        const result = await runTask(
-          {
-            workspace: canonical,
-            prompt: trimmed,
-            trusted,
-            config: activeConfig,
-            signal: currentAbort.signal,
-          },
-          {
-            paths: resolved,
-            env,
-            ...(options.completeImpl ? { completeImpl: options.completeImpl } : {}),
-            onEvent: (event: TaskEvent) => {
-              if (event.type === "model_requested") {
-                io.write(`Waiting for ${event.model} at ${formatDestination(event.endpoint)}...\n`)
-              } else if (event.type === "tool_completed") {
-                if (event.result.tool === "list_files" || event.result.tool === "read_file") {
-                  io.write(`${event.result.tool} -> ${event.result.status}\n`)
+        const turnCheckpoints: FileCheckpoint[] = []
+
+        // Live spinner & raw Ctrl+C / Escape cancel listener while task runs
+        let spinnerTimer: ReturnType<typeof setInterval> | undefined
+        let stopTaskCapture: (() => void) | undefined
+        let spinnerActive = false
+        let spinnerText = ""
+        let spinnerIdx = 0
+        const taskStartMs = Date.now()
+
+        const clearSpinnerLine = () => {
+          if (spinnerActive && io instanceof RawTerminalIO) {
+            io.write("\r\x1b[2K")
+            spinnerActive = false
+          }
+        }
+
+        const startSpinnerAndCancel = () => {
+          if (!(io instanceof RawTerminalIO)) return
+          if (!stopTaskCapture) {
+            stopTaskCapture = io.raw.beginCapture((ev) => {
+              if (
+                (ev.kind === "ctrl" && ev.key === "c") ||
+                (ev.kind === "key" && ev.name === "escape")
+              ) {
+                clearSpinnerLine()
+                io.write("\nCancelling current task...\n")
+                currentAbort?.abort()
+              }
+            })
+          }
+          if (!spinnerTimer && spinnerText !== "") {
+            spinnerTimer = setInterval(() => {
+              if (!spinnerText || !(io instanceof RawTerminalIO)) return
+              const frame = SPINNER_FRAMES[spinnerIdx % SPINNER_FRAMES.length]!
+              spinnerIdx += 1
+              const elapsed = ((Date.now() - taskStartMs) / 1000).toFixed(1)
+              io.write(
+                `\r\x1b[2K${io.style.accent(frame)} ${spinnerText} ${io.style.muted(`(${elapsed}s · esc/ctrl+c cancel)`)}`,
+              )
+              spinnerActive = true
+            }, 90)
+          }
+        }
+
+        const pauseSpinnerAndCancel = () => {
+          if (spinnerTimer) {
+            clearInterval(spinnerTimer)
+            spinnerTimer = undefined
+          }
+          clearSpinnerLine()
+          if (stopTaskCapture) {
+            stopTaskCapture()
+            stopTaskCapture = undefined
+          }
+        }
+
+        startSpinnerAndCancel()
+
+        let result: TaskResult
+        try {
+          result = await runTask(
+            {
+              workspace: canonical,
+              prompt: trimmed,
+              trusted,
+              config: activeConfig,
+              history: activeSession.messages,
+              signal: currentAbort.signal,
+            },
+            {
+              paths: resolved,
+              env,
+              ...(options.completeImpl ? { completeImpl: options.completeImpl } : {}),
+              onEvent: (event: TaskEvent) => {
+                if (event.type === "model_requested") {
+                  spinnerText = `Waiting for ${event.model} at ${formatDestination(event.endpoint)}`
+                  if (!(io instanceof RawTerminalIO) || event.step === 1) {
+                    clearSpinnerLine()
+                    io.write(`Waiting for ${event.model} at ${formatDestination(event.endpoint)}...\n`)
+                  }
+                  startSpinnerAndCancel()
+                } else if (event.type === "tool_completed") {
+                  if (event.result.tool === "list_files" || event.result.tool === "read_file") {
+                    clearSpinnerLine()
+                    io.write(`${event.result.tool} -> ${event.result.status}\n`)
+                  }
                 }
-              }
+              },
+              confirmAction: async (req: ApprovalRequest): Promise<boolean> => {
+                pauseSpinnerAndCancel()
+                try {
+                  if (req.kind === "edit_file") {
+                    io.write(`\nEdit     ${sanitizeTerminalText(req.prepared.relativePath)}\n`)
+                    const diffLines = sanitizeTerminalText(req.prepared.diffPreview).split("\n")
+                    if (io instanceof RawTerminalIO) {
+                      io.write(diffLines.map((l) => io.style.diffLine(l)).join("\n") + "\n")
+                    } else {
+                      io.write(`${diffLines.join("\n")}\n`)
+                    }
+                    const ans = await askYesNo(io, "Apply this change? [y/N] ", currentAbort?.signal)
+                    const approved = isYes(ans)
+                    if (approved) {
+                      const cp = captureFileCheckpoint(
+                        canonical,
+                        req.prepared.relativePath,
+                        req.prepared.resolvedPath,
+                      )
+                      if (cp) turnCheckpoints.push(cp)
+                    }
+                    return approved
+                  }
+                  const cmdLine = sanitizeTerminalText([req.prepared.command, ...req.prepared.args].join(" "))
+                  io.write(`\nRun      ${cmdLine}\n`)
+                  io.write(`Dir      ${sanitizeTerminalText(req.prepared.cwd)}\n`)
+                  io.write(`Warning  ${req.hostAccessWarning}\n`)
+                  const ans = await askYesNo(io, "Run this command? [y/N] ", currentAbort?.signal)
+                  return isYes(ans)
+                } finally {
+                  startSpinnerAndCancel()
+                }
+              },
             },
-            confirmAction: async (req: ApprovalRequest): Promise<boolean> => {
-              if (req.kind === "edit_file") {
-                io.write(`\nEdit     ${sanitizeTerminalText(req.prepared.relativePath)}\n`)
-                io.write(`${sanitizeTerminalText(req.prepared.diffPreview)}\n`)
-                const ans = await io.ask("Apply this change? [y/N] ", currentAbort?.signal)
-                return isYes(ans)
-              }
-              const cmdLine = sanitizeTerminalText([req.prepared.command, ...req.prepared.args].join(" "))
-              io.write(`\nRun      ${cmdLine}\n`)
-              io.write(`Dir      ${sanitizeTerminalText(req.prepared.cwd)}\n`)
-              io.write(`Warning  ${req.hostAccessWarning}\n`)
-              const ans = await io.ask("Run this command? [y/N] ", currentAbort?.signal)
-              return isYes(ans)
-            },
-          },
-        )
+          )
+        } finally {
+          pauseSpinnerAndCancel()
+        }
+
         currentAbort = undefined
         renderTaskOutcome(result, io)
+
+        activeSession = appendTurnToSession(activeSession, {
+          userPrompt: trimmed,
+          result,
+          model: activeConfig.model,
+          checkpoints: turnCheckpoints,
+        })
+        saveSession(resolved.data, activeSession, cred.secret)
 
         if (
           result.outcome === "failed" &&
           result.stopReason &&
           /(401|403|rejected authentication|cannot authenticate)/i.test(result.stopReason)
         ) {
-          const repair = await io.ask("Provider rejected request. Run /setup to repair? [y/N] ")
+          const repair = await askYesNo(io, "Provider rejected request. Run /setup to repair? [y/N] ")
           if (isYes(repair)) {
             const res = await runInteractiveSetup(io, resolved.config, env, activeConfig)
             if (res.status === "saved") activeConfig = res.config

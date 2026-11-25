@@ -215,6 +215,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
   const changedFilesSet = new Set<string>()
   const commands: CommandOutcomeRecord[] = []
   const actions: RunActionRecord[] = []
+  const turnMessages: ChatMessage[] = [{ role: "user", content: input.prompt }]
   let requests = 0
   let totalInput = 0
   let totalOutput = 0
@@ -266,6 +267,8 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
       changedFiles,
       changedTests,
       commands,
+      actions,
+      messages: turnMessages,
       requests,
       usage,
       evidenceFile,
@@ -296,8 +299,10 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
     return await finishAndPersist()
   }
 
+  const priorHistory = (input.history ?? []).filter((msg) => msg.role !== "system")
   const messages: ChatMessage[] = [
     { role: "system", content: buildSystemPrompt(boundary.workspace, boundary.trusted, extraContext) },
+    ...priorHistory,
     { role: "user", content: input.prompt },
   ]
 
@@ -436,7 +441,10 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
       const calls = pendingCalls(completion)
       if (calls.length === 0) {
         finalText = completion.text
-        if (finalText) deps.onEvent?.({ type: "assistant_text", text: finalText })
+        if (finalText) {
+          deps.onEvent?.({ type: "assistant_text", text: finalText })
+          turnMessages.push({ role: "assistant", content: finalText })
+        }
         outcome = completion.finishReason === "error" ? "failed" : "completed"
         if (completion.finishReason === "error") {
           stopReason = "Provider returned finish_reason: error."
@@ -759,7 +767,9 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
 
       if (abortedOrUncertain) break
 
-      messages.push(...stepMessages(completion, calls, results))
+      const stepMsgs = stepMessages(completion, calls, results)
+      messages.push(...stepMsgs)
+      turnMessages.push(...stepMsgs)
 
       // Identical consecutive failure detection (BW-076).
       const errorSignature = results

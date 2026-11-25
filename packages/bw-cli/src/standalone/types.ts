@@ -190,6 +190,7 @@ export interface TaskInput {
   readonly prompt: string
   readonly trusted: boolean
   readonly config: StandaloneConfig
+  readonly history?: readonly ChatMessage[]
   readonly budgets?: Partial<TaskBudgets>
   readonly signal?: AbortSignal
 }
@@ -202,6 +203,8 @@ export interface TaskResult {
   readonly changedFiles: readonly string[]
   readonly changedTests: readonly string[]
   readonly commands: readonly CommandOutcomeRecord[]
+  readonly actions?: readonly RunActionRecord[]
+  readonly messages?: readonly ChatMessage[]
   readonly requests: number
   readonly usage: RunSummaryRecord["usage"]
   readonly evidenceFile: string

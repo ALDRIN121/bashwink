@@ -30,6 +30,7 @@ import {
   runtimeLogHint,
 } from "./run-health.js"
 import { parseLimits, renderUsage, UsageGuard, type UsageLimits } from "./usage-guard.js"
+import { changedTestFiles, renderTestChanges } from "./test-changes.js"
 import {
   runAuthCommand,
   runModelCommand,
@@ -741,6 +742,8 @@ export async function main(input: readonly string[]): Promise<MainResult> {
 
   const evidenceFile = path.join(resolved.evidence, "evidence.jsonl")
   const boot = checkBoot(evidenceFile, runId)
+  const changedTests = boot.ok ? changedTestFiles(evidenceFile, boot.seq) : []
+  if (changedTests.length > 0) err(renderTestChanges(changedTests))
   const record = finishRun({
     resolved,
     runId,
@@ -749,6 +752,7 @@ export async function main(input: readonly string[]): Promise<MainResult> {
     execution,
     boot,
     usage,
+    ...(changedTests.length > 0 ? { changedTests } : {}),
     ...(execution.detail !== undefined
       ? { detail: execution.detail }
       : boot.ok

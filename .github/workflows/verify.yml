@@ -334,6 +334,14 @@ jobs:
       - name: Qualify the installed package (scripted provider)
         if: ${{ !cancelled() }}
         run: python fixtures/release/npm_qual.py build/npm/bashwink-0.1.0-alpha.1.tgz --out build/npm/qualification.json
+      # The interactive screen of the installed package in a real pseudo-terminal (trust question, the persistent mode
+      # label, a second launch). POSIX only: there is no Windows pseudo-terminal harness, so the Windows screen is a
+      # manual-checklist item (release/tester-kit/WINDOWS_TESTER_CHECKLIST.md), not something this job claims.
+      - name: Interactive smoke test of the installed package (PTY)
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
+        run: |
+          python -m pip install pyte==0.8.2
+          python fixtures/release/npm_smoke.py build/npm/bashwink-0.1.0-alpha.1.tgz --out build/npm/tui-smoke.json
       # Validates the tester-kit script itself under Windows PowerShell 5.1 (no provider, so no live steps).
       - name: Run the Windows tester-kit script
         if: ${{ !cancelled() && runner.os == 'Windows' }}

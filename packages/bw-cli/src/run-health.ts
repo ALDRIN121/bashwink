@@ -62,6 +62,8 @@ export interface RunRecord {
   readonly evidenceHead?: string
   /** Model requests, tokens and cost the runtime reported for this launch, and the limit that stopped it, if any. */
   readonly usage?: UsageSummary
+  /** Test files the agent wrote or edited through the file tools (shell-made changes are not detected). */
+  readonly changedTests?: readonly string[]
 }
 
 export interface BeginRunInput {
@@ -219,6 +221,7 @@ export function finishRun(input: {
   readonly boot?: BootCheck
   readonly detail?: string
   readonly usage?: UsageSummary
+  readonly changedTests?: readonly string[]
   readonly now?: () => Date
 }): RunRecord {
   const file = runRecordFile(input.resolved, input.runId)
@@ -240,6 +243,7 @@ export function finishRun(input: {
     ...(existing?.plugin === undefined ? {} : { plugin: existing.plugin }),
     ...(input.detail === undefined ? {} : { detail: input.detail }),
     ...(input.usage === undefined ? {} : { usage: input.usage }),
+    ...(input.changedTests === undefined ? {} : { changedTests: input.changedTests }),
     ...(input.boot?.ok === true
       ? {
           bootSeq: input.boot.seq,

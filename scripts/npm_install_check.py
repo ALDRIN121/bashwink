@@ -27,6 +27,8 @@ def check(name, ok, detail=""):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser()
     parser.add_argument("tarball", type=Path)
     parser.add_argument("--out", type=Path)
@@ -49,7 +51,7 @@ def main():
         command = str(prefix / "bashwink.cmd") if windows else str(prefix / "bin/bashwink")
         package = prefix / ("node_modules" if windows else "lib/node_modules") / "bashwink"
         check("the command and package exist", Path(command).exists() and package.is_dir())
-        run = lambda *a: subprocess.run([command, *a], env=env, cwd=project, capture_output=True, text=True, timeout=120)
+        run = lambda *a: subprocess.run([command, *a], env=env, cwd=project, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         version = run("--version")
         check("bashwink --version", version.returncode == 0 and version.stdout.startswith("bashwink 0.1.0-alpha.1"), version.stdout.strip() or version.stderr.strip()[:200])
         doctor = run("doctor")

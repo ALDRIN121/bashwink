@@ -314,13 +314,16 @@ describe("finding programs on PATH", () => {
       const file = nodePath.join(directory, "faketool.exe")
       writeFileSync(file, "x")
       chmodSync(file, 0o755)
-      const env = { PATH: directory, PATHEXT: ".COM;.EXE;.BAT" }
-      // Compared without case: Windows (and macOS) file systems are case-insensitive, so the PATHEXT spelling may differ.
-      expect(findOnPath("faketool", env, "win32")?.toLowerCase()).toBe(file.toLowerCase())
-      // POSIX does not append extensions: `faketool` is not `faketool.exe` there.
-      expect(findOnPath("faketool", { PATH: directory }, "linux")).toBeUndefined()
-      expect(findOnPath("faketool.exe", { PATH: directory }, "linux")).toBe(file)
+      // PATHEXT is written in lower case here so the lookup also matches on case-sensitive file systems.
+      const env = { PATH: directory, PATHEXT: ".cmd;.exe" }
+      expect(findOnPath("faketool", env, "win32")).toBe(file)
       expect(findOnPath("missing", env, "win32")).toBeUndefined()
+      // The POSIX half uses ":" as the PATH separator, which a Windows drive letter would break, so it runs on POSIX only.
+      if (process.platform !== "win32") {
+        // POSIX does not append extensions: `faketool` is not `faketool.exe` there.
+        expect(findOnPath("faketool", { PATH: directory }, "linux")).toBeUndefined()
+        expect(findOnPath("faketool.exe", { PATH: directory }, "linux")).toBe(file)
+      }
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }

@@ -260,6 +260,15 @@ def suite_coding(q: Qual) -> None:
         check("credentials: the provider key is in no file under the profile or project, and not in the output", not leaks and CANARY not in out, str(leaks))
         records = c.run_records()
         check("coding: the run record is finalized with usage", bool(records) and "usage" in records[0] and records[0]["evidence"] == "recorded", records and records[0].get("evidence"))
+        check("test changes: a run that touched no test file says nothing about test files", "changed test files" not in out and "changedTests" not in (records[0] if records else {}))
+    cheat = {"steps": [tool("edit", path="test.js", oldString="add(2, 3), 5", newString="add(2, 3), -1"), tool("shell", command="node test.js"), {"text": "All tests pass now."}]}
+    with Scenario(q, "test-changes", cheat, files=CODING_FILES) as c:
+        result = c.run("make the tests pass", "--auto")
+        out = c.output(result)
+        records = c.run_records()
+        check("test changes: when the agent edits a test file the run says so, names the file and what it cannot see", "changed test files" in out and "test.js" in out and "not detected" in out, out[-240:].replace("\n", " "))
+        check("test changes: the run record carries the list", bool(records) and records[0].get("changedTests") == ["test.js"], records and str(records[0].get("changedTests")))
+        check("test changes: the edit really did make the test pass (so a bare 'tests pass' proves nothing)", subprocess.run(["node", "test.js"], cwd=c.project, capture_output=True, text=True).returncode == 0)
 
 
 def suite_credentials(q: Qual) -> None:
@@ -492,6 +501,9 @@ SUITES = {"coding": suite_coding, "credentials": suite_credentials, "permissions
 
 
 def main() -> int:
+    # Windows consoles default to a legacy code page; details can contain non-ASCII paths and glyphs.
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("tarball", nargs="?", type=Path)
     parser.add_argument("--prefix", type=Path, help="test an existing install instead of installing a tarball")

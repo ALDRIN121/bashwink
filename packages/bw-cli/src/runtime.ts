@@ -5,10 +5,16 @@
  * it. That makes *resolution* the load-bearing part — if this guesses wrong, the user runs a
  * different agent than the one the wrapper tested. So resolution is explicit and ordered,
  * and a failure says exactly what to install.
+ *
+ * Task 4: in packaged mode the runtime comes from the local build manifest and nowhere else. The
+ * `PATH` walk below still exists for source checkouts, where there is no manifest to verify
+ * against, but it is *unreachable* from a packaged build — see `resolveRuntime`.
  */
 
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
+
+import { EngineManifestError, resolveEngineFromManifest } from "./engine-manifest"
 
 /** The one version Bashwink is tested against. Bumped only with a re-run of upstream-compat. */
 export const PINNED_RUNTIME_VERSION = "2.3.2"
@@ -24,8 +30,12 @@ export class RuntimeNotFoundError extends Error {
 export interface RuntimeLocation {
   readonly command: string
   /** How it was found, for `bashwink doctor` to report honestly. */
-  readonly source: "env" | "bundled" | "package" | "path"
+  readonly source: "env" | "bundled" | "package" | "path" | "manifest"
   readonly version: string
+  /** Present only when `source` is `manifest`: the verified artifact digest. */
+  readonly sha256?: string
+  /** Present only when `source` is `manifest`: the manifest that authorized it. */
+  readonly manifestPath?: string
 }
 
 /** Candidate executable names, in order. `opencode2` is the packaged second alias. */
@@ -78,17 +88,53 @@ export interface ResolveOptions {
   readonly bundled?: string
   /** Release builds never fall back to `node_modules` or `PATH`: only the pinned runtime. */
   readonly bundledOnly?: boolean
+  /**
+   * Packaged execution: the engine manifest that authorizes the runtime.
+   *
+   * Set by the launcher from the install root. When this is present, resolution is a verification
+   * of that manifest and nothing else — there is no fallback, because every fallback is a way for
+   * a different `opencode` to run.
+   */
+  readonly engineManifest?: string
+  /** Root the manifest's engine must live inside. Defaults to the manifest's directory. */
+  readonly engineRoot?: string
 }
 
 /**
  * Resolve the runtime in a documented order:
- *   1. `BASHWINK_OPENCODE_BIN` — explicit override (used by tests and by `doctor`)
- *   2. `node_modules/.bin/opencode` at or above the working directory
- *   3. `opencode` on `PATH`
+ *   1. the local build manifest, in packaged mode — verified, and the only accepted answer
+ *   2. `BASHWINK_OPENCODE_BIN` — explicit override, source checkouts only
+ *   3. `node_modules/.bin/opencode` at or above the working directory
+ *   4. `opencode` on `PATH`
+ *
+ * Steps 2–4 are unreachable once `engineManifest` is set, and equally unreachable when
+ * `bundledOnly` is true. A packaged install that cannot verify its engine stops; it does not
+ * borrow one from the machine it happens to be running on.
  *
  * Throws a message a user can act on instead of a bare ENOENT.
  */
 export function resolveRuntime(options: ResolveOptions = {}): RuntimeLocation {
+  if (options.engineManifest !== undefined) {
+    try {
+      const engine = resolveEngineFromManifest(options.engineManifest, {
+        root: options.engineRoot ?? path.dirname(options.engineManifest),
+      })
+      return {
+        command: engine.command,
+        source: "manifest",
+        version: PINNED_RUNTIME_VERSION,
+        sha256: engine.sha256,
+        manifestPath: engine.manifestPath,
+      }
+    } catch (error) {
+      if (error instanceof EngineManifestError)
+        throw new RuntimeNotFoundError(
+          `the local engine could not be verified, so Bashwink will not start:\n  ${error.message}`,
+        )
+      throw error
+    }
+  }
+
   const override = options.bundledOnly === true ? undefined : process.env["BASHWINK_OPENCODE_BIN"]
   if (override) {
     if (!isExecutable(override))

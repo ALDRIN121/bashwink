@@ -518,9 +518,17 @@ export async function main(input: readonly string[]): Promise<MainResult> {
   }
   let runtime
   try {
+    // Task 4: a packaged build resolves the engine from the local build manifest and verifies it.
+    // The old `bundledOnly` path is kept for a bundle that ships no manifest — it still refuses to
+    // search PATH, so neither branch can run an engine this build did not produce.
+    const engineManifest = RELEASE_BUILD
+      ? (process.env["BASHWINK_ENGINE_MANIFEST"] ?? path.join(MODULE_DIR, "..", "engine-manifest.json"))
+      : undefined
     runtime = resolveRuntime(
       RELEASE_BUILD
-        ? { bundled: path.join(MODULE_DIR, "..", "libexec", "opencode"), bundledOnly: true }
+        ? engineManifest !== undefined && existsSync(engineManifest)
+          ? { engineManifest }
+          : { bundled: path.join(MODULE_DIR, "..", "libexec", "opencode"), bundledOnly: true }
         : {},
     )
   } catch (error) {

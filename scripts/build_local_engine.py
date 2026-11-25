@@ -191,6 +191,7 @@ def _toolchain_versions(
     zig_daemon: str | None = None,
     zig_opentui: str | None = None,
     toolchain_path: str | None = None,
+    engine_dir: Path | None = None,
 ) -> dict:
     """Record the exact tools that produced this artifact.
 
@@ -232,6 +233,22 @@ def _toolchain_versions(
 
     rustc_path, rustc_version = version_of(resolve("rustc"))
     cargo_path, cargo_version = version_of(resolve("cargo"))
+
+    # The PTY helper is built inside packages/process-daemon, where rust-toolchain.toml overrides
+    # the host default. Probing `rustc` from the repo root reports the *host* toolchain, which is
+    # not what compiled the helper — and recording it as if it were would be a false provenance
+    # claim. Resolve it from that directory instead.
+    daemon_dir = engine_dir / "packages" / "process-daemon"
+    daemon_rustc = None
+    if daemon_dir.is_dir():
+        try:
+            out = subprocess.run(
+                ["rustc", "--version"], cwd=daemon_dir, capture_output=True, text=True, timeout=60
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                daemon_rustc = out.stdout.strip().splitlines()[0]
+        except (OSError, subprocess.SubprocessError):
+            daemon_rustc = None
     bun_path, bun_version = version_of(resolve("bun"))
     _, zig_pty_version = version_of(zig_daemon)
     _, zig_opentui_version = version_of(zig_opentui)
@@ -241,12 +258,16 @@ def _toolchain_versions(
         "bun": bun_version,
         "zigPtyHelper": zig_pty_version,
         "zigOpentui": zig_opentui_version,
+        # What actually compiled the helper, versus the host default above.
+        "ptyHelperRust": daemon_rustc,
+        # Basenames only: the manifest ships inside the package, and a user's home directory is
+        # neither a provenance fact nor something to publish.
         "paths": {
-            "rustc": rustc_path,
-            "cargo": cargo_path,
-            "bun": bun_path,
-            "zigPtyHelper": zig_daemon,
-            "zigOpentui": zig_opentui,
+            "rustc": Path(rustc_path).name if rustc_path else None,
+            "cargo": Path(cargo_path).name if cargo_path else None,
+            "bun": Path(bun_path).name if bun_path else None,
+            "zigPtyHelper": Path(zig_daemon).name if zig_daemon else None,
+            "zigOpentui": Path(zig_opentui).name if zig_opentui else None,
         },
     }
 
@@ -298,7 +319,9 @@ def manifest_for_target(target: str, *, zig_daemon: str | None = None, zig_opent
         "sourcePins": pins,
         "engine": {"name": None, "sha256": None, "bytes": None},
         "pty": {"name": None, "sha256": None, "bytes": None, "source": "local-build"},
-        "toolchains": _toolchain_versions(zig_daemon, zig_opentui),
+        "toolchains": _toolchain_versions(
+            zig_daemon, zig_opentui, engine_dir=repo_root() / "vendor" / "engine"
+        ),
         "notices": {"inventory": None, "sha256": None},
         "buildInputs": {},
     }
@@ -482,10 +505,20 @@ def build(
     env["BASHWINK_PTY_DIR"] = str(pty_dir)
     env.setdefault("OPENCODE_VERSION", _vendor_version())
 
+    # Deliberately records the shape of the invocation without absolute paths: the manifest ships
+    # inside the package, and hard-coded home directories are both a privacy leak and a false claim
+    # about reproducibility on any other machine.
     manifest["buildCommand"] = {
-        "argv": command,
-        "cwd": str(engine / "packages" / "cli"),
-        "env": {"OPENCODE_TARGET": env["OPENCODE_TARGET"], "BASHWINK_PTY_DIR": env["BASHWINK_PTY_DIR"]},
+        "argv": [
+            # Drop absolute destinations; record the shape only. The flag starts with `--`, so the
+            # test must look at what follows it, not at the first character of the whole argument.
+            ("--outdir=<build-outdir>" if a.startswith("--outdir=") else Path(a).name)
+            if a.startswith("/") or a.startswith("--outdir=")
+            else a
+            for a in command
+        ],
+        "cwd": "vendor/engine/packages/cli",
+        "env": {"OPENCODE_TARGET": env["OPENCODE_TARGET"], "BASHWINK_PTY_DIR": "<local-pty-dir>"},
     }
 
     if not dry_run:

@@ -342,11 +342,16 @@ try {
   Set-Content -Path (Join-Path $RepoDir "sum.js") -Value "export function sum(a, b) { return a - b; }`n"
   Set-Content -Path (Join-Path $RepoDir "sum.test.js") -Value "import test from 'node:test'; import assert from 'node:assert/strict'; import { sum } from './sum.js'; test('adds', () => assert.equal(sum(2, 3), 5));`n"
 
-  # 1. Launch, cancel setup once (0 requests, no standalone.json)
+  # 1. Launch into CLI banner, open /model, cancel setup once (0 requests, no standalone.json), /exit
   $s1 = New-Object ConPtySession ("`"$BashwinkCmd`""), $RepoDir, 100, 30
   try {
-    $s1.WaitFor("Choose [1/2] (or 'cancel'):", 15000)
+    $s1.WaitFor("Model    none configured", 15000)
+    $s1.WaitFor("bashwink (no model)> ", 15000)
+    $s1.Send("/model`r`n")
+    $s1.WaitFor("Select provider [1-10 or id] (or 'cancel'):", 15000)
     $s1.Send("cancel`r`n")
+    $s1.WaitFor("bashwink (no model)> ", 15000)
+    $s1.Send("/exit`r`n")
     $c1 = $s1.WaitForExit(15000)
     if ($c1 -ne 0) { throw "Cancelled setup returned exit $c1" }
   } finally {
@@ -355,33 +360,35 @@ try {
   if ($ServerState.Count -ne 0) { throw "Expected 0 requests after cancelled setup, got $($ServerState.Count)" }
   if (Test-Path (Join-Path $BwHome "standalone.json")) { throw "Cancelled setup left standalone.json behind" }
 
-  # 2. Setup endpoint, trust, approve edit + command, resize ConPTY, cancel command via Ctrl+C, /exit
+  # 2. Launch -> /model -> custom local preset -> trust -> approve edit + command -> Ctrl+C cancel -> /exit
   $ServerState.Scenario = "fix"
   $ServerState.Turn = 0
   $s2 = New-Object ConPtySession ("`"$BashwinkCmd`""), $RepoDir, 100, 30
   try {
-    $s2.WaitFor("Choose [1/2] (or 'cancel'):", 15000)
-    $s2.Send("2`r`n")
+    $s2.WaitFor("bashwink (no model)> ", 15000)
+    $s2.Send("`r`n")
+    $s2.WaitFor("Select provider [1-10 or id] (or 'cancel'):", 15000)
+    $s2.Send("10`r`n")
     $s2.WaitFor("Endpoint URL", 15000)
     $s2.Send("http://127.0.0.1:$Port/v1`r`n")
     $s2.WaitFor("Model ID", 15000)
     $s2.Send("win-local-model`r`n")
     $s2.WaitFor("Choose [1/2/3] (or 'cancel'):", 15000)
-    $s2.Send("1`r`n")
-    $s2.WaitFor("Save and use this connection? [y/N]", 15000)
+    $s2.Send("3`r`n")
+    $s2.WaitFor("Save and use this model? [y/N]", 15000)
     $s2.Send("y`r`n")
-    $s2.WaitFor("Trust this workspace for interactive edit/command approvals? [y/N]", 15000)
+    $s2.WaitFor("bashwink> ", 15000)
     if ($ServerState.Count -ne 0) { throw "Outbound requests fired before task submission ($($ServerState.Count))" }
     $s2.Resize(80, 24)
-    $s2.Send("y`r`n")
-    $s2.WaitFor("> ", 15000)
     $s2.Send("fix sum`r`n")
+    $s2.WaitFor("Trust this workspace for interactive edit/command approvals? [y/N]", 15000)
+    $s2.Send("y`r`n")
     $s2.WaitFor("Apply this change? [y/N]", 15000)
     $s2.Send("y`r`n")
     $s2.WaitFor("Run this command? [y/N]", 15000)
     $s2.Send("y`r`n")
     $s2.WaitFor("Outcome   completed", 15000)
-    $s2.WaitFor("> ", 15000)
+    $s2.WaitFor("bashwink> ", 15000)
 
     # Cancel a slow command with Ctrl+C (\u0003)
     $ServerState.Scenario = "cancel_cmd"

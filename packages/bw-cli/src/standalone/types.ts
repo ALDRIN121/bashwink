@@ -17,10 +17,12 @@ export interface ModelPrice {
 
 export interface StandaloneConfig {
   readonly version: 1
+  readonly providerId?: string
   readonly endpointType: "local" | "hosted"
   readonly baseURL: string
   readonly model: string
   readonly credential: CredentialConfig
+  readonly headers?: Readonly<Record<string, string>>
   readonly updatedAt: string
   readonly price?: ModelPrice
 }

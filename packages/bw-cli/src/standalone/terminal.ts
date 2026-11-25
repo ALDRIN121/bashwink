@@ -29,6 +29,7 @@ import {
   verifyEvidenceFile,
 } from "./security.ts"
 import { runTask, type ApprovalRequest } from "./task-loop.ts"
+import { PROVIDER_CATALOG, findProviderPreset, type ProviderPreset } from "./provider-catalog.ts"
 import type { CredentialConfig, StandaloneConfig, TaskEvent, TaskResult } from "./types.ts"
 
 export const STANDALONE_VERSION = "0.2.0-alpha.1"
@@ -155,14 +156,20 @@ export function renderHelp(configDir: string, dataDir: string): string {
     `bashwink ${STANDALONE_VERSION} — standalone evidence-first coding CLI`,
     "",
     "USAGE",
-    "  bashwink                 Open setup (if unconfigured) or the coding prompt",
-    "  bashwink setup           Configure or update the model endpoint, model ID, and credentials",
+    "  bashwink                 Open Bashwink interactive CLI (prompts to configure model if unset)",
+    "  bashwink setup           Configure or update provider, endpoint URL, model, and credentials",
+    "  bashwink connect         Alias for setup (interactive OpenCode-compatible provider picker)",
     "  bashwink doctor          Check Node, saved profile, credential reference, trust, and evidence",
     "  bashwink trust [dir] --by <name>",
     "                           Grant interactive write/command trust to a workspace",
     "  bashwink evidence verify Verify the hash-chained evidence.jsonl log",
     "  bashwink --version       Print version",
     "  bashwink --help          Print this help",
+    "",
+    "INTERACTIVE COMMANDS",
+    "  /model, /connect         Choose provider preset (OpenAI, OpenRouter, DeepSeek, Groq, xAI, Ollama, LM Studio, vLLM, or custom)",
+    "  /trust                   Trust current project for interactive edit/command approvals",
+    "  /help, /exit             Show help or quit",
     "",
     "BUILT-IN TOOLS",
     "  list_files, read_file, edit_file (diff + approval), run_command (argv + approval)",
@@ -193,14 +200,40 @@ function parseCredentialChoice(cred: CredentialConfig): string {
   return `Key file ${cred.path}`
 }
 
+function renderCliHeader(
+  io: TerminalIO,
+  workspace: string,
+  trusted: boolean,
+  config?: StandaloneConfig,
+): void {
+  const modelLine = config
+    ? `${config.providerId ? `${config.providerId} / ` : ""}${config.model} (${formatDestination(config.baseURL)})`
+    : "none configured"
+  const trustLine = trusted
+    ? "trusted (edits & commands confirm)"
+    : "not trusted (read-only until /trust)"
+  io.write("\n╭──────────────────────────────────────────────────────────────────╮\n")
+  io.write(`│ Bashwink ${STANDALONE_VERSION}  (standalone CLI)                                │\n`)
+  io.write(`│ Project  ${sanitizeTerminalText(workspace)}\n`)
+  io.write(`│ Trust    ${trustLine}\n`)
+  io.write(`│ Model    ${sanitizeTerminalText(modelLine)}\n`)
+  io.write("╰──────────────────────────────────────────────────────────────────╯\n")
+  io.write("Commands: /model  /connect  /trust  /help  /exit\n")
+}
+
 export async function runInteractiveSetup(
   io: TerminalIO,
   configDirectory: string,
   env: NodeJS.ProcessEnv,
   existing?: StandaloneConfig,
 ): Promise<{ readonly status: "saved"; readonly config: StandaloneConfig } | { readonly status: "cancelled" }> {
-  io.write(`\nBashwink ${STANDALONE_VERSION}\n`)
-  io.write(existing ? "Update provider connection (cancelling keeps your existing profile)\n" : "First-time setup\n")
+  io.write(`\nConfigure model  (0 network requests made during setup)\n`)
+  if (existing) {
+    io.write(
+      `Current: ${existing.providerId ? `${existing.providerId} / ` : ""}${existing.model} (${formatDestination(existing.baseURL)})\n`,
+    )
+    io.write("Cancelling keeps your existing configuration.\n")
+  }
 
   if (!existing) {
     const legacy = inspectLegacyOpenAiProviders(configDirectory)
@@ -242,29 +275,45 @@ export async function runInteractiveSetup(
     }
   }
 
-  let endpointType: "local" | "hosted" | undefined
-  while (endpointType === undefined) {
-    io.write("Where should Bashwink send model requests?\n")
-    io.write("  1) Hosted endpoint (HTTPS)\n")
-    io.write("  2) Local endpoint (loopback HTTP or HTTPS)\n")
-    const choice = await io.ask("Choose [1/2] (or 'cancel'): ")
+  let preset: ProviderPreset | undefined
+  while (preset === undefined) {
+    io.write("\nHosted providers (HTTPS):\n")
+    for (const p of PROVIDER_CATALOG.filter((c) => c.endpointType === "hosted")) {
+      const tag = p.defaultBaseURL ?? p.note
+      io.write(`  ${String(p.index).padStart(2, " ")}) ${p.name.padEnd(23, " ")} ${tag}\n`)
+    }
+    io.write("\nLocal servers (loopback HTTP/HTTPS):\n")
+    for (const p of PROVIDER_CATALOG.filter((c) => c.endpointType === "local")) {
+      const tag = p.defaultBaseURL ?? p.note
+      io.write(`  ${String(p.index).padStart(2, " ")}) ${p.name.padEnd(23, " ")} ${tag}\n`)
+    }
+    const choice = await io.ask("Select provider [1-10 or id] (or 'cancel'): ")
     if (choice === null) return { status: "cancelled" }
     const t = choice.trim().toLowerCase()
     if (t === "cancel" || t === "q" || t === "quit") return { status: "cancelled" }
-    if (t === "1" || t === "hosted") endpointType = "hosted"
-    else if (t === "2" || t === "local") endpointType = "local"
-    else io.write("  Please enter 1 (Hosted) or 2 (Local).\n")
+    const matched = findProviderPreset(t)
+    if (matched) {
+      preset = matched
+    } else {
+      io.write("  Please enter a number 1-10, a provider id (e.g. openai, ollama), or 'cancel'.\n")
+    }
   }
 
+  const endpointType = preset.endpointType
   let baseURL: string | undefined
   while (baseURL === undefined) {
-    const hint =
-      endpointType === "local" ? "Endpoint URL (e.g. http://127.0.0.1:8080/v1): " : "Endpoint URL (https://...): "
-    const rawUrl = await io.ask(hint)
+    const promptText = preset.defaultBaseURL
+      ? `Endpoint URL [Enter for ${preset.defaultBaseURL}]: `
+      : endpointType === "local"
+        ? "Endpoint URL (e.g. http://127.0.0.1:8080/v1): "
+        : "Endpoint URL (https://...): "
+    const rawUrl = await io.ask(promptText)
     if (rawUrl === null) return { status: "cancelled" }
-    if (rawUrl.trim().toLowerCase() === "cancel") return { status: "cancelled" }
+    const trimmed = rawUrl.trim()
+    if (trimmed.toLowerCase() === "cancel") return { status: "cancelled" }
+    const effectiveRaw = trimmed === "" && preset.defaultBaseURL ? preset.defaultBaseURL : trimmed
     try {
-      baseURL = normalizeBaseURL(rawUrl, endpointType)
+      baseURL = normalizeBaseURL(effectiveRaw, endpointType)
     } catch (err) {
       io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
     }
@@ -272,11 +321,31 @@ export async function runInteractiveSetup(
 
   let model: string | undefined
   while (model === undefined) {
-    const rawModel = await io.ask("Model ID (for example gpt-4o-mini or qwen-coder): ")
+    if (preset.defaultModels.length > 0) {
+      io.write(`\nSuggested ${preset.name} models:\n`)
+      preset.defaultModels.forEach((m, idx) => {
+        io.write(`  ${idx + 1}) ${m}\n`)
+      })
+    }
+    const modelPrompt =
+      preset.defaultModels.length > 0
+        ? `Model ID or number [Enter for ${preset.defaultModels[0]}]: `
+        : "Model ID (for example gpt-4o-mini or qwen-coder): "
+    const rawModel = await io.ask(modelPrompt)
     if (rawModel === null) return { status: "cancelled" }
-    if (rawModel.trim().toLowerCase() === "cancel") return { status: "cancelled" }
+    const trimmed = rawModel.trim()
+    if (trimmed.toLowerCase() === "cancel") return { status: "cancelled" }
+    let candidate = trimmed
+    if (candidate === "" && preset.defaultModels.length > 0) {
+      candidate = preset.defaultModels[0]!
+    } else if (/^\d+$/.test(candidate) && preset.defaultModels.length > 0) {
+      const idx = Number(candidate) - 1
+      if (idx >= 0 && idx < preset.defaultModels.length) {
+        candidate = preset.defaultModels[idx]!
+      }
+    }
     try {
-      model = validateModelID(rawModel)
+      model = validateModelID(candidate)
     } catch (err) {
       io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
     }
@@ -284,25 +353,29 @@ export async function runInteractiveSetup(
 
   let credential: CredentialConfig | undefined
   while (credential === undefined) {
-    io.write("How should Bashwink authenticate to this endpoint?\n")
-    io.write("  1) None (no key needed)\n")
-    io.write("  2) Environment variable name\n")
-    io.write("  3) Key file path\n")
+    io.write("\nAuthentication:\n")
+    io.write(
+      `  1) Environment variable name${preset.defaultEnvVar ? ` (e.g. ${preset.defaultEnvVar})` : ""}\n`,
+    )
+    io.write("  2) Key file path\n")
+    io.write("  3) None (no key needed)\n")
     const mode = await io.ask("Choose [1/2/3] (or 'cancel'): ")
     if (mode === null) return { status: "cancelled" }
     const m = mode.trim().toLowerCase()
     if (m === "cancel") return { status: "cancelled" }
-    if (m === "1" || m === "none") {
-      credential = { kind: "none" }
-    } else if (m === "2" || m === "env") {
-      const varName = await io.ask("Environment variable name (e.g. MY_API_KEY): ")
+    if (m === "1" || m === "env") {
+      const envPrompt = preset.defaultEnvVar
+        ? `Environment variable name [Enter for ${preset.defaultEnvVar}]: `
+        : "Environment variable name (e.g. MY_API_KEY): "
+      const varName = await io.ask(envPrompt)
       if (varName === null) return { status: "cancelled" }
+      const effectiveVar = varName.trim() === "" && preset.defaultEnvVar ? preset.defaultEnvVar : varName
       try {
-        credential = { kind: "env", variable: validateEnvVarName(varName) }
+        credential = { kind: "env", variable: validateEnvVarName(effectiveVar) }
       } catch (err) {
         io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
       }
-    } else if (m === "3" || m === "file") {
+    } else if (m === "2" || m === "file") {
       const keyFile = await io.ask("Key file path: ")
       if (keyFile === null) return { status: "cancelled" }
       try {
@@ -310,6 +383,8 @@ export async function runInteractiveSetup(
       } catch (err) {
         io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
       }
+    } else if (m === "3" || m === "none") {
+      credential = { kind: "none" }
     } else {
       io.write("  Please enter 1, 2, or 3.\n")
     }
@@ -317,6 +392,7 @@ export async function runInteractiveSetup(
 
   const credCheck = resolveCredentialSecret(credential, env)
   io.write("\nReview connection (zero requests sent during setup):\n")
+  io.write(`  Provider    ${preset.name} (${preset.id})\n`)
   io.write(`  Type        ${endpointType}\n`)
   io.write(`  Endpoint    ${baseURL}\n`)
   io.write(`  Model       ${model}\n`)
@@ -324,7 +400,7 @@ export async function runInteractiveSetup(
   if (credCheck.warning) {
     io.write(`  Warning     ${credCheck.warning}\n`)
   }
-  const confirm = await io.ask("Save and use this connection? [y/N] ")
+  const confirm = await io.ask("Save and use this model? [y/N] ")
   if (!isYes(confirm)) {
     io.write("Setup cancelled; profile unchanged.\n")
     return { status: "cancelled" }
@@ -332,14 +408,16 @@ export async function runInteractiveSetup(
 
   const config: StandaloneConfig = {
     version: 1,
+    providerId: preset.id,
     endpointType,
     baseURL,
     model,
     credential,
+    ...(preset.defaultHeaders ? { headers: preset.defaultHeaders } : {}),
     updatedAt: new Date().toISOString(),
   }
   saveStandaloneConfig(configDirectory, config)
-  io.write(`Saved connection to ${standaloneConfigFile(configDirectory)}.\n`)
+  io.write(`Saved model configuration to ${standaloneConfigFile(configDirectory)}.\n`)
   return { status: "saved", config }
 }
 
@@ -507,10 +585,10 @@ export async function runStandalone(
       io.writeError(`Evidence verification failed: ${res.reason}\n`)
       return 1
     }
-    if (first === "setup") {
+    if (first === "setup" || first === "connect" || (first === "model" && argv.length === 1)) {
       if (!io.isTTY) {
         io.writeError(
-          "bashwink setup requires an interactive terminal to configure endpoint, model, and credential references.\n",
+          `bashwink ${first} requires an interactive terminal to configure provider, model, and credential references.\n`,
         )
         return 2
       }
@@ -530,13 +608,13 @@ export async function runStandalone(
       return 2
     }
 
-    // Bare `bashwink`: interactive first-run setup or task prompt.
+    // Bare `bashwink`: open interactive CLI workspace immediately, prompting for model configuration on first launch.
     if (!io.isTTY) {
       const cfg = loadStandaloneConfig(resolved.config)
       if (cfg.status !== "ok") {
         io.write(
-          `Bashwink ${STANDALONE_VERSION}: no provider profile is configured.\n` +
-            "Run `bashwink` or `bashwink setup` in an interactive terminal to choose an endpoint, model, and credential reference.\n",
+          `Bashwink ${STANDALONE_VERSION}: no provider/model configured.\n` +
+            "Run `bashwink` or `bashwink setup` interactively and choose `/model` to configure a provider and model.\n",
         )
         return 0
       }
@@ -547,42 +625,19 @@ export async function runStandalone(
       return 0
     }
 
-    let cfgState = loadStandaloneConfig(resolved.config)
-    let activeConfig: StandaloneConfig
-    if (cfgState.status !== "ok") {
-      if (cfgState.status === "invalid") {
-        io.writeError(`Saved profile could not be loaded: ${cfgState.reason}\n`)
-      }
-      const setupResult = await runInteractiveSetup(io, resolved.config, env)
-      if (setupResult.status === "cancelled") {
-        return 0
-      }
-      activeConfig = setupResult.config
-    } else {
-      activeConfig = cfgState.config
+    const cfgState = loadStandaloneConfig(resolved.config)
+    let activeConfig: StandaloneConfig | undefined =
+      cfgState.status === "ok" ? cfgState.config : undefined
+    if (cfgState.status === "invalid") {
+      io.writeError(`Saved profile could not be loaded: ${cfgState.reason}\n`)
     }
 
     const canonical = canonicalWorkspace(cwd)
     ensurePaths(resolved)
 
-    if (!isWorkspaceTrusted(resolved.config, canonical)) {
-      io.write(`\nWorkspace ${canonical} is NOT trusted yet (read-only mode).\n`)
-      io.write(
-        "Reads are allowed. File edits and commands require trusting this directory, and approved actions run with your user permissions (not an OS sandbox).\n",
-      )
-      const trustAns = await io.ask("Trust this workspace for interactive edit/command approvals? [y/N] ")
-      if (trustAns === null) return 0
-      if (isYes(trustAns)) {
-        const user = env["USER"] ?? env["USERNAME"] ?? "terminal-user"
-        grantWorkspaceTrust(resolved.config, canonical, user)
-        io.write(`Trusted ${canonical}.\n`)
-      } else {
-        io.write("Continuing in read-only mode (edits and commands will be denied).\n")
-      }
-    }
-
     let currentAbort: AbortController | undefined
     let interruptedAtPrompt = false
+    let trustPromptShown = false
     const onSigint = () => {
       if (currentAbort) {
         io.write("\nCancelling current task...\n")
@@ -601,19 +656,30 @@ export async function runStandalone(
     process.stdout.on("resize", onResize)
 
     try {
-      while (!interruptedAtPrompt) {
-        const trusted = isWorkspaceTrusted(resolved.config, canonical)
-        io.write("\n")
-        io.write(`Project  ${canonical}\n`)
-        io.write(`Trust    ${trusted ? "trusted (confirm edits & commands)" : "read-only (untrusted)"}\n`)
-        io.write(`Model    ${activeConfig.model} at ${formatDestination(activeConfig.baseURL)}\n`)
-        io.write("Type a task, or /setup, /trust, /help, /exit:\n")
+      renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig)
+      if (!activeConfig) {
+        io.write("\nWelcome to Bashwink! Configure a model to get started\n")
+        io.write("  (0 outbound requests sent; ambient env keys are ignored).\n")
+        io.write("Type /model or /connect (or press Enter) to select a provider and model.\n")
+      }
 
-        const line = await io.ask("> ")
+      while (!interruptedAtPrompt) {
+        let trusted = isWorkspaceTrusted(resolved.config, canonical)
+        const promptLabel = activeConfig ? "bashwink> " : "bashwink (no model)> "
+        const line = await io.ask(`\n${promptLabel}`)
         if (line === null || interruptedAtPrompt) break
 
         const trimmed = line.trim()
-        if (trimmed === "") continue
+        if (trimmed === "") {
+          if (!activeConfig) {
+            const res = await runInteractiveSetup(io, resolved.config, env, undefined)
+            if (res.status === "saved") {
+              activeConfig = res.config
+              renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig)
+            }
+          }
+          continue
+        }
         if (trimmed === "/exit" || trimmed === "exit" || trimmed === "quit") break
         if (trimmed === "/help") {
           io.write(renderHelp(resolved.config, resolved.data))
@@ -625,10 +691,44 @@ export async function runStandalone(
           io.write(`Trusted ${canonical}.\n`)
           continue
         }
-        if (trimmed === "/setup") {
+        if (
+          trimmed === "/setup" ||
+          trimmed === "/connect" ||
+          trimmed === "/model" ||
+          trimmed === "connect"
+        ) {
           const res = await runInteractiveSetup(io, resolved.config, env, activeConfig)
-          if (res.status === "saved") activeConfig = res.config
+          if (res.status === "saved") {
+            activeConfig = res.config
+            renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig)
+          }
           continue
+        }
+
+        if (!activeConfig) {
+          io.write("\nNo model configured yet — configure a model first.\n")
+          const res = await runInteractiveSetup(io, resolved.config, env, undefined)
+          if (res.status !== "saved") continue
+          activeConfig = res.config
+          renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig)
+        }
+
+        if (!trusted && !trustPromptShown) {
+          trustPromptShown = true
+          io.write(`\nWorkspace ${canonical} is NOT trusted yet (read-only mode).\n`)
+          io.write(
+            "Reads are allowed. File edits and commands require trusting this directory, and approved actions run with your user permissions (not an OS sandbox).\n",
+          )
+          const trustAns = await io.ask("Trust this workspace for interactive edit/command approvals? [y/N] ")
+          if (trustAns === null) break
+          if (isYes(trustAns)) {
+            const user = env["USER"] ?? env["USERNAME"] ?? "terminal-user"
+            grantWorkspaceTrust(resolved.config, canonical, user)
+            trusted = true
+            io.write(`Trusted ${canonical}.\n`)
+          } else {
+            io.write("Continuing in read-only mode (edits and commands will be denied).\n")
+          }
         }
 
         const cred = resolveCredentialSecret(activeConfig.credential, env)
@@ -636,7 +736,7 @@ export async function runStandalone(
           io.writeError(
             `\nProvider at ${formatDestination(activeConfig.baseURL)} cannot authenticate (${cred.summary}).\n`,
           )
-          const repair = await io.ask("Open setup to repair provider credentials? [y/N] ")
+          const repair = await io.ask("Open /model setup to repair provider credentials? [y/N] ")
           if (isYes(repair)) {
             const res = await runInteractiveSetup(io, resolved.config, env, activeConfig)
             if (res.status === "saved") activeConfig = res.config

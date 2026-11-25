@@ -3,6 +3,7 @@
  */
 
 export * from "./types.ts"
+export * from "./provider-catalog.ts"
 export * from "./config.ts"
 export * from "./provider.ts"
 export * from "./security.ts"

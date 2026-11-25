@@ -117,7 +117,7 @@ function main() {
 
     const nonTtyBare = runInstalled(bin, [], env, workspace);
     assert.equal(nonTtyBare.status, 0);
-    assert.match(nonTtyBare.stdout, /no provider profile is configured/);
+    assert.match(nonTtyBare.stdout, /no provider\/model configured/);
 
     const sandbox = runInstalled(bin, ["--sandbox"], env, workspace);
     assert.equal(sandbox.status, 3, "Expected --sandbox to fail closed with exit 3");

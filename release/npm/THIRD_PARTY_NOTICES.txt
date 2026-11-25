@@ -10,9 +10,12 @@ Small ported logic units (rewritten in pure TypeScript/Node 22+ built-ins):
 
   1. OpenCode v2.3.2 (MIT, commit c0ad18b402eb2827fc1ee71c171b1177b3fc02d1)
      Notice: licenses/opencode.LICENSE
-     Derived logic: `pendingCalls()` and `stepMessages()` helpers in
-     `packages/bw-cli/src/standalone/task-loop.ts` (originally informed by
-     `vendor/engine/packages/ai/src/loop.ts`).
+     Derived logic:
+     - `pendingCalls()` and `stepMessages()` helpers in
+       `packages/bw-cli/src/standalone/task-loop.ts` (`packages/ai/src/loop.ts`)
+     - Static OpenAI-compatible & local provider catalog presets in
+       `packages/bw-cli/src/standalone/provider-catalog.ts`
+       (`packages/ai/src/providers/*.ts`, `packages/core/src/plugin/provider/*.ts`)
 
   2. Pi coding agent (`@mariozechner/pi-coding-agent`, MIT, commit b882d08)
      Notice: MIT License (same permissive terms as LICENSE).

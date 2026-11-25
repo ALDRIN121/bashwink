@@ -490,15 +490,20 @@ async function main() {
     );
 
     // --- 1. Onboarding reproducer in plain non-Git directory ---
-    // Cancel setup once -> zero partial profile, zero outbound requests to ANY host
+    // Launches directly into CLI shell with first message prompting /model -> cancel setup leaves 0 files & 0 requests
     const cancelLog = path.join(root, "egress-cancel.jsonl");
     const cancelRes = await runPtySession(
       [bashwinkBin],
       plainDir,
       { ...env, NODE_OPTIONS: probeImportFlag, BW_EGRESS_LOG: cancelLog, BW_EGRESS_BLOCK_BEFORE_SUBMIT: "1" },
       [
-        { wait: "First-time setup" },
-        { wait: "Choose [1/2] (or 'cancel'):", send: "cancel\n" },
+        { wait: "Model    none configured" },
+        { wait: "Type /model or /connect (or press Enter) to select a provider and model." },
+        { wait: "bashwink (no model)> ", send: "/model\n" },
+        { wait: "OpenAI" },
+        { wait: "Ollama (local)" },
+        { wait: "Select provider [1-10 or id] (or 'cancel'):", send: "cancel\n" },
+        { wait: "bashwink (no model)> ", send: "/exit\n" },
       ],
     );
     assert.equal(cancelRes.exitCode, 0, cancelRes.output);
@@ -511,21 +516,21 @@ async function main() {
       "Cancelled setup must leave zero partial profile",
     );
 
-    // Setup -> save -> reach prompt -> exit WITHOUT submitting task -> MUST make 0 requests to ANY host
+    // Configure via /model multi-provider menu -> save -> resize -> exit WITHOUT submitting task -> 0 requests to ANY host
     const preSubmitLog = path.join(root, "egress-pre-submit.jsonl");
     const preSubmitRes = await runPtySession(
       [bashwinkBin],
       plainDir,
       { ...env, NODE_OPTIONS: probeImportFlag, BW_EGRESS_LOG: preSubmitLog, BW_EGRESS_BLOCK_BEFORE_SUBMIT: "1" },
       [
-        { wait: "Choose [1/2] (or 'cancel'):", send: "2\n" },
+        { wait: "bashwink (no model)> ", send: "\n" },
+        { wait: "Select provider [1-10 or id] (or 'cancel'):", send: "10\n" },
         { wait: "Endpoint URL", send: `${target.url}\n` },
         { wait: "Model ID", send: "local-test-model\n" },
-        { wait: "Choose [1/2/3] (or 'cancel'):", send: "1\n" },
-        { wait: "Save and use this connection? [y/N]", send: "y\n" },
-        { wait: "Trust this workspace for interactive edit/command approvals? [y/N]", send: "n\n" },
-        { resize: [24, 80], wait: "Type a task, or /setup, /trust, /help, /exit:", delay: 0.05 },
-        { wait: "> ", send: "/exit\n" },
+        { wait: "Choose [1/2/3] (or 'cancel'):", send: "3\n" },
+        { wait: "Save and use this model? [y/N]", send: "y\n" },
+        { resize: [24, 80], wait: "bashwink> ", delay: 0.05 },
+        { send: "/exit\n" },
       ],
     );
     assert.equal(preSubmitRes.exitCode, 0, preSubmitRes.output);
@@ -541,11 +546,11 @@ async function main() {
       plainDir,
       { ...env, NODE_OPTIONS: probeImportFlag, BW_EGRESS_LOG: submitLog },
       [
+        { wait: `custom-local / local-test-model (${targetAddrHostPort}` },
+        { wait: "bashwink> ", send: "Say hello\n" },
         { wait: "Trust this workspace for interactive edit/command approvals? [y/N]", send: "n\n" },
-        { wait: `Model    local-test-model at ${targetAddrHostPort}` },
-        { wait: "> ", send: "Say hello\n" },
         { wait: "Hello from target local endpoint." },
-        { wait: "> ", send: "/exit\n" },
+        { wait: "bashwink> ", send: "/exit\n" },
       ],
     );
     assert.equal(onboardRes.exitCode, 0, onboardRes.output);
@@ -567,9 +572,8 @@ async function main() {
       plainDir,
       { ...env, NODE_OPTIONS: probeImportFlag, BW_EGRESS_LOG: persistLog, BW_EGRESS_BLOCK_BEFORE_SUBMIT: "1" },
       [
-        { wait: "Trust this workspace for interactive edit/command approvals? [y/N]", send: "n\n" },
-        { wait: `Model    local-test-model at ${targetAddrHostPort}` },
-        { wait: "> ", send: "/exit\n" },
+        { wait: `custom-local / local-test-model (${targetAddrHostPort}` },
+        { wait: "bashwink> ", send: "/exit\n" },
       ],
     );
     assert.equal(persistRes.exitCode, 0, persistRes.output);
@@ -581,7 +585,7 @@ async function main() {
       [bashwinkBin, "setup"],
       plainDir,
       { ...env, NODE_OPTIONS: probeImportFlag, BW_EGRESS_LOG: setupCancelLog, BW_EGRESS_BLOCK_BEFORE_SUBMIT: "1" },
-      [{ wait: "Choose [1/2] (or 'cancel'):", send: "cancel\n" }],
+      [{ wait: "Select provider [1-10 or id] (or 'cancel'):", send: "cancel\n" }],
     );
     assert.equal(setupCancelRes.exitCode, 0);
     assert.deepEqual(readEgressLog(setupCancelLog), [], "`bashwink setup` cancel must make 0 outbound connections");
@@ -614,13 +618,13 @@ async function main() {
     scenario = "fix";
     turn = 0;
     const fixRes = await runPtySession([bashwinkBin], gitRepo, env, [
+      { wait: "bashwink> ", send: "fix the failing test\n" },
       { wait: "Trust this workspace for interactive edit/command approvals? [y/N]", send: "y\n" },
-      { wait: "> ", send: "fix the failing test\n" },
       { wait: "Apply this change? [y/N]", send: "y\n" },
       { wait: "not an OS sandbox" },
       { wait: "Run this command? [y/N]", send: "y\n" },
       { wait: "Outcome   completed" },
-      { wait: "> ", send: "/exit\n" },
+      { wait: "bashwink> ", send: "/exit\n" },
     ]);
     assert.equal(fixRes.exitCode, 0, fixRes.output);
     assert.match(fixRes.output, /Changed\s+sum\.js/);

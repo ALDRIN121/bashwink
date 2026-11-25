@@ -165,12 +165,39 @@ export function parseStandaloneConfig(raw: string): StandaloneConfig {
     price = { inputUsdPer1M: p["inputUsdPer1M"], outputUsdPer1M: p["outputUsdPer1M"] }
   }
 
+  let providerId: string | undefined
+  if (obj["providerId"] !== undefined) {
+    if (typeof obj["providerId"] !== "string" || !/^[a-z0-9._-]{1,64}$/i.test(obj["providerId"])) {
+      throw new StandaloneConfigError("Config providerId is invalid.")
+    }
+    providerId = obj["providerId"]
+  }
+
+  let headers: Record<string, string> | undefined
+  if (obj["headers"] !== undefined) {
+    if (typeof obj["headers"] !== "object" || obj["headers"] === null || Array.isArray(obj["headers"])) {
+      throw new StandaloneConfigError("Config headers must be an object.")
+    }
+    headers = {}
+    for (const [k, v] of Object.entries(obj["headers"] as Record<string, unknown>)) {
+      if (typeof v !== "string" || /[\r\n\0]/.test(k) || /[\r\n\0]/.test(v)) {
+        throw new StandaloneConfigError(`Config header '${k}' is invalid.`)
+      }
+      if (/^(authorization|content-type|host)$/i.test(k)) {
+        throw new StandaloneConfigError(`Config header '${k}' cannot be overridden.`)
+      }
+      headers[k] = v
+    }
+  }
+
   return {
     version: STANDALONE_CONFIG_VERSION,
+    ...(providerId === undefined ? {} : { providerId }),
     endpointType,
     baseURL,
     model,
     credential,
+    ...(headers === undefined ? {} : { headers }),
     updatedAt: typeof obj["updatedAt"] === "string" ? obj["updatedAt"] : new Date(0).toISOString(),
     ...(price === undefined ? {} : { price }),
   }
@@ -195,10 +222,12 @@ export function saveStandaloneConfig(configDirectory: string, config: Standalone
   mkdirSync(configDirectory, { recursive: true, mode: 0o700 })
   const normalized: StandaloneConfig = {
     version: STANDALONE_CONFIG_VERSION,
+    ...(config.providerId === undefined ? {} : { providerId: config.providerId }),
     endpointType: config.endpointType,
     baseURL: normalizeBaseURL(config.baseURL, config.endpointType),
     model: validateModelID(config.model),
     credential: config.credential,
+    ...(config.headers === undefined ? {} : { headers: config.headers }),
     updatedAt: config.updatedAt,
     ...(config.price === undefined ? {} : { price: config.price }),
   }

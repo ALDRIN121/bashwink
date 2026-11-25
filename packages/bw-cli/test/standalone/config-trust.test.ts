@@ -10,6 +10,10 @@ import {
   saveStandaloneConfig,
   standaloneConfigFile,
 } from "../../src/standalone/config.ts"
+import {
+  PROVIDER_CATALOG,
+  findProviderPreset,
+} from "../../src/standalone/provider-catalog.ts"
 import { sanitizeTerminalText, runInteractiveSetup, type TerminalIO } from "../../src/standalone/terminal.ts"
 import type { StandaloneConfig } from "../../src/standalone/types.ts"
 
@@ -42,31 +46,48 @@ test("normalizeBaseURL enforces HTTPS for hosted endpoints and allows loopback H
   assert.throws(() => normalizeBaseURL("https://user:pass@api.example.com/v1", "hosted"), /credentials/)
 })
 
-test("setup cancel writes no partial profile and preserves existing config during reconfigure", async () => {
+test("setup cancel writes no partial profile, OpenCode-ported catalog preset works, and reconfigure cancel preserves config", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "bw-setup-cancel-"))
   try {
-    // 1. Cancelled first-time setup writes nothing
-    const first = scriptedIO(["2", "http://127.0.0.1:8080/v1", "qwen-1", "1", "n"])
+    assert.ok(PROVIDER_CATALOG.length >= 8)
+    assert.equal(findProviderPreset("openai")?.defaultBaseURL, "https://api.openai.com/v1")
+    assert.equal(findProviderPreset("ollama")?.defaultBaseURL, "http://127.0.0.1:11434/v1")
+    assert.equal(findProviderPreset("10")?.id, "custom-local")
+
+    // 1. Cancelled first-time setup writes nothing (provider 10 = custom-local, cred 3 = none, confirm 'n')
+    const first = scriptedIO(["10", "http://127.0.0.1:8080/v1", "qwen-1", "3", "n"])
     const r1 = await runInteractiveSetup(first.io, dir, {})
     assert.equal(r1.status, "cancelled")
     assert.equal(existsSync(standaloneConfigFile(dir)), false)
 
-    // 2. Saved setup succeeds atomically
-    const second = scriptedIO(["2", "http://127.0.0.1:8080/v1", "qwen-1", "1", "y"])
+    // 2. Saved setup succeeds atomically via custom local preset
+    const second = scriptedIO(["10", "http://127.0.0.1:8080/v1", "qwen-1", "3", "y"])
     const r2 = await runInteractiveSetup(second.io, dir, {})
     assert.equal(r2.status, "saved")
     const loaded = loadStandaloneConfig(dir)
     assert.equal(loaded.status, "ok")
     assert.equal(loaded.config.model, "qwen-1")
+    assert.equal(loaded.config.providerId, "custom-local")
 
     // 3. Cancelled reconfigure via `bashwink setup` preserves existing working profile
-    const third = scriptedIO(["2", "http://127.0.0.1:9999/v1", "other-model", "1", null])
+    const third = scriptedIO(["10", "http://127.0.0.1:9999/v1", "other-model", "3", null])
     const r3 = await runInteractiveSetup(third.io, dir, {}, loaded.config)
     assert.equal(r3.status, "cancelled")
     const after = loadStandaloneConfig(dir)
     assert.equal(after.status, "ok")
     assert.equal(after.config.baseURL, "http://127.0.0.1:8080/v1")
     assert.equal(after.config.model, "qwen-1")
+
+    // 4. OpenCode catalog preset (provider 1 = OpenAI, Enter for default URL, model '1', env cred '1', Enter for OPENAI_API_KEY)
+    const fourth = scriptedIO(["1", "", "1", "1", "", "y"])
+    const r4 = await runInteractiveSetup(fourth.io, dir, {})
+    assert.equal(r4.status, "saved")
+    const presetLoaded = loadStandaloneConfig(dir)
+    assert.equal(presetLoaded.status, "ok")
+    assert.equal(presetLoaded.config.providerId, "openai")
+    assert.equal(presetLoaded.config.baseURL, "https://api.openai.com/v1")
+    assert.equal(presetLoaded.config.model, "gpt-4o-mini")
+    assert.deepEqual(presetLoaded.config.credential, { kind: "env", variable: "OPENAI_API_KEY" })
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

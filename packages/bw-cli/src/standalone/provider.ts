@@ -216,6 +216,7 @@ export async function complete(req: CompleteRequest): Promise<ProviderCompletion
   }
 
   const headers: Record<string, string> = {
+    ...req.config.headers,
     "Content-Type": "application/json",
     "User-Agent": "bashwink-standalone/0.2.0-alpha.1",
   }

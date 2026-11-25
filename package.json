@@ -13,12 +13,12 @@
     ]
   },
   "scripts": {
-    "build:standalone": "node scripts/standalone/build.mjs",
-    "install:local": "node scripts/standalone/build.mjs --install",
-    "test:standalone": "node --experimental-strip-types --test packages/bw-cli/test/standalone/*.test.ts",
-    "test:standalone:install": "node scripts/standalone/test-install.mjs",
-    "test:standalone:e2e": "node scripts/standalone/test-e2e.mjs",
-    "test:standalone:independence": "node scripts/standalone/test-independence.mjs",
+    "build:standalone": "node --disable-warning=ExperimentalWarning scripts/standalone/build.mjs",
+    "install:local": "node --disable-warning=ExperimentalWarning scripts/standalone/build.mjs --install",
+    "test:standalone": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test packages/bw-cli/test/standalone/*.test.ts",
+    "test:standalone:install": "node --disable-warning=ExperimentalWarning scripts/standalone/test-install.mjs",
+    "test:standalone:e2e": "node --disable-warning=ExperimentalWarning scripts/standalone/test-e2e.mjs",
+    "test:standalone:independence": "node --disable-warning=ExperimentalWarning scripts/standalone/test-independence.mjs",
     "test": "bun test packages",
     "test:evidence": "bun test packages/bw-evidence",
     "test:cli": "bun test packages/bw-cli",

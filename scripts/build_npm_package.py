@@ -81,10 +81,42 @@ def stage_package(stage: Path, commit: str, bun: str) -> dict:
     if docs.is_dir():
         shutil.copytree(docs, stage / "share/doc")
     notices = TEMPLATE / "THIRD_PARTY_NOTICES.txt"
-    if notices.exists():
-        (stage / "share/licenses").mkdir(parents=True)
-        shutil.copyfile(notices, stage / "share/licenses/THIRD_PARTY_NOTICES.txt")
+    (stage / "share/licenses").mkdir(parents=True)
+    (stage / "share/licenses/THIRD_PARTY_NOTICES.txt").write_text(notice_text(notices.read_text(encoding="utf-8"), bundled_packages(lib / "bashwink.js")), encoding="utf-8")
     return manifest
+
+
+# The third-party packages that `bun build` may compile into lib/bashwink.js, and the licence text each one needs.
+# A bundled package that is not listed here fails the build: shipping a copy without its notice is the defect this prevents.
+BUNDLED_NOTICES = {
+    "effect": ("MIT", "effect.LICENSE", "https://github.com/Effect-TS/effect (LICENSE file shipped in the effect package)"),
+    "@opencode/schema": ("MIT", "opencode.LICENSE", "https://github.com/anomalyco/opencode (LICENSE at the repository root; the package ships none)"),
+    "@opencode/plugin": ("MIT", "opencode.LICENSE", "https://github.com/anomalyco/opencode (LICENSE at the repository root; the package ships none)"),
+}
+
+
+def bundled_packages(bundle: Path) -> dict[str, str]:
+    """name -> version for every package under node_modules that the bundle contains (from Bun's `// node_modules/.bun/...` markers)."""
+    found: dict[str, str] = {}
+    for line in bundle.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"// node_modules/\.bun/((?:@[^+/]+\+)?[^@/+]+)@(\d+\.\d+\.\d+[^/+]*)", line)
+        if match:
+            found[match.group(1).replace("+", "/")] = match.group(2)
+    return found
+
+
+def notice_text(base: str, bundled: dict[str, str]) -> str:
+    unknown = sorted(name for name in bundled if name not in BUNDLED_NOTICES)
+    if unknown:
+        raise SystemExit(f"the bundle contains third-party packages with no recorded licence notice: {unknown}; add them to BUNDLED_NOTICES with their licence text")
+    parts = [base.rstrip("\n"), "", "=" * 78, "BUNDLED CODE (compiled into lib/bashwink.js)", "=" * 78, ""]
+    for name, version in sorted(bundled.items()):
+        licence, _file, source = BUNDLED_NOTICES[name]
+        parts.append(f"  {name} {version}   {licence}   {source}")
+    for file in sorted({BUNDLED_NOTICES[name][1] for name in bundled}):
+        users = ", ".join(sorted(name for name in bundled if BUNDLED_NOTICES[name][1] == file))
+        parts += ["", "-" * 78, f"Licence text for: {users}", "-" * 78, (TEMPLATE / "licenses" / file).read_text(encoding="utf-8").rstrip("\n")]
+    return "\n".join(parts) + "\n"
 
 
 def audit(tarball: Path) -> dict:
@@ -131,6 +163,7 @@ def main() -> int:
     stage = out / "stage/package"
     out.mkdir(parents=True)
     manifest = stage_package(stage, commit, args.bun)
+    bundled = bundled_packages(stage / "lib/bashwink.js")
     packed = capture([NPM, "pack", "--ignore-scripts", "--pack-destination", out, stage], cwd=out).splitlines()[-1]
     tarball = out / packed
     report = audit(tarball)
@@ -141,7 +174,7 @@ def main() -> int:
         "schema": 1, "flavor": "standard", "package": manifest["name"], "version": manifest["version"],
         "candidate_commit": commit, "artifact": {"name": tarball.name, "sha256": digest, "bytes": tarball.stat().st_size},
         "dependencies": manifest["dependencies"], "engines": manifest["engines"], "os": manifest["os"], "cpu": manifest["cpu"],
-        "contents": report["names"], "audit": "passed", "built_with": {"bun": "1.4.4", "npm": capture([NPM, "--version"]),
+        "contents": report["names"], "audit": "passed", "bundled_third_party": bundled, "built_with": {"bun": "1.4.4", "npm": capture([NPM, "--version"]),
         "node": capture(["node", "--version"])},
     }, indent=2) + "\n")
     print(f"tarball  {tarball}\nsha256   {digest}\nsize     {tarball.stat().st_size} bytes, {report['files']} files\ncommit   {commit}")

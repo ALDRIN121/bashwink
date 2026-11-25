@@ -9,8 +9,8 @@ cd my-project
 bashwink
 ```
 
-**Mode: STANDARD.** Bashwink runs on your computer with your user's access. It asks before shell commands, edits
-outside the agreed scope and network use, and records what ran. It is **not an operating-system sandbox**: a command you
+**Mode: STANDARD.** Bashwink runs on your computer with your user's access. It asks before each shell command and
+file edit, refuses file access outside the project, network tools and code execution, and records what ran. It is **not an operating-system sandbox**: a command you
 approve can do anything you can do. Work in a Git repository, keep a backup, and read each approval.
 
 Requirements: Node.js 18 or newer (for `npm`), and one of macOS (Apple Silicon or Intel), Linux (x64 or arm64), or

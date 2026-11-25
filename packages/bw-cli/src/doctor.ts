@@ -84,10 +84,24 @@ function sha256Hex(text: string): string {
   return hasher.digest("hex")
 }
 
-function which(binary: string): string | undefined {
-  for (const entry of (process.env["PATH"] ?? "").split(path.delimiter).filter(Boolean)) {
-    const candidate = path.join(entry, binary)
-    if (existsSync(candidate)) {
+/**
+ * Find an executable on PATH. On Windows a program is `git.exe` or `npm.cmd`, never a bare `git`, so the extensions in
+ * PATHEXT are tried as well; looking only for the bare name reported an installed Git as missing.
+ */
+export function findOnPath(
+  binary: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
+  const extensions =
+    platform === "win32"
+      ? ["", ...(env["PATHEXT"] ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean)]
+      : [""]
+  const directories = (env["PATH"] ?? env["Path"] ?? "").split(platform === "win32" ? ";" : ":")
+  for (const entry of directories.filter(Boolean)) {
+    for (const extension of extensions) {
+      const candidate = path.join(entry, binary + extension)
+      if (!existsSync(candidate)) continue
       try {
         accessSync(candidate, constants.X_OK)
         return candidate
@@ -98,6 +112,8 @@ function which(binary: string): string | undefined {
   }
   return undefined
 }
+
+const which = (binary: string) => findOnPath(binary)
 
 export interface DoctorOptions {
   readonly cwd?: string

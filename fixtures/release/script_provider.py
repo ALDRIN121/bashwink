@@ -31,6 +31,7 @@ import select
 import socket
 import sys
 import threading
+import socketserver
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -189,6 +190,14 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True
 
 
+class Server(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer.server_bind calls socket.getfqdn(), a reverse-DNS lookup that stalls for many seconds on some hosted macOS
+        # runners, so the port file was never written in time. Nothing here needs the host name.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[0], self.server_address[1]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=0)
@@ -199,7 +208,7 @@ def main() -> int:
     with open(args.script, encoding="utf-8") as handle:
         STATE["script"] = json.load(handle)
     STATE["log"] = args.log
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    server = Server(("127.0.0.1", args.port), Handler)
     server.daemon_threads = True
     if args.port_file:
         with open(args.port_file, "w", encoding="utf-8") as handle:

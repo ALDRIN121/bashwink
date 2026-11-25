@@ -302,3 +302,27 @@ describe("BW-019 — resume", () => {
     }
   })
 })
+
+describe("finding programs on PATH", () => {
+  test("Windows programs are found through PATHEXT, and a bare name alone is not enough there", async () => {
+    const { findOnPath } = await import("../src/doctor.js")
+    const { mkdtempSync, writeFileSync, chmodSync, rmSync } = await import("node:fs")
+    const { tmpdir } = await import("node:os")
+    const nodePath = await import("node:path")
+    const directory = mkdtempSync(nodePath.join(tmpdir(), "bw-which-"))
+    try {
+      const file = nodePath.join(directory, "faketool.exe")
+      writeFileSync(file, "x")
+      chmodSync(file, 0o755)
+      const env = { PATH: directory, PATHEXT: ".COM;.EXE;.BAT" }
+      // Compared without case: Windows (and macOS) file systems are case-insensitive, so the PATHEXT spelling may differ.
+      expect(findOnPath("faketool", env, "win32")?.toLowerCase()).toBe(file.toLowerCase())
+      // POSIX does not append extensions: `faketool` is not `faketool.exe` there.
+      expect(findOnPath("faketool", { PATH: directory }, "linux")).toBeUndefined()
+      expect(findOnPath("faketool.exe", { PATH: directory }, "linux")).toBe(file)
+      expect(findOnPath("missing", env, "win32")).toBeUndefined()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+})

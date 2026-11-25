@@ -103,6 +103,15 @@ VERSION AND PATHS
   BASHWINK_BACKEND=native   require native coding isolation (currently refuses admission)
   BASHWINK_TIMEOUT_MS      optional positive runtime deadline in milliseconds
 
+LIMITS (per launch; a stop is explained, recorded in the run record and exits 4)
+  BASHWINK_MAX_REQUESTS    model requests before work is stopped (default 300; "unlimited" removes the limit)
+  BASHWINK_MAX_RETRIES     retries of one failing request before stopping (default 5, at most 10)
+  BASHWINK_MAX_TOKENS      input + output + reasoning tokens (default: none)
+  BASHWINK_MAX_COST_USD    dollars (default: none). Needs a price: bashwink auth add ... --price <model>=<in>:<out>
+                           (US dollars per million tokens). Without a price Bashwink refuses to run under a cost limit.
+  These stop new requests; a request already in flight is not recalled, so they are NOT a hard spending ceiling.
+  A summary of requests, tokens and cost is printed when the session ends; unknown values are shown as unknown.
+
 PROVIDERS AND MODELS
   Inference, streaming and tool calls are the pinned runtime's job; Bashwink configures it.
   A provider is declared once in the config the runtime reads, and the key is never stored:
@@ -139,6 +148,7 @@ EXIT CODES
   1   a check failed (doctor) or a command was refused
   2   usage error
   3   policy readiness failed or evidence is missing
+  4   a usage limit stopped the work (see the summary)
   127 the pinned OpenCode runtime could not be found
 `
 
@@ -223,9 +233,10 @@ function standardHelp(): string {
   const mode = [
     "MODE",
     "  STANDARD: native and permission-controlled. Bashwink runs on this computer with your user's access.",
-    "  It asks before shell commands, edits outside the agreed scope and network use. It is NOT an",
-    "  operating-system sandbox: an approved command can do anything you can. The optional isolated",
-    "  sandbox (`--sandbox`) is not part of this package; asking for it fails closed and starts nothing.",
+    "  It asks before each shell command and file edit, and refuses file access outside the project, network",
+    "  tools and code execution. It is NOT an operating-system sandbox: an approved command can do anything",
+    "  you can. The optional isolated sandbox (`--sandbox`) is not part of this package; asking for it",
+    "  fails closed and starts nothing.",
     "",
   ]
   const text = kept.join("\n")

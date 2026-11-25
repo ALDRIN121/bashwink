@@ -119,6 +119,12 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     category: "Model",
   },
   {
+    name: "test",
+    aliases: ["ping", "verify"],
+    description: "Probe /models and run a sample test message on saved model",
+    category: "Model",
+  },
+  {
     name: "trust",
     aliases: [],
     description: "Trust current workspace for interactive edit/command approvals",

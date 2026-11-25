@@ -11,6 +11,7 @@ import { redact } from "../../../bw-evidence/src/recorder.ts"
 import { resolveCredentialSecret } from "./config.ts"
 import type {
   ChatMessage,
+  CredentialConfig,
   FinishReason,
   ModelUsage,
   ProviderCompletion,
@@ -183,6 +184,7 @@ export interface CompleteRequest {
   readonly tools: readonly ToolDefinition[]
   readonly signal?: AbortSignal
   readonly env?: NodeJS.ProcessEnv
+  readonly apiKeyOverride?: string
   readonly maxOutputTokens?: number
   readonly timeoutMs?: number
   readonly maxResponseBytes?: number
@@ -458,10 +460,46 @@ function parseOpenAIPayload(payload: Record<string, unknown>, baseURL: string): 
   }
 }
 
+function buildAuthHeaders(
+  protocol: WireProtocol,
+  customHeaders: Readonly<Record<string, string>> | undefined,
+  secret: string | undefined,
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    ...customHeaders,
+    "Content-Type": "application/json",
+    "User-Agent": "bashwink-standalone/0.2.0-alpha.1",
+  }
+  if (protocol === "anthropic-messages") {
+    if (!Object.keys(headers).some((k) => k.toLowerCase() === "anthropic-version")) {
+      headers["anthropic-version"] = "2023-06-01"
+    }
+    if (secret) {
+      headers["x-api-key"] = secret
+    }
+  } else if (secret) {
+    headers["Authorization"] = `Bearer ${secret}`
+  }
+  return headers
+}
+
+function resolveRequestSecret(
+  credential: CredentialConfig,
+  env: NodeJS.ProcessEnv,
+  override?: string,
+): { readonly ok: boolean; readonly secret?: string; readonly summary: string } {
+  if (override !== undefined) {
+    const trimmed = override.trim()
+    if (trimmed === "") return { ok: false, summary: "provided API key is empty" }
+    return { ok: true, secret: trimmed, summary: `in-memory key (${trimmed.length} chars)` }
+  }
+  return resolveCredentialSecret(credential, env)
+}
+
 export async function complete(req: CompleteRequest): Promise<ProviderCompletion> {
   const protocol: WireProtocol = req.config.wireProtocol ?? "openai-chat"
   const endpoint = buildEndpointURL(req.config.baseURL, protocol)
-  const cred = resolveCredentialSecret(req.config.credential, req.env ?? process.env)
+  const cred = resolveRequestSecret(req.config.credential, req.env ?? process.env, req.apiKeyOverride)
   if (!cred.ok) {
     throw new ProviderRequestError(
       "credential_missing",
@@ -487,21 +525,7 @@ export async function complete(req: CompleteRequest): Promise<ProviderCompletion
     req.signal.addEventListener("abort", onParentAbort, { once: true })
   }
 
-  const headers: Record<string, string> = {
-    ...req.config.headers,
-    "Content-Type": "application/json",
-    "User-Agent": "bashwink-standalone/0.2.0-alpha.1",
-  }
-  if (protocol === "anthropic-messages") {
-    if (!Object.keys(headers).some((k) => k.toLowerCase() === "anthropic-version")) {
-      headers["anthropic-version"] = "2023-06-01"
-    }
-    if (cred.secret) {
-      headers["x-api-key"] = cred.secret
-    }
-  } else if (cred.secret) {
-    headers["Authorization"] = `Bearer ${cred.secret}`
-  }
+  const headers = buildAuthHeaders(protocol, req.config.headers, cred.secret)
 
   const body =
     protocol === "anthropic-messages"
@@ -629,5 +653,234 @@ export async function complete(req: CompleteRequest): Promise<ProviderCompletion
   } finally {
     clearTimeout(timer)
     req.signal?.removeEventListener("abort", onParentAbort)
+  }
+}
+
+export interface ProbeModelsRequest {
+  readonly baseURL: string
+  readonly credential: CredentialConfig
+  readonly wireProtocol?: WireProtocol
+  readonly headers?: Readonly<Record<string, string>>
+  readonly env?: NodeJS.ProcessEnv
+  readonly apiKeyOverride?: string
+  readonly timeoutMs?: number
+  readonly maxResponseBytes?: number
+  readonly fetchImpl?: typeof fetch
+}
+
+export interface ProbeModelsResult {
+  readonly ok: boolean
+  readonly models: readonly string[]
+  readonly probedURL: string
+  readonly resolvedBaseURL?: string
+  readonly usedFallback?: boolean
+  readonly error?: string
+}
+
+function buildModelsCandidates(
+  baseURL: string,
+  protocol: WireProtocol,
+): ReadonlyArray<{ readonly base: string; readonly url: string; readonly isFallback: boolean }> {
+  const clean = baseURL.replace(/\/+$/, "")
+  const out: Array<{ base: string; url: string; isFallback: boolean }> = []
+  const push = (base: string, isFallback: boolean) => {
+    const b = base.replace(/\/+$/, "")
+    if (!b) return
+    const url =
+      protocol === "anthropic-messages"
+        ? b.endsWith("/v1")
+          ? `${b}/models`
+          : `${b}/v1/models`
+        : `${b}/models`
+    if (!out.some((x) => x.url === url)) out.push({ base: b, url, isFallback })
+  }
+
+  push(clean, false)
+  if (clean.endsWith("/v1")) {
+    push(clean.slice(0, -3), true)
+  } else {
+    push(`${clean}/v1`, true)
+  }
+  return out
+}
+
+function extractModelIdsFromPayload(payload: unknown): string[] {
+  if (typeof payload !== "object" || payload === null) return []
+  const obj = payload as Record<string, unknown>
+  const rawList = Array.isArray(obj["data"])
+    ? (obj["data"] as unknown[])
+    : Array.isArray(obj["models"])
+      ? (obj["models"] as unknown[])
+      : []
+  const ids: string[] = []
+  const seen = new Set<string>()
+  for (const item of rawList) {
+    let id = ""
+    if (typeof item === "string") {
+      id = item.trim()
+    } else if (typeof item === "object" && item !== null) {
+      const rec = item as Record<string, unknown>
+      const cand = rec["id"] ?? rec["model"] ?? rec["name"]
+      if (typeof cand === "string") id = cand.trim()
+    }
+    if (id !== "" && !seen.has(id)) {
+      seen.add(id)
+      ids.push(id)
+    }
+  }
+  return ids
+}
+
+/**
+ * Hermes-style `GET /models` probe with same-origin `base±/v1` fallback and redirect refusal.
+ */
+export async function probeModels(req: ProbeModelsRequest): Promise<ProbeModelsResult> {
+  const protocol: WireProtocol = req.wireProtocol ?? "openai-chat"
+  const cred = resolveRequestSecret(req.credential, req.env ?? process.env, req.apiKeyOverride)
+  if (!cred.ok) {
+    return {
+      ok: false,
+      models: [],
+      probedURL: `${req.baseURL.replace(/\/+$/, "")}/models`,
+      error: `Cannot authenticate (${cred.summary}).`,
+    }
+  }
+
+  const candidates = buildModelsCandidates(req.baseURL, protocol)
+  const headers = buildAuthHeaders(protocol, req.headers, cred.secret)
+  delete headers["Content-Type"]
+  const fetchFn = req.fetchImpl ?? fetch
+  const timeoutMs = req.timeoutMs ?? 6_000
+  const maxResponseBytes = req.maxResponseBytes ?? 2 * 1024 * 1024
+  let lastError: string | undefined
+
+  for (const candidate of candidates) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const response = await fetchFn(candidate.url, {
+        method: "GET",
+        headers,
+        redirect: "manual",
+        signal: controller.signal,
+      })
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location") ?? "(unknown)"
+        lastError = `Refused HTTP ${response.status} redirect to ${location}.`
+        continue
+      }
+      const rawText = await readBoundedText(response, maxResponseBytes, candidate.url)
+      if (!response.ok) {
+        const snippet = scrubSecret(rawText.slice(0, 200).replace(/\s+/g, " ").trim(), cred.secret)
+        lastError = `HTTP ${response.status}${snippet ? `: ${snippet}` : ""}`
+        if (response.status === 401 || response.status === 403) {
+          return { ok: false, models: [], probedURL: candidate.url, error: lastError }
+        }
+        continue
+      }
+      const json = JSON.parse(rawText) as unknown
+      const models = extractModelIdsFromPayload(json)
+      return {
+        ok: true,
+        models,
+        probedURL: candidate.url,
+        resolvedBaseURL: candidate.base,
+        usedFallback: candidate.isFallback,
+      }
+    } catch (error) {
+      lastError = scrubSecret(error instanceof Error ? error.message : String(error), cred.secret)
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  return {
+    ok: false,
+    models: [],
+    probedURL: candidates[0]?.url ?? `${req.baseURL.replace(/\/+$/, "")}/models`,
+    ...(lastError ? { error: lastError } : {}),
+  }
+}
+
+export interface TestConnectionRequest {
+  readonly config: StandaloneConfig
+  readonly env?: NodeJS.ProcessEnv
+  readonly apiKeyOverride?: string
+  readonly timeoutMs?: number
+  readonly fetchImpl?: typeof fetch
+}
+
+export interface TestConnectionResult {
+  readonly ok: boolean
+  readonly latencyMs: number
+  readonly replySnippet?: string
+  readonly finishReason?: FinishReason
+  readonly usage?: ModelUsage
+  readonly discoveredModelsCount?: number
+  readonly modelListedInCatalog?: boolean
+  readonly probedURL?: string
+  readonly errorKind?: ProviderErrorKind
+  readonly error?: string
+}
+
+/**
+ * Verify provider authentication, `/models` visibility (best-effort), and a minimal sample
+ * completion (`Reply with OK.`) modeled on Hermes setup & connectivity verification.
+ */
+export async function testProviderConnection(req: TestConnectionRequest): Promise<TestConnectionResult> {
+  const started = Date.now()
+  const probe = await probeModels({
+    baseURL: req.config.baseURL,
+    credential: req.config.credential,
+    ...(req.config.wireProtocol ? { wireProtocol: req.config.wireProtocol } : {}),
+    ...(req.config.headers ? { headers: req.config.headers } : {}),
+    ...(req.env ? { env: req.env } : {}),
+    ...(req.apiKeyOverride !== undefined ? { apiKeyOverride: req.apiKeyOverride } : {}),
+    timeoutMs: Math.min(6_000, req.timeoutMs ?? 15_000),
+    ...(req.fetchImpl ? { fetchImpl: req.fetchImpl } : {}),
+  })
+
+  try {
+    const completion = await complete({
+      config: req.config,
+      messages: [{ role: "user", content: "Reply with OK." }],
+      tools: [],
+      ...(req.env ? { env: req.env } : {}),
+      ...(req.apiKeyOverride !== undefined ? { apiKeyOverride: req.apiKeyOverride } : {}),
+      maxOutputTokens: 16,
+      timeoutMs: req.timeoutMs ?? 15_000,
+      ...(req.fetchImpl ? { fetchImpl: req.fetchImpl } : {}),
+    })
+    const snippet = completion.text.trim().replace(/\s+/g, " ").slice(0, 80)
+    return {
+      ok: true,
+      latencyMs: Date.now() - started,
+      replySnippet: snippet || "(empty response)",
+      finishReason: completion.finishReason,
+      ...(completion.usage ? { usage: completion.usage } : {}),
+      ...(probe.ok
+        ? {
+            discoveredModelsCount: probe.models.length,
+            modelListedInCatalog: probe.models.includes(req.config.model),
+            probedURL: probe.probedURL,
+          }
+        : {}),
+    }
+  } catch (error) {
+    const latencyMs = Date.now() - started
+    const message = error instanceof Error ? error.message : String(error)
+    return {
+      ok: false,
+      latencyMs,
+      ...(probe.ok
+        ? {
+            discoveredModelsCount: probe.models.length,
+            modelListedInCatalog: probe.models.includes(req.config.model),
+            probedURL: probe.probedURL,
+          }
+        : {}),
+      ...(error instanceof ProviderRequestError ? { errorKind: error.kind } : {}),
+      error: message,
+    }
   }
 }

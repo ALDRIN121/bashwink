@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
-import { complete, ProviderRequestError } from "../../src/standalone/provider.ts"
+import { complete, probeModels, ProviderRequestError, testProviderConnection } from "../../src/standalone/provider.ts"
 import { BUILTIN_TOOL_DEFINITIONS } from "../../src/standalone/tools.ts"
 import type { StandaloneConfig } from "../../src/standalone/types.ts"
 
@@ -331,6 +331,61 @@ test("provider supports anthropic-messages framing, tool calls, coalesced tool r
     assert.equal(body.messages.length, 3)
     assert.equal(body.messages[2]!.role, "user")
     assert.equal((body.messages[2]!.content as unknown[]).length, 2)
+  } finally {
+    await srv.close()
+  }
+})
+
+test("probeModels supports base+/v1 fallback and testProviderConnection verifies end-to-end sample request", async () => {
+  const srv = await startFakeServer((req, _body, res) => {
+    if (req.url === "/models") {
+      res.writeHead(404)
+      res.end("not here")
+      return
+    }
+    if (req.url === "/v1/models") {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({ data: [{ id: "test-coder-1" }, { id: "alt-coder" }] }))
+      return
+    }
+    if (req.url === "/v1/chat/completions") {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 },
+        }),
+      )
+      return
+    }
+    res.writeHead(404)
+    res.end("not found")
+  })
+  try {
+    const rootURL = srv.baseURL.replace(/\/v1$/, "")
+    const probe = await probeModels({
+      baseURL: rootURL,
+      credential: { kind: "none" },
+    })
+    assert.equal(probe.ok, true)
+    assert.equal(probe.usedFallback, true)
+    assert.equal(probe.resolvedBaseURL, `${rootURL}/v1`)
+    assert.deepEqual(probe.models, ["test-coder-1", "alt-coder"])
+
+    const okTest = await testProviderConnection({
+      config: makeConfig(srv.baseURL, { kind: "none" }),
+    })
+    assert.equal(okTest.ok, true)
+    assert.equal(okTest.replySnippet, "OK")
+    assert.equal(okTest.discoveredModelsCount, 2)
+    assert.equal(okTest.modelListedInCatalog, true)
+
+    const missingCredTest = await testProviderConnection({
+      config: makeConfig(srv.baseURL, { kind: "env", variable: "MISSING_CONN_TEST_KEY" }),
+      env: {},
+    })
+    assert.equal(missingCredTest.ok, false)
+    assert.equal(missingCredTest.errorKind, "credential_missing")
   } finally {
     await srv.close()
   }

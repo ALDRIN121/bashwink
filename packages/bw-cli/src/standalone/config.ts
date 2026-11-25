@@ -7,7 +7,7 @@
  */
 
 import { createHash, randomBytes } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { paths, type Paths } from "../paths.ts"
 import type { CredentialConfig, StandaloneConfig } from "./types.ts"
@@ -249,6 +249,32 @@ export function saveStandaloneConfig(configDirectory: string, config: Standalone
   writeFileSync(temp, `${JSON.stringify(normalized, null, 2)}\n`, { mode: 0o600, encoding: "utf8" })
   renameSync(temp, file)
   return file
+}
+
+/**
+ * Save a raw API key to an owner-only key file (`keys/<provider>.key`, mode 0600)
+ * so secrets are never written inside `standalone.json`.
+ */
+export function saveProviderKeyFile(
+  configDirectory: string,
+  providerId: string,
+  rawSecret: string,
+): string {
+  const secret = rawSecret.trim()
+  if (secret === "" || /[\r\n\0]/.test(secret)) {
+    throw new StandaloneConfigError("API key must be a non-empty single-line secret.")
+  }
+  const slug = providerId.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "_") || "provider"
+  const keysDir = path.join(configDirectory, "keys")
+  mkdirSync(keysDir, { recursive: true, mode: 0o700 })
+  const target = path.resolve(path.join(keysDir, `${slug}.key`))
+  const temp = path.join(keysDir, `.${slug}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`)
+  writeFileSync(temp, `${secret}\n`, { mode: 0o600, encoding: "utf8" })
+  renameSync(temp, target)
+  if (process.platform !== "win32") {
+    chmodSync(target, 0o600)
+  }
+  return target
 }
 
 export interface ResolvedCredential {

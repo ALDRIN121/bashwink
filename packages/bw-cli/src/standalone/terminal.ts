@@ -16,12 +16,18 @@ import {
   normalizeBaseURL,
   resolveCredentialSecret,
   resolveStandalonePaths,
+  saveProviderKeyFile,
   saveStandaloneConfig,
   standaloneConfigFile,
   validateEnvVarName,
   validateKeyFilePath,
   validateModelID,
 } from "./config.ts"
+import {
+  probeModels,
+  testProviderConnection,
+  type TestConnectionResult,
+} from "./provider.ts"
 import {
   canonicalWorkspace,
   createBoundaryContext,
@@ -143,6 +149,7 @@ export interface TerminalIO {
   write(text: string): void
   writeError(text: string): void
   ask(prompt: string, signal?: AbortSignal): Promise<string | null>
+  askSecret?(prompt: string, signal?: AbortSignal): Promise<string | null>
   close(): void
 }
 
@@ -241,15 +248,24 @@ class RawTerminalIO implements TerminalIO {
   }
 
   async ask(prompt: string, signal?: AbortSignal): Promise<string | null> {
+    return await this.askLine(prompt, false, signal)
+  }
+
+  async askSecret(prompt: string, signal?: AbortSignal): Promise<string | null> {
+    return await this.askLine(prompt, true, signal)
+  }
+
+  private async askLine(prompt: string, maskSecret: boolean, signal?: AbortSignal): Promise<string | null> {
     let buffer = ""
     let cursor = 0
     let rendered = false
 
     const redraw = () => {
+      const display = maskSecret ? "•".repeat(buffer.length) : buffer
       let frame = SYNC_START
       if (rendered) frame += "\r\x1b[2K"
-      frame += prompt + buffer
-      const back = buffer.length - cursor
+      frame += prompt + display
+      const back = (maskSecret ? display.length : buffer.length) - cursor
       if (back > 0) frame += `\x1b[${back}D`
       frame += CURSOR_SHOW + SYNC_END
       this.raw.write(frame)
@@ -368,8 +384,9 @@ export function renderHelp(configDir: string, dataDir: string): string {
     "  bashwink                 Open Bashwink interactive TUI (prompts to configure model if unset)",
     "  bashwink --continue      Resume the most recent session in this workspace",
     "  bashwink --resume [id]   Open session browser or resume a specific session ID",
-    "  bashwink setup           Configure or update provider, endpoint URL, model, and credentials",
-    "  bashwink connect         Alias for setup (interactive OpenCode-compatible provider picker)",
+    "  bashwink setup           Configure or update provider, API key, model, and test connection",
+    "  bashwink connect         Alias for setup (Hermes/OpenCode provider wizard)",
+    "  bashwink test            Run /models probe and sample test against the saved model",
     "  bashwink doctor          Check Node, saved profile, credential reference, trust, and evidence",
     "  bashwink trust [dir] --by <name>",
     "                           Grant interactive write/command trust to a workspace",
@@ -383,8 +400,9 @@ export function renderHelp(configDir: string, dataDir: string): string {
     "  /transcript              Open scrollable full transcript & turn navigator (Ctrl+T)",
     "  /new, /clear, /fork      Create, reset, or branch the active session",
     "  /rename [title]          Rename the active session",
-    "  /diff, /compact, /status Inspect edits, compact context, or view session & budget status",
-    "  /model, /connect         Choose provider preset (OpenAI, OpenRouter, DeepSeek, Groq, xAI, Ollama, LM Studio, vLLM, or custom)",
+    "  /model, /connect         Choose provider, enter API key / env var, select or fetch models, and test",
+    "  /test, /status           Test saved model connection or view session & budget status",
+    "  /diff, /compact          Inspect edits or compact conversation context",
     "  /trust, /evidence        Trust workspace or verify hash-chained evidence.jsonl",
     "  /help, /exit             Show help or quit",
     "",
@@ -499,11 +517,35 @@ function renderCliHeader(
   io.write(`${style.muted(truncatePlain(cmdHint, layout.cols))}\n`)
 }
 
+function printConnectionTestResult(io: TerminalIO, res: TestConnectionResult, model: string): void {
+  const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+  if (res.ok) {
+    io.write(style.green(`  ✓ Connection verified in ${res.latencyMs} ms`) + "\n")
+    io.write(`    Sample reply: ${sanitizeTerminalText(res.replySnippet ?? "OK")}\n`)
+    if (res.discoveredModelsCount !== undefined) {
+      const listed = res.modelListedInCatalog ? "model listed" : `model '${model}' not returned by /models`
+      io.write(`    Catalog:      ${res.discoveredModelsCount} model(s) visible (${listed})\n`)
+    }
+    if (res.usage?.totalTokens !== undefined) {
+      io.write(`    Usage:        ${res.usage.totalTokens} tokens\n`)
+    }
+    return
+  }
+  io.writeError(style.red(`  ✗ Sample test failed (${res.latencyMs} ms): ${res.error ?? "unknown error"}`) + "\n")
+  if (res.discoveredModelsCount !== undefined) {
+    const listed = res.modelListedInCatalog
+      ? `'${model}' was listed in /models`
+      : `'${model}' was not in ${res.discoveredModelsCount} discovered model(s) — check model ID`
+    io.writeError(`    Catalog hint: ${listed}\n`)
+  }
+}
+
 export async function runInteractiveSetup(
   io: TerminalIO,
   configDirectory: string,
   env: NodeJS.ProcessEnv,
   existing?: StandaloneConfig,
+  opts: { readonly fetchImpl?: typeof fetch } = {},
 ): Promise<{ readonly status: "saved"; readonly config: StandaloneConfig } | { readonly status: "cancelled" }> {
   io.write(`\nConfigure model  (0 network requests made during setup)\n`)
   if (existing) {
@@ -610,52 +652,13 @@ export async function runInteractiveSetup(
     }
   }
 
-  let model: string | undefined
-  while (model === undefined) {
-    let rawModel: string | null
-    if (preset.defaultModels.length > 0 && io instanceof RawTerminalIO) {
-      io.write(`\nSuggested ${preset.name} models:\n`)
-      const modelOpts: HybridChoiceOption[] = preset.defaultModels.map((m, idx) => ({
-        value: m,
-        display: `${idx + 1}) ${m}`,
-      }))
-      rawModel = await io.askChoice(
-        `Model ID or number [Enter for ${preset.defaultModels[0]}]: `,
-        modelOpts,
-      )
-    } else {
-      if (preset.defaultModels.length > 0) {
-        io.write(`\nSuggested ${preset.name} models:\n`)
-        preset.defaultModels.forEach((m, idx) => {
-          io.write(`  ${idx + 1}) ${m}\n`)
-        })
-      }
-      const modelPrompt =
-        preset.defaultModels.length > 0
-          ? `Model ID or number [Enter for ${preset.defaultModels[0]}]: `
-          : "Model ID (for example gpt-4o-mini or qwen-coder): "
-      rawModel = await io.ask(modelPrompt)
-    }
-    if (rawModel === null) return { status: "cancelled" }
-    const trimmed = rawModel.trim()
-    if (trimmed.toLowerCase() === "cancel") return { status: "cancelled" }
-    let candidate = trimmed
-    if (candidate === "" && preset.defaultModels.length > 0) {
-      candidate = preset.defaultModels[0]!
-    } else if (/^\d+$/.test(candidate) && preset.defaultModels.length > 0) {
-      const idx = Number(candidate) - 1
-      if (idx >= 0 && idx < preset.defaultModels.length) {
-        candidate = preset.defaultModels[idx]!
-      }
-    }
-    try {
-      model = validateModelID(candidate)
-    } catch (err) {
-      io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
-    }
-  }
-
+  // Hermes-style order: Provider -> Endpoint URL -> API Key / Auth -> Model (curated or /models fetch) -> Sample Test & Save
   let credential: CredentialConfig | undefined
+  let pendingSecret: string | undefined
+  const canKeepExisting =
+    existing !== undefined && (!existing.providerId || existing.providerId === preset.id)
+  const existingCredCheck = canKeepExisting ? resolveCredentialSecret(existing.credential, env) : undefined
+
   while (credential === undefined) {
     let mode: string | null
     const envHint = preset.defaultEnvVar
@@ -664,24 +667,35 @@ export async function runInteractiveSetup(
         : ` (e.g. ${preset.defaultEnvVar})`
       : ""
     const envLabel = `1) Environment variable name${envHint}`
+    const pasteLabel = `4) Enter / paste API key (saved 0600 locally)`
+    if (canKeepExisting && existingCredCheck) {
+      io.write(`\nCurrent credentials: ${existingCredCheck.summary}\n`)
+    }
     if (io instanceof RawTerminalIO) {
       io.write("\nAuthentication:\n")
-      mode = await io.askChoice("Choose [1/2/3] (or 'cancel'): ", [
+      const authOpts: HybridChoiceOption[] = [
+        ...(canKeepExisting ? [{ value: "k", display: "k) Keep existing credentials" }] : []),
         { value: "1", display: envLabel },
         { value: "2", display: "2) Key file path" },
         { value: "3", display: "3) None (no key needed)" },
-      ])
+        { value: "4", display: pasteLabel },
+      ]
+      mode = await io.askChoice("Choose [1/2/3/4] (or 'cancel'): ", authOpts)
     } else {
       io.write("\nAuthentication:\n")
+      if (canKeepExisting) io.write("  k) Keep existing credentials\n")
       io.write(`  ${envLabel}\n`)
       io.write("  2) Key file path\n")
       io.write("  3) None (no key needed)\n")
-      mode = await io.ask("Choose [1/2/3] (or 'cancel'): ")
+      io.write(`  ${pasteLabel}\n`)
+      mode = await io.ask("Choose [1/2/3/4] (or 'cancel'): ")
     }
     if (mode === null) return { status: "cancelled" }
     const m = mode.trim().toLowerCase()
     if (m === "cancel") return { status: "cancelled" }
-    if (m === "1" || m === "env") {
+    if ((m === "k" || m === "keep" || m === "") && canKeepExisting && existing) {
+      credential = existing.credential
+    } else if (m === "1" || m === "env") {
       const envPrompt = preset.defaultEnvVar
         ? `Environment variable name [Enter for ${preset.defaultEnvVar}]: `
         : "Environment variable name (e.g. MY_API_KEY): "
@@ -703,31 +717,110 @@ export async function runInteractiveSetup(
       }
     } else if (m === "3" || m === "none") {
       credential = { kind: "none" }
+    } else if (m === "4" || m === "key" || m === "paste") {
+      const promptFn = io.askSecret ? io.askSecret.bind(io) : io.ask.bind(io)
+      const entered = await promptFn(`Paste ${preset.name} API key (masked; Enter to go back): `)
+      if (entered === null) return { status: "cancelled" }
+      const secretTrimmed = entered.trim()
+      if (secretTrimmed === "" || /[\r\n\0]/.test(secretTrimmed)) {
+        io.writeError("  API key cannot be empty or multi-line.\n")
+        continue
+      }
+      pendingSecret = secretTrimmed
+      const slug = preset.id.toLowerCase().replace(/[^a-z0-9._-]+/g, "_")
+      credential = { kind: "file", path: path.resolve(path.join(configDirectory, "keys", `${slug}.key`)) }
     } else {
-      io.write("  Please enter 1, 2, or 3.\n")
+      io.write("  Please enter 1, 2, 3, or 4.\n")
     }
   }
 
-  const credCheck = resolveCredentialSecret(credential, env)
-  io.write("\nReview connection (zero requests sent during setup):\n")
-  io.write(`  Provider    ${preset.name} (${preset.id})\n`)
-  io.write(`  Type        ${endpointType}\n`)
-  if (preset.wireProtocol && preset.wireProtocol !== "openai-chat") {
-    io.write(`  Protocol    ${preset.wireProtocol}\n`)
-  }
-  io.write(`  Endpoint    ${baseURL}\n`)
-  io.write(`  Model       ${model}\n`)
-  io.write(`  Credentials ${credCheck.summary}\n`)
-  if (credCheck.warning) {
-    io.write(`  Warning     ${credCheck.warning}\n`)
-  }
-  const confirm = await askYesNo(io, "Save and use this model? [y/N] ")
-  if (!isYes(confirm)) {
-    io.write("Setup cancelled; profile unchanged.\n")
-    return { status: "cancelled" }
+  let availableModels: string[] = [...preset.defaultModels]
+  let model: string | undefined
+  while (model === undefined) {
+    let rawModel: string | null
+    if (io instanceof RawTerminalIO && (availableModels.length > 0 || baseURL)) {
+      io.write(`\n${preset.name} models (type id, number, or 'f' to fetch /models):\n`)
+      const modelOpts: HybridChoiceOption[] = [
+        ...availableModels.map((m, idx) => ({ value: m, display: `${idx + 1}) ${m}` })),
+        { value: "f", display: `f) Fetch live models from ${baseURL}/models` },
+      ]
+      rawModel = await io.askChoice(
+        availableModels.length > 0
+          ? `Model ID, number, or 'f' [Enter for ${availableModels[0]}]: `
+          : "Model ID or 'f' to fetch /models: ",
+        modelOpts,
+      )
+    } else {
+      if (availableModels.length > 0) {
+        io.write(`\nSuggested ${preset.name} models:\n`)
+        availableModels.forEach((m, idx) => {
+          io.write(`  ${idx + 1}) ${m}\n`)
+        })
+      }
+      io.write(`  f) Fetch live models from ${baseURL}/models\n`)
+      const modelPrompt =
+        availableModels.length > 0
+          ? `Model ID, number, or 'f' [Enter for ${availableModels[0]}]: `
+          : "Model ID (for example gpt-4o-mini or qwen-coder, or 'f' to fetch): "
+      rawModel = await io.ask(modelPrompt)
+    }
+    if (rawModel === null) return { status: "cancelled" }
+    const trimmed = rawModel.trim()
+    if (trimmed.toLowerCase() === "cancel") return { status: "cancelled" }
+    if (trimmed.toLowerCase() === "f" || trimmed.toLowerCase() === "fetch") {
+      io.write(`  Probing ${baseURL} /models...\n`)
+      const probe = await probeModels({
+        baseURL,
+        credential,
+        ...(preset.wireProtocol ? { wireProtocol: preset.wireProtocol } : {}),
+        ...(preset.defaultHeaders ? { headers: preset.defaultHeaders } : {}),
+        env,
+        ...(pendingSecret !== undefined ? { apiKeyOverride: pendingSecret } : {}),
+        ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+      })
+      if (probe.ok && probe.models.length > 0) {
+        if (probe.usedFallback && probe.resolvedBaseURL) {
+          io.write(`  Note: /models responded at ${probe.resolvedBaseURL}; updating endpoint URL.\n`)
+          baseURL = normalizeBaseURL(probe.resolvedBaseURL, endpointType)
+        }
+        const merged = [...probe.models]
+        for (const curated of preset.defaultModels) {
+          if (!merged.includes(curated)) merged.push(curated)
+        }
+        availableModels = merged
+        io.write(`  ✓ Found ${probe.models.length} live model(s) from ${probe.probedURL}.\n`)
+      } else {
+        io.writeError(`  ! Could not fetch /models (${probe.error ?? "no models listed"}). Enter a model ID directly.\n`)
+      }
+      continue
+    }
+
+    let candidate = trimmed
+    if (candidate === "" && availableModels.length > 0) {
+      candidate = availableModels[0]!
+    } else if (/^\d+$/.test(candidate) && availableModels.length > 0) {
+      const idx = Number(candidate) - 1
+      if (idx >= 0 && idx < availableModels.length) {
+        candidate = availableModels[idx]!
+      }
+    }
+    try {
+      model = validateModelID(candidate)
+    } catch (err) {
+      io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
+    }
   }
 
-  const config: StandaloneConfig = {
+  const credCheck =
+    pendingSecret !== undefined
+      ? {
+          ok: true,
+          summary: `paste -> ${credential.kind === "file" ? credential.path : ""} (${pendingSecret.length} chars, saved 0600 on save)`,
+          warning: undefined,
+        }
+      : resolveCredentialSecret(credential, env)
+
+  const draftConfig: StandaloneConfig = {
     version: 1,
     providerId: preset.id,
     endpointType,
@@ -738,6 +831,54 @@ export async function runInteractiveSetup(
     model,
     credential,
     ...(preset.defaultHeaders ? { headers: preset.defaultHeaders } : {}),
+    updatedAt: new Date().toISOString(),
+  }
+
+  while (true) {
+    io.write("\nReview connection (0 requests sent until you test or submit):\n")
+    io.write(`  Provider    ${preset.name} (${preset.id})\n`)
+    io.write(`  Type        ${endpointType}\n`)
+    if (preset.wireProtocol && preset.wireProtocol !== "openai-chat") {
+      io.write(`  Protocol    ${preset.wireProtocol}\n`)
+    }
+    io.write(`  Endpoint    ${baseURL}\n`)
+    io.write(`  Model       ${model}\n`)
+    io.write(`  Credentials ${credCheck.summary}\n`)
+    if (credCheck.warning) {
+      io.write(`  Warning     ${credCheck.warning}\n`)
+    }
+    const confirm = await askYesNo(io, "Save and use this model? [y/N] (or 't' to run sample test): ")
+    if (confirm === null) {
+      io.write("Setup cancelled; profile unchanged.\n")
+      return { status: "cancelled" }
+    }
+    const ans = confirm.trim().toLowerCase()
+    if (ans === "t" || ans === "test") {
+      io.write(`  Running sample test against ${baseURL} (${model})...\n`)
+      const testRes = await testProviderConnection({
+        config: draftConfig,
+        env,
+        ...(pendingSecret !== undefined ? { apiKeyOverride: pendingSecret } : {}),
+        ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+      })
+      printConnectionTestResult(io, testRes, model)
+      continue
+    }
+    if (!isYes(confirm)) {
+      io.write("Setup cancelled; profile unchanged.\n")
+      return { status: "cancelled" }
+    }
+    break
+  }
+
+  let finalCredential = credential
+  if (pendingSecret !== undefined) {
+    const savedKeyPath = saveProviderKeyFile(configDirectory, preset.id, pendingSecret)
+    finalCredential = { kind: "file", path: savedKeyPath }
+  }
+  const config: StandaloneConfig = {
+    ...draftConfig,
+    credential: finalCredential,
     updatedAt: new Date().toISOString(),
   }
   saveStandaloneConfig(configDirectory, config)
@@ -1015,6 +1156,17 @@ export async function runStandalone(
       )
       return outcome.status === "saved" ? 0 : 0
     }
+    if (first === "test") {
+      const cfgState = loadStandaloneConfig(resolved.config)
+      if (cfgState.status !== "ok") {
+        io.writeError("No saved Bashwink profile found. Run `bashwink setup` first.\n")
+        return 1
+      }
+      io.write(`Testing ${cfgState.config.model} at ${cfgState.config.baseURL}...\n`)
+      const res = await testProviderConnection({ config: cfgState.config, env })
+      printConnectionTestResult(io, res, cfgState.config.model)
+      return res.ok ? 0 : 1
+    }
 
     const resumeFlag = first === "--resume" || first === "-r"
     const continueFlag = first === "--continue" || first === "-c"
@@ -1270,6 +1422,16 @@ export async function runStandalone(
             activeConfig = res.config
             renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig, activeSession)
           }
+          return "continue"
+        }
+        if (cmdName === "test" || cmdName === "ping" || cmdName === "verify") {
+          if (!activeConfig) {
+            io.write("No model configured yet. Run `/model` or `/connect` first.\n")
+            return "continue"
+          }
+          io.write(`\nTesting ${activeConfig.model} at ${activeConfig.baseURL}...\n`)
+          const testRes = await testProviderConnection({ config: activeConfig, env })
+          printConnectionTestResult(io, testRes, activeConfig.model)
           return "continue"
         }
         if (cmdName === "sessions" || cmdName === "resume" || cmdName === "continue") {

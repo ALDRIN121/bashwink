@@ -55,14 +55,14 @@ test("setup cancel writes no partial profile, OpenCode-ported catalog preset wor
     assert.equal(findProviderPreset("ollama")?.defaultBaseURL, "http://127.0.0.1:11434/v1")
     assert.equal(findProviderPreset("10")?.id, "custom-local")
 
-    // 1. Cancelled first-time setup writes nothing (provider 10 = custom-local, cred 3 = none, confirm 'n')
-    const first = scriptedIO(["10", "http://127.0.0.1:8080/v1", "qwen-1", "3", "n"])
+    // 1. Cancelled first-time setup writes nothing (provider 10 = custom-local, url, cred 3 = none, model, confirm 'n')
+    const first = scriptedIO(["10", "http://127.0.0.1:8080/v1", "3", "qwen-1", "n"])
     const r1 = await runInteractiveSetup(first.io, dir, {})
     assert.equal(r1.status, "cancelled")
     assert.equal(existsSync(standaloneConfigFile(dir)), false)
 
     // 2. Saved setup succeeds atomically via custom local preset
-    const second = scriptedIO(["10", "http://127.0.0.1:8080/v1", "qwen-1", "3", "y"])
+    const second = scriptedIO(["10", "http://127.0.0.1:8080/v1", "3", "qwen-1", "y"])
     const r2 = await runInteractiveSetup(second.io, dir, {})
     assert.equal(r2.status, "saved")
     const loaded = loadStandaloneConfig(dir)
@@ -71,7 +71,7 @@ test("setup cancel writes no partial profile, OpenCode-ported catalog preset wor
     assert.equal(loaded.config.providerId, "custom-local")
 
     // 3. Cancelled reconfigure via `bashwink setup` preserves existing working profile
-    const third = scriptedIO(["10", "http://127.0.0.1:9999/v1", "other-model", "3", null])
+    const third = scriptedIO(["10", "http://127.0.0.1:9999/v1", "3", "other-model", null])
     const r3 = await runInteractiveSetup(third.io, dir, {}, loaded.config)
     assert.equal(r3.status, "cancelled")
     const after = loadStandaloneConfig(dir)
@@ -79,8 +79,8 @@ test("setup cancel writes no partial profile, OpenCode-ported catalog preset wor
     assert.equal(after.config.baseURL, "http://127.0.0.1:8080/v1")
     assert.equal(after.config.model, "qwen-1")
 
-    // 4. OpenCode catalog preset (provider 1 = OpenAI, Enter for default URL, model '1', env cred '1', Enter for OPENAI_API_KEY)
-    const fourth = scriptedIO(["1", "", "1", "1", "", "y"])
+    // 4. Hermes-order catalog preset (provider 1 = OpenAI, Enter for default URL, env cred '1', Enter for OPENAI_API_KEY, model '1')
+    const fourth = scriptedIO(["1", "", "1", "", "1", "y"])
     const r4 = await runInteractiveSetup(fourth.io, dir, {})
     assert.equal(r4.status, "saved")
     const presetLoaded = loadStandaloneConfig(dir)
@@ -188,7 +188,7 @@ test("Hermes-integrated provider catalog validates all endpoints, aliases, env v
 test("interactive setup via alias saves wireProtocol and parseStandaloneConfig validates headers/protocol", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "bw-proto-"))
   try {
-    const setup = scriptedIO(["claude", "", "1", "1", "", "y"])
+    const setup = scriptedIO(["claude", "", "1", "", "1", "y"])
     const res = await runInteractiveSetup(setup.io, dir, {})
     assert.equal(res.status, "saved")
     const loaded = loadStandaloneConfig(dir)
@@ -227,6 +227,60 @@ test("interactive setup via alias saves wireProtocol and parseStandaloneConfig v
         ),
       /cannot be overridden/,
     )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("Hermes-style setup supports pasted API key (0600 key file), live /models fetch, and sample connection test", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "bw-hermes-wizard-"))
+  try {
+    const seenRequests: Array<{ url: string; auth: string | undefined; method: string | undefined }> = []
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url
+      const hdrs = (init?.headers ?? {}) as Record<string, string>
+      seenRequests.push({ url, auth: hdrs["Authorization"], method: init?.method })
+      if (url.endsWith("/models")) {
+        return new Response(
+          JSON.stringify({ data: [{ id: "hermes-live-coder" }, { id: "gpt-4.1" }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { role: "assistant", content: "OK" } }],
+          usage: { prompt_tokens: 8, completion_tokens: 1, total_tokens: 9 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )
+    }
+
+    // 1. Cancel after entering API key leaves ZERO key file and ZERO standalone.json
+    const cancelled = scriptedIO(["openai", "", "4", "sk-hermes-cancel-secret", "1", "n"])
+    const cRes = await runInteractiveSetup(cancelled.io, dir, {}, undefined, { fetchImpl: mockFetch })
+    assert.equal(cRes.status, "cancelled")
+    assert.equal(existsSync(standaloneConfigFile(dir)), false)
+    assert.equal(existsSync(path.join(dir, "keys", "openai.key")), false)
+    assert.equal(seenRequests.length, 0)
+
+    // 2. Full Hermes flow: openai -> default URL -> option 4 paste key -> 'f' live /models -> '1' -> 't' sample test -> 'y' save
+    const okSetup = scriptedIO(["openai", "", "4", "sk-hermes-live-secret-999", "f", "1", "t", "y"])
+    const res = await runInteractiveSetup(okSetup.io, dir, {}, undefined, { fetchImpl: mockFetch })
+    assert.equal(res.status, "saved")
+
+    const loaded = loadStandaloneConfig(dir)
+    assert.equal(loaded.status, "ok")
+    assert.equal(loaded.config.model, "hermes-live-coder")
+    assert.equal(loaded.config.credential.kind, "file")
+    const keyFilePath = (loaded.config.credential as { kind: "file"; path: string }).path
+    assert.equal(readFileSync(keyFilePath, "utf8").trim(), "sk-hermes-live-secret-999")
+    assert.equal(readFileSync(standaloneConfigFile(dir), "utf8").includes("sk-hermes-live-secret-999"), false)
+    assert.ok(okSetup.stdout().includes("Found 2 live model(s)"))
+    assert.ok(okSetup.stdout().includes("Connection verified"))
+    // /models fetched once on 'f', then testProviderConnection called GET /models + POST /chat/completions
+    assert.equal(seenRequests.length, 3)
+    assert.equal(seenRequests[0]!.auth, "Bearer sk-hermes-live-secret-999")
+    assert.equal(seenRequests[2]!.url, "https://api.openai.com/v1/chat/completions")
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

@@ -148,3 +148,10 @@ investigating the one `runtime health (ubuntu)` flake (F-24). BW-031 and BW-032 
 Done: live qualification on macOS arm64 (19/19). Remaining blocked on the owner: (1) GitHub Actions billing, then re-dispatch `verify.yml`; (2) a Windows 11 x64 machine for `release/tester-kit/` (a live run on Windows needs a key delivered to that machine by the owner, never through this repository);
 (3) the licensing decision; (4) a tester other than the author. Eligible without the owner: document F-26 in `KNOWN_LIMITATIONS.md` and the tester guide (**changes package contents, so it needs a new candidate and a new checksum**; bundle it with any other package change rather than rebuilding for it alone);
 drive the interactive screen with a live model (the owner can simply use `bashwink` in a throwaway project); a live limit-enforcement run; the items listed under `npm-rc2` above. BW-031 and BW-032 stay In progress.
+
+## 2026-11-25: source build and install
+
+The new `--install` path passed from a clean macOS arm64 checkout with Bun absent from PATH.
+Next, verify the consent and install path in the hosted Windows and macOS package jobs, then
+have an independent tester run it from a clean Windows 11 x64 clone. The earlier hosted package
+results apply to the prior build and install steps.

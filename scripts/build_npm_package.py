@@ -2,8 +2,14 @@
 """Build the private npm tarball of Bashwink's standard (native) mode.
 
     python3 scripts/build_npm_package.py --out build/npm [--allow-dirty]
+    python3 scripts/build_npm_package.py --install [--out new/output/directory]
 
-Produces, under <out>:
+Use --install to install the project's frozen dependencies, build the package, and
+install Bashwink globally with npm. If the pinned Bun version is unavailable,
+--install offers to install a temporary build copy. The default output is a
+fresh temporary directory.
+
+Produces, in the output directory:
     bashwink-<version>.tgz     what `npm install -g ./bashwink-<version>.tgz` installs
     SHA256SUMS
     RELEASE_MANIFEST.json      version, commit, checksums, sizes, dependency pins, audit results
@@ -25,10 +31,13 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
+from contextlib import ExitStack
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "release/npm"
+BUN_VERSION = "1.4.4"
 # On Windows npm is `npm.cmd`, which a bare "npm" does not find without a shell.
 NPM = shutil.which("npm") or "npm"
 
@@ -145,24 +154,50 @@ def audit(tarball: Path) -> dict:
     return {"files": len(names), "names": sorted(names)}
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--bun", default=shutil.which("bun") or "bun")
-    parser.add_argument("--allow-dirty", action="store_true")
-    args = parser.parse_args()
-    if capture([args.bun, "--version"]) != "1.4.4":
-        raise SystemExit("Bun 1.4.4 is pinned for building")
-    status = capture(["git", "status", "--porcelain"], cwd=ROOT)
-    if status and not args.allow_dirty:
-        raise SystemExit("the working tree has uncommitted changes; commit them or pass --allow-dirty")
-    commit = capture(["git", "rev-parse", "HEAD"], cwd=ROOT) + ("+dirty" if status else "")
-    out = args.out.resolve()
-    if out.exists():
-        shutil.rmtree(out)
+def resolve_bun(override: str | None, offer_install: bool, resources: ExitStack) -> str:
+    bun = override or shutil.which("bun")
+    version = None
+    if bun is not None:
+        try:
+            version = capture([bun, "--version"])
+        except (OSError, subprocess.CalledProcessError):
+            pass
+        if version == BUN_VERSION:
+            return bun
+
+    found = f" (found {version})" if version else ""
+    required = f"Bun {BUN_VERSION} is required for building{found}."
+    if override is not None or not offer_install:
+        raise SystemExit(required)
+    try:
+        answer = input(f"{required} Install a temporary copy using npm? [y/N] ")
+    except EOFError:
+        answer = ""
+    if answer.strip().lower() not in ("y", "yes"):
+        raise SystemExit(f"Setup stopped. Install Bun {BUN_VERSION} and retry, or answer yes to use a temporary copy.")
+
+    tools = Path(resources.enter_context(tempfile.TemporaryDirectory(prefix="bashwink-build-tools-")))
+    run([NPM, "install", "--prefix", tools, "--no-save", f"bun@{BUN_VERSION}"], cwd=tools)
+    # A full path selects the npm shim in this prefix, including bun.cmd on Windows.
+    shim = "bun.cmd" if sys.platform == "win32" else "bun"
+    bun = shutil.which(str(tools / "node_modules" / ".bin" / shim))
+    if bun is None or capture([bun, "--version"]) != BUN_VERSION:
+        raise SystemExit(f"npm did not provide a usable Bun {BUN_VERSION} in the temporary directory.")
+    return bun
+
+
+def build_package(out_dir: Path | None, bun: str, commit: str, install: bool) -> int:
+    if install:
+        run([bun, "install", "--frozen-lockfile"], cwd=ROOT)
+    if out_dir is None:
+        out = Path(tempfile.mkdtemp(prefix="bashwink-npm-")).resolve()
+    else:
+        out = out_dir.resolve()
+        if not install and out.exists():
+            shutil.rmtree(out)
+        out.mkdir(parents=True)
     stage = out / "stage/package"
-    out.mkdir(parents=True)
-    manifest = stage_package(stage, commit, args.bun)
+    manifest = stage_package(stage, commit, bun)
     bundled = bundled_packages(stage / "lib/bashwink.js")
     packed = capture([NPM, "pack", "--ignore-scripts", "--pack-destination", out, stage], cwd=out).splitlines()[-1]
     tarball = out / packed
@@ -174,11 +209,36 @@ def main() -> int:
         "schema": 1, "flavor": "standard", "package": manifest["name"], "version": manifest["version"],
         "candidate_commit": commit, "artifact": {"name": tarball.name, "sha256": digest, "bytes": tarball.stat().st_size},
         "dependencies": manifest["dependencies"], "engines": manifest["engines"], "os": manifest["os"], "cpu": manifest["cpu"],
-        "contents": report["names"], "audit": "passed", "bundled_third_party": bundled, "built_with": {"bun": "1.4.4", "npm": capture([NPM, "--version"]),
+        "contents": report["names"], "audit": "passed", "bundled_third_party": bundled, "built_with": {"bun": BUN_VERSION, "npm": capture([NPM, "--version"]),
         "node": capture(["node", "--version"])},
     }, indent=2) + "\n")
-    print(f"tarball  {tarball}\nsha256   {digest}\nsize     {tarball.stat().st_size} bytes, {report['files']} files\ncommit   {commit}")
+    print(f"tarball  {tarball}\nsha256   {digest}\nsize     {tarball.stat().st_size} bytes, {report['files']} files\ncommit   {commit}",
+          flush=True)
+    if install:
+        run([NPM, "install", "--global", tarball], cwd=out)
+        command = "bashwink.cmd" if sys.platform == "win32" else "bashwink"
+        print(f"Bashwink installed. Run {command} doctor to check your setup.")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--out", type=Path, help="Output directory (default with --install: a fresh temporary directory)")
+    parser.add_argument("--install", action="store_true", help="Install locked dependencies, build, and install Bashwink globally")
+    parser.add_argument("--bun", help="Explicit path to the pinned Bun executable")
+    parser.add_argument("--allow-dirty", action="store_true")
+    args = parser.parse_args()
+    if args.out is None and not args.install:
+        parser.error("--out is required when building without --install")
+    if args.install and args.out is not None and args.out.exists():
+        parser.error("--out must be a new directory when using --install")
+    status = capture(["git", "status", "--porcelain"], cwd=ROOT)
+    if status and not args.allow_dirty:
+        raise SystemExit("the working tree has uncommitted changes; commit them or pass --allow-dirty")
+    commit = capture(["git", "rev-parse", "HEAD"], cwd=ROOT) + ("+dirty" if status else "")
+    with ExitStack() as resources:
+        bun = resolve_bun(args.bun, args.install, resources)
+        return build_package(args.out, bun, commit, args.install)
 
 
 if __name__ == "__main__":

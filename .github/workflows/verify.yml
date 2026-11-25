@@ -311,6 +311,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
+        if: runner.os == 'Linux'
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - uses: actions/setup-node@v5
@@ -319,11 +320,34 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Check Bun installation consent
+        run: python scripts/test_npm_bun_consent.py
       - name: Install
+        if: runner.os == 'Linux'
         run: bun install --frozen-lockfile
+      - name: Build and install from source (Windows)
+        if: runner.os == 'Windows'
+        env:
+          npm_config_prefix: ${{ runner.temp }}\bashwink-source-install
+        run: |
+          'y' | python scripts/build_npm_package.py --install --out build/npm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & (Join-Path $env:npm_config_prefix 'bashwink.cmd') --version
+      - name: Build and install from source (macOS)
+        if: runner.os == 'macOS'
+        env:
+          npm_config_prefix: ${{ runner.temp }}/bashwink-source-install
+        run: |
+          printf 'y\n' | python scripts/build_npm_package.py --install --out build/npm
+          "$npm_config_prefix/bin/bashwink" --version
+      - uses: oven-sh/setup-bun@v2
+        if: runner.os != 'Linux'
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
       - name: Portable unit tests (launcher platform plan, plugin staging, home directory)
         run: bun test packages/bw-cli/test/npm-launcher.test.ts packages/bw-cli/test/plugin-staging.test.ts packages/bw-cli/test/usage-guard.test.ts
       - name: Build and audit the tarball
+        if: runner.os == 'Linux'
         run: python scripts/build_npm_package.py --out build/npm
       - name: Install the tarball and exercise the installed command
         run: python scripts/npm_install_check.py build/npm/bashwink-0.1.0-alpha.1.tgz --out build/npm/install-check.json

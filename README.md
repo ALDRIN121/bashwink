@@ -13,9 +13,31 @@ and [BW-030](docs/bashwink/BW-030_EXECUTION_BACKEND_DESIGN.md). See `docs/bashwi
 
 ## v0.1.0-alpha.1 private npm candidate
 
+### Build the installer from source
+
+Use Node.js 22 with npm, Git, Python 3.12, and internet access. From a clean clone of the
+private repository, run the command for your platform.
+
+**Windows 11 x64 (PowerShell)**
+
+```powershell
+python scripts/build_npm_package.py --install
+```
+
+**macOS (Terminal)**
+
+```sh
+python3 scripts/build_npm_package.py --install
+```
+
+If Bun 1.4.4 is unavailable, the script asks before installing a temporary build copy with npm.
+It then installs locked build dependencies, builds and audits the tarball, and installs Bashwink
+globally with npm. To check the installation, run `bashwink.cmd doctor` on Windows or
+`bashwink doctor` on macOS. Try Bashwink in a disposable Git project.
+
 ### Install on Windows 11 x64
 
-For a first test, get the prebuilt `bashwink-0.1.0-alpha.1.tgz` and `SHA256SUMS` from the
+To use a prebuilt installer, get `bashwink-0.1.0-alpha.1.tgz` and `SHA256SUMS` from the
 maintainer. Use Node.js 22 with npm, Git, PowerShell, and internet access. Open PowerShell in
 the folder containing both files. npm fetches the pinned Bun and OpenCode runtimes during
 installation. Windows ARM64 is unsupported.
@@ -52,24 +74,6 @@ a live Windows model test, and licensing acceptance for the private alpha are st
 
 The maintainer's `npm-rc2` files are in `release/standard/0.1.0-alpha.1-npm-rc2/`.
 [Candidate checksum](release/standard/0.1.0-alpha.1-npm-rc2/SHA256SUMS)
-
-### Build the installer from source
-
-Use this path to create a new installer. Building also requires Python 3.12 and Bun 1.4.4
-on your PATH. In PowerShell, clone the private repository and build from the clean checkout.
-
-```powershell
-git clone https://github.com/ALDRIN121/bashwink.git
-Set-Location bashwink
-bun install --frozen-lockfile
-$packageDir = Join-Path $env:TEMP ("bashwink-build-" + [guid]::NewGuid())
-python scripts/build_npm_package.py --out $packageDir
-Set-Location $packageDir
-```
-
-The build writes `bashwink-0.1.0-alpha.1.tgz` and `SHA256SUMS` to that folder. Use both
-files from your own build and follow the [Windows install steps](#install-on-windows-11-x64).
-The build manifest records the Git commit you built.
 
 The optional VM is a separate Apple Silicon candidate with its own distribution gate.
 [macOS VM qualification report](docs/bashwink/releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md)

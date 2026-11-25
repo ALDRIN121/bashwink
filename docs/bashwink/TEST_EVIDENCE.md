@@ -1730,3 +1730,29 @@ The key was supplied by the owner's pointer to `~/.hermes/.env`: one variable wa
 
 Observed, live: coding run exit 0 in 11 s; usage `6 model requests of 40 allowed`, `668 input, 370 output`, cached 43,391 read and 3,792 written, cost `unknown` (no price declared); evidence tool calls `edit` and `shell`; both models attributed in the evidence; 5 finalized run records; cancellation left no process behind.
 New finding F-26 (the token limit ignores cached tokens; not in the shipped guides). Not run live: Windows, Linux, the interactive screen, limit enforcement against a real provider, a dollar limit. The provider's invoice was not inspected, so actual spend is not stated.
+
+## 2026-11-25: source build and install
+
+macOS arm64. For the package commands, a disposable clone with the installer change
+(`8542c48`) used Bun 1.4.4, Node.js 22.23.2, and an isolated npm prefix. The Windows CI
+job now exercises the new path, with its result still pending.
+
+| Command | Exit | Result |
+| --- | ---: | --- |
+| `python3 scripts/build_npm_package.py --install --out build/npm-source-regression` before the change | 2 | Parser rejected `--install`. |
+| `python3 scripts/build_npm_package.py --install` | 0 | Installed frozen dependencies, audited a 19-file tarball, and installed Bashwink into the test prefix. |
+| `bashwink --version` and `bashwink doctor` from that prefix | 0 / 0 | Version `0.1.0-alpha.1`. Diagnostics found both runtimes and the evidence plugin with zero failures. |
+| `python3 scripts/build_npm_package.py --install --out <existing-directory>` | 2 | Refused the existing directory and preserved a sentinel file. |
+| `python3 scripts/build_npm_package.py --install --out <new-directory>` with cached npm dependencies | 1 / 0 | OpenCode's postinstall failed under the tool sandbox. The rerun with local runtime execution allowed installed successfully, and the installed version and tarball checksum verified. |
+| `python3 scripts/build_npm_package.py --out <new-directory>` | 0 | Produced a byte-identical tarball for the same commit and left a second test npm prefix untouched. |
+| `bun test packages` | 0 | 571 passed, 0 failed. |
+| `python3 scripts/test_native_release_gate.py` and `python3 scripts/test_alpha_release_gate.py` | 0 / 0 | All 9 tests passed. |
+
+With the Bun consent flow added, a clean disposable macOS arm64 clone (`84ff9bb`) ran
+`python3 scripts/build_npm_package.py --install` with no Bun on PATH. With `y` on stdin, the
+installer fetched Bun 1.4.4 through npm, built Bashwink, and installed into a test prefix
+(exit 0). The installed `bashwink --version` returned `0.1.0-alpha.1` (exit 0), the
+temporary build tool directory was removed, and the checkout stayed clean. Decline, default
+answer, and closed input stopped before installing. `python3 scripts/test_npm_bun_consent.py`
+passed both tests, and `bun test packages` passed 571 tests (both exit 0). Hosted Windows and
+macOS results for this version are pending.

@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""Manifest tests for the locally built engine (Task 3).
+
+The plan requires these cases to be observed **failing before the build is wired**, so the module
+under test starts out absent. Run this before `scripts/build_local_engine.py` exists and every case
+fails with "builder not implemented"; that failure is the proof the tests are load-bearing rather
+than written to match whatever the builder happened to do.
+
+What is under test is the *manifest and its refusals*, not the lexer of a shell script:
+
+- an unsupported target is refused by name, not silently built for the host;
+- a missing input is refused rather than replaced by a download;
+- a digest mismatch is refused rather than trusted;
+- a PTY that is not the locally built one is refused, including one that merely sits on PATH;
+- a path escaping the build root is refused **after** symlink resolution, because checking the
+  string alone lets `build/engine/x/../../../etc/passwd` pass;
+- a published-runtime download fallback is refused outright.
+
+The last two are the ones worth having. A builder that resolves a symlink before checking
+containment, or that falls back to downloading a published OpenCode when the local build fails,
+would satisfy a naive digest check and still ship a runtime nobody built.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import importlib
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "scripts"))
+
+
+def load_builder():
+    """Import the builder, or fail with the plan's own wording when it is not written yet."""
+    try:
+        return importlib.import_module("build_local_engine")
+    except ModuleNotFoundError as exc:
+        raise AssertionError(
+            "builder not implemented: scripts/build_local_engine.py does not exist. "
+            "Task 3 requires the manifest tests to fail before the build is wired."
+        ) from exc
+
+
+class UnsupportedTargetTest(unittest.TestCase):
+    def test_unknown_target_is_refused_by_name(self):
+        mod = load_builder()
+        with self.assertRaises(mod.BuildRefused) as caught:
+            mod.manifest_for_target("plan9-mips")
+        self.assertIn("plan9-mips", str(caught.exception))
+
+    def test_host_target_is_not_substituted_for_an_unsupported_one(self):
+        mod = load_builder()
+        with self.assertRaises(mod.BuildRefused):
+            mod.manifest_for_target("linux-riscv64")
+        # The same call must never quietly return the host's target.
+        with self.assertRaises(mod.BuildRefused):
+            mod.manifest_for_target("")
+
+
+class MissingInputTest(unittest.TestCase):
+    def test_missing_engine_is_refused_not_downloaded(self):
+        mod = load_builder()
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(mod.BuildRefused) as caught:
+                mod.build(target="darwin-arm64", engine=Path(tmp) / "absent", pty_dir=Path(tmp) / "absent-pty")
+            message = str(caught.exception).lower()
+            self.assertIn("missing", message)
+            # The refusal must not read as an invitation to fetch a published runtime.
+            self.assertNotIn("http", message)
+
+
+class DigestMismatchTest(unittest.TestCase):
+    def test_engine_digest_mismatch_is_refused(self):
+        mod = load_builder()
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = Path(tmp) / "opencode"
+            engine.write_bytes(b"not the built engine")
+            pty = Path(tmp) / "opencode-pty"
+            pty.write_bytes(b"helper")
+            with self.assertRaises(mod.BuildRefused) as caught:
+                mod.build(
+                    target="darwin-arm64",
+                    engine=engine,
+                    pty_dir=Path(tmp),
+                    expect_sha256="0" * 64,
+                )
+            self.assertIn("digest", str(caught.exception).lower())
+
+
+class NonLocalPtyTest(unittest.TestCase):
+    def test_helper_on_path_is_not_accepted(self):
+        mod = load_builder()
+        with tempfile.TemporaryDirectory() as tmp:
+            # A binary called opencode-pty that is *not* the vendored build. If the builder
+            # searched PATH it would find this one.
+            fake_dir = Path(tmp) / "fake-bin"
+            fake_dir.mkdir()
+            fake = fake_dir / "opencode-pty"
+            fake.write_bytes(b"#!/bin/sh\necho not-the-real-one\n")
+            fake.chmod(0o755)
+            engine = Path(tmp) / "opencode"
+            engine.write_bytes(b"engine")
+            old = os.environ.get("PATH", "")
+            os.environ["PATH"] = f"{fake_dir}{os.pathsep}{old}"
+            try:
+                with self.assertRaises(mod.BuildRefused) as caught:
+                    mod.build(target="darwin-arm64", engine=engine, pty_dir=Path(tmp) / "no-such-pty")
+            finally:
+                os.environ["PATH"] = old
+            self.assertIn("pty", str(caught.exception).lower())
+
+    def test_registry_pty_package_is_not_an_acceptable_source(self):
+        mod = load_builder()
+        # The manifest must record where the helper came from, so a reader can tell a local build
+        # from a registry package without trusting the file name. The field lives inside `pty`,
+        # not at the top level, so the assertion is on the produced manifest rather than on the
+        # required-keys tuple.
+        manifest = mod.manifest_for_target("darwin-arm64")
+        self.assertIn("source", manifest["pty"])
+        self.assertIn(manifest["pty"]["source"], mod.PTY_SOURCE_KINDS)
+        self.assertNotIn("registry", mod.PTY_SOURCE_KINDS)
+        self.assertIn("local-build", mod.PTY_SOURCE_KINDS)
+        self.assertNotIn("registry", json.dumps(mod.PTY_SOURCE_KINDS))
+
+
+class PathContainmentTest(unittest.TestCase):
+    def test_traversal_out_of_the_build_root_is_refused(self):
+        mod = load_builder()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "build" / "engine" / "darwin-arm64"
+            root.mkdir(parents=True)
+            (Path(tmp) / "outside.txt").write_text("secret")
+            with self.assertRaises(mod.BuildRefused):
+                mod.contained_path(root, "../../outside.txt")
+
+    def test_symlink_escaping_the_root_is_refused_after_resolution(self):
+        mod = load_builder()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "build" / "engine" / "darwin-arm64"
+            root.mkdir(parents=True)
+            outside = Path(tmp) / "outside.bin"
+            outside.write_bytes(b"secret")
+            link = root / "innocent.bin"
+            link.symlink_to(outside)
+            # The *string* is contained; the resolved path is not. A builder that only checked
+            # the string would accept this and copy a file from outside the build root.
+            self.assertIn(
+                "innocent.bin",
+                str(link),
+                "precondition: the path string is inside the root",
+            )
+            with self.assertRaises(mod.BuildRefused) as caught:
+                mod.contained_path(root, "innocent.bin")
+            self.assertIn("outside", str(caught.exception).lower())
+
+    def test_contained_path_accepts_a_real_child(self):
+        mod = load_builder()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            root.mkdir()
+            (root / "ok.bin").write_bytes(b"fine")
+            self.assertEqual(mod.contained_path(root, "ok.bin"), (root / "ok.bin").resolve())
+
+
+class DownloadFallbackTest(unittest.TestCase):
+    def test_published_runtime_download_is_refused(self):
+        mod = load_builder()
+        with self.assertRaises(mod.BuildRefused) as caught:
+            mod.build(target="darwin-arm64", engine=None, pty_dir=None, allow_download=True)
+        self.assertIn("download", str(caught.exception).lower())
+
+    def test_builder_exposes_no_url_fetch_helper(self):
+        mod = load_builder()
+        # Guards against a future "convenience" helper that reintroduces the fallback.
+        names = dir(mod)
+        for suspicious in ("download", "fetch_published", "install_from_npm"):
+            self.assertNotIn(suspicious, names)
+
+
+class ManifestShapeTest(unittest.TestCase):
+    def test_manifest_records_the_keys_the_plan_names(self):
+        mod = load_builder()
+        for key in (
+            "schemaVersion",
+            "target",
+            "sourcePins",
+            "engine",
+            "pty",
+            "toolchains",
+            "notices",
+        ):
+            self.assertIn(key, mod.REQUIRED_MANIFEST_KEYS)
+
+    def test_manifest_hash_is_stable_across_key_order(self):
+        mod = load_builder()
+        a = {"b": 1, "a": 2}
+        b = {"a": 2, "b": 1}
+        self.assertEqual(mod.manifest_digest(a), mod.manifest_digest(b))
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

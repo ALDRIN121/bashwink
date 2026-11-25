@@ -6,6 +6,20 @@ import type { Paths } from "./paths.js"
 import { Store } from "./store.js"
 import { isTrusted, readTrust } from "./trust.js"
 
+/**
+ * Environment names that carry upstream account credentials rather than a selected provider's key.
+ *
+ * The engine reads `OPENCODE_API_KEY` as bearer auth for its own gateway provider, so an inherited
+ * one is a live route to a service Bashwink does not offer. Kept as a named list so a test can
+ * assert each is absent from a launched engine, and so adding one is a deliberate edit.
+ */
+export const UPSTREAM_CREDENTIAL_VARIABLES = [
+  "OPENCODE_API_KEY",
+  "OPENCODE_SESSION_TOKEN",
+  "OPENCODE_ACCOUNT_TOKEN",
+] as const
+
+
 const CLIENT_COMMANDS = new Set(["run", "models", "stats", "session"])
 
 const CONTROL_COMMANDS = new Set([
@@ -167,6 +181,13 @@ export function launchEnvironment(
   delete environment["BASHWINK_READINESS"]
   environment["BASHWINK_SCOPE_FILE"] = launch.file
   if (!launch.trusted) environment["OPENCODE_CONFIG_PROJECT_DISABLE"] = "1"
+
+  // Upstream credential names for OpenCode's own gateway. Bashwink routes credentials to the
+  // provider the user selected, so an inherited one here would silently enable a route the product
+  // does not offer — the engine reads OPENCODE_API_KEY as auth for its own provider
+  // (`packages/ai/src/providers/opencode.ts`). Removed at the one point every backend passes
+  // through, so no launch path can reintroduce it.
+  for (const name of UPSTREAM_CREDENTIAL_VARIABLES) delete environment[name]
 
   const content = (JSON.parse(environment["OPENCODE_CONFIG_CONTENT"] ?? "{}") ?? {}) as Record<
     string,

@@ -301,8 +301,95 @@ def resolve_bun(override: str | None, offer_install: bool, resources: ExitStack)
     return bun
 
 
+DEFAULT_ENGINE_DIR = ROOT / "build" / "local-engine"
+
+
+def engine_is_current(engine_dir: Path, target: str) -> tuple[bool, str]:
+    """Whether an existing artifact dir is usable as-is, and why not when it is not.
+
+    "Reuse a verified local engine" must mean verified *now*, not verified once: a stale artifact, an
+    artifact for another target, or one whose binary changed after the build are all rejections.
+    """
+    manifest_path = engine_dir / "engine-manifest.json"
+    if not manifest_path.is_file():
+        return False, "no engine-manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        return False, f"unreadable manifest ({error})"
+    if manifest.get("target") != target:
+        return False, f"built for {manifest.get('target')!r}, need {target!r}"
+    declared = (manifest.get("engine") or {}).get("sha256")
+    if not declared:
+        return False, "manifest carries no digest"
+    artifact = engine_dir / ((manifest.get("engine") or {}).get("path") or "")
+    if not artifact.is_file():
+        return False, f"artifact {manifest['engine'].get('path')!r} is missing"
+    if sha256(artifact) != declared:
+        return False, "artifact digest does not match the manifest"
+    return True, "verified"
+
+
+def resolve_engine_input(explicit: Path | None, target: str, allow_build: bool) -> Path:
+    """Return a verified engine directory, building one only when allowed and needed.
+
+    Fails before any packaging or installation work happens. A source install that cannot get an
+    engine must stop here, leaving the previously installed CLI untouched, rather than install a
+    package that cannot start.
+    """
+    candidates: list[Path] = []
+    if explicit is not None:
+        candidates.append(explicit)
+    # Both spellings: a caller may point at the per-target directory itself, or at the output root
+    # the builder writes (`build/local-engine`, which nests one level per target).
+    candidates.extend([DEFAULT_ENGINE_DIR / target, DEFAULT_ENGINE_DIR])
+
+    reasons: list[str] = []
+    for candidate in candidates:
+        if explicit is not None and candidate != explicit:
+            continue
+        ok, why = engine_is_current(candidate, target)
+        if ok:
+            print(f"engine   reusing verified artifact at {candidate} ({target})", flush=True)
+            return candidate
+        reasons.append(f"  {candidate}: {why}")
+
+    if not allow_build:
+        raise SystemExit(
+            "no usable local engine for "
+            f"{target}. Refusing to package an install that cannot start:\n" + "\n".join(reasons) +
+            f"\nBuild one first:\n  python3 scripts/build_local_engine.py --target {target}"
+        )
+
+    print("engine   no current artifact; building from the vendored source", flush=True)
+    builder = ROOT / "scripts" / "build_local_engine.py"
+    # The builder nests its output one level deeper, per target: <outdir>/<target>/.
+    expected = DEFAULT_ENGINE_DIR / target
+    result = subprocess.run(
+        [sys.executable, str(builder), "--target", target, "--outdir", str(DEFAULT_ENGINE_DIR)],
+        cwd=ROOT,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            f"building the local engine failed (exit {result.returncode}). Nothing was packaged or "
+            "installed; the previous installation is untouched."
+        )
+    ok, why = engine_is_current(expected, target)
+    if not ok:
+        raise SystemExit(f"the engine build reported success but is not usable: {why}")
+    return expected
+
+
 def build_package(out_dir: Path | None, bun: str, commit: str, install: bool,
                   engine_dir: Path | None = None, engine_target: str | None = None) -> int:
+    # Resolve the engine before anything is installed or staged. This is the ordering that matters:
+    # `--install` used to reach npm with no engine at all and leave a package that exits 127.
+    target = engine_target or platform_arch()
+    engine_dir = resolve_engine_input(engine_dir, target, allow_build=True)
+    # Carry the resolved target forward: stage_package validates the manifest against it, and the
+    # caller's value may be None even though the engine was resolved for this host.
+    engine_target = target
+
     if install:
         run([bun, "install", "--frozen-lockfile"], cwd=ROOT)
     if out_dir is None:

@@ -25,7 +25,11 @@ const base = process.argv[2]
 if (!base) {
   console.error("usage: bun run engine-manifest.probe.ts <packaged-dir>")
   process.exit(2)
+  // `process.exit` does not narrow for the type checker, so state the invariant.
+  throw new Error("unreachable: a packaged directory is required")
 }
+// Narrowed copy: `base` is module-scoped and captured by a closure below, which loses the guard.
+const packagedDir: string = base
 
 interface Row {
   readonly name: string
@@ -39,8 +43,8 @@ const rows: Row[] = []
 function caseFrom(name: string, expect: "resolve" | "refuse", mutate?: (dir: string) => void) {
   const dir = mkdtempSync(path.join(tmpdir(), "bw-probe-"))
   try {
-    cpSync(base, dir, { recursive: true })
-    mutate?.(dir)
+    cpSync(packagedDir, dir, { recursive: true })
+    if (mutate) mutate(dir)
     const manifestPath = path.join(dir, "engine-manifest.json")
     try {
       const runtime = resolveRuntime({ engineManifest: manifestPath })

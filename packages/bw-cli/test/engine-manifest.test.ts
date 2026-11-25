@@ -147,7 +147,11 @@ describe("refusals — every one must fail closed", () => {
   test("a path that escapes via .. is refused", () => {
     const binary = writeBinary(root)
     const manifest = manifestFor(binary)
-    manifest.engine.path = path.join("..", "..", "elsewhere", "opencode")
+    // `engine` is readonly by design, so replace rather than mutate.
+    ;(manifest as { engine: { path: string } }).engine = {
+      ...manifest.engine,
+      path: path.join("..", "..", "elsewhere", "opencode"),
+    }
     const manifestPath = writeManifest(manifest)
     expect(() => resolveEngineFromManifest(manifestPath, { root })).toThrow(/outside|escape|missing/i)
   })
@@ -159,7 +163,10 @@ describe("refusals — every one must fail closed", () => {
     const link = path.join(root, "linked-opencode")
     symlinkSync(target, link)
     const manifest = manifestFor(target)
-    manifest.engine.path = path.basename(link)
+    ;(manifest as { engine: { path: string } }).engine = {
+      ...manifest.engine,
+      path: path.basename(link),
+    }
     const manifestPath = writeManifest(manifest)
     try {
       expect(() => resolveEngineFromManifest(manifestPath, { root })).toThrow(/outside|escape/i)

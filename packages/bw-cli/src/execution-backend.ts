@@ -130,6 +130,13 @@ export const makeBackend = (
             ...env,
             PWD: request.cwd,
             OPENCODE_DISABLE_AUTOUPDATE: "1",
+            // Bashwink owns the model catalog: the engine boots from the pinned snapshot bundled
+            // into the binary, and catalog changes arrive as Bashwink updates. Without this the
+            // engine autonomously refreshes from models.opencode.ai on a timer in the standard
+            // native path — the one path the npm launcher and source install use. The sandbox and
+            // VM backends already set it; leaving it out here made the shipped product phone home
+            // for a catalog it does not need.
+            OPENCODE_DISABLE_MODELS_FETCH: "1",
             OPENCODE_PASSWORD: endpoint.password,
           }
         }

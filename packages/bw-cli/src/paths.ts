@@ -37,6 +37,15 @@ import path from "node:path"
 export const EVIDENCE_PLUGIN_ID = "bashwink-evidence"
 
 /**
+ * `$schema` written into the Bashwink-owned config file.
+ *
+ * Never fetched: the engine decodes the file with its own bundled schema at load time, so this is
+ * only a hint for editors. It names Bashwink rather than upstream because the config is Bashwink's
+ * to define, and a reader following it should land on the product they are actually using.
+ */
+export const BASHWINK_CONFIG_SCHEMA = "https://bashwink.dev/config.json"
+
+/**
  * Raised when a plugin directory exists but the runtime would not find an entry for it.
  *
  * This is deliberately an error rather than a warning: a staged directory the runtime cannot
@@ -137,7 +146,10 @@ export function writeConfig(root: string, pluginIds: readonly string[]): string 
   }
   const config = {
     ...existing,
-    $schema: "https://opencode.ai/config.json",
+    // Bashwink owns this file and validates it locally (`@opencode/schema` at load time); the value
+    // is a discoverability aid for editors, never fetched. It previously named an upstream URL,
+    // which advertised a foreign product as the source of truth for a Bashwink-owned config.
+    $schema: BASHWINK_CONFIG_SCHEMA,
     plugins: pluginIds.map((id) => `./plugin/${id}`),
   }
   mkdirSync(root, { recursive: true })

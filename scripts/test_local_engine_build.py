@@ -262,5 +262,77 @@ class ManifestShapeTest(unittest.TestCase):
         self.assertEqual(mod.manifest_digest(a), mod.manifest_digest(b))
 
 
+class MissingEngineBeforeInstallTest(unittest.TestCase):
+    """`--install` must fail before it touches npm when no usable engine exists.
+
+    The regression this locks down: `--install` used to reach npm with no local engine at all, so it
+    installed a package that exits 127 on first launch — and, worse, replaced a working install with
+    one that could not start. The ordering (resolve the engine, then install) is the property.
+    """
+
+    def setUp(self):
+        import build_npm_package as bnp
+
+        self.bnp = bnp
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def _manifest(self, directory: Path, target: str = "darwin-arm64", digest: str = "0" * 64,
+                  path_field: str = "opencode") -> Path:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "engine-manifest.json").write_text(json.dumps({
+            "schemaVersion": 1, "target": target,
+            "engine": {"path": path_field, "sha256": digest, "ffmpegMarkers": []},
+        }))
+        return directory
+
+    def test_no_engine_and_no_build_is_refused(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.bnp.resolve_engine_input(self.root / "absent", "darwin-arm64", allow_build=False)
+        message = str(caught.exception)
+        self.assertIn("Refusing to package an install that cannot start", message)
+        # The repair command has to be actionable, not "engine missing".
+        self.assertIn("build_local_engine.py --target darwin-arm64", message)
+
+    def test_a_wrong_target_engine_is_refused(self):
+        directory = self._manifest(self.root / "engine", target="linux-x64")
+        ok, why = self.bnp.engine_is_current(directory, "darwin-arm64")
+        self.assertFalse(ok)
+        self.assertIn("linux-x64", why)
+        self.assertIn("darwin-arm64", why)
+
+    def test_a_tampered_engine_is_refused(self):
+        directory = self._manifest(self.root / "engine")
+        (directory / "opencode").write_bytes(b"not the artifact that was built")
+        ok, why = self.bnp.engine_is_current(directory, "darwin-arm64")
+        self.assertFalse(ok)
+        self.assertIn("digest does not match", why)
+
+    def test_a_digestless_manifest_is_refused(self):
+        # Unverifiable is not verified. Same rule the runtime resolver applies.
+        directory = self._manifest(self.root / "engine", digest="")
+        ok, why = self.bnp.engine_is_current(directory, "darwin-arm64")
+        self.assertFalse(ok)
+        self.assertIn("no digest", why)
+
+    def test_a_valid_engine_is_reused_without_building(self):
+        artifact = b"a real artifact"
+        digest = hashlib.sha256(artifact).hexdigest()
+        directory = self._manifest(self.root / "engine", digest=digest)
+        (directory / "opencode").write_bytes(artifact)
+        # allow_build=False proves reuse happens without invoking the builder at all.
+        resolved = self.bnp.resolve_engine_input(directory, "darwin-arm64", allow_build=False)
+        self.assertEqual(resolved, directory)
+
+    def test_an_unreadable_manifest_is_refused_not_crashed(self):
+        directory = self.root / "engine"
+        directory.mkdir()
+        (directory / "engine-manifest.json").write_text("{not json")
+        ok, why = self.bnp.engine_is_current(directory, "darwin-arm64")
+        self.assertFalse(ok)
+        self.assertIn("unreadable manifest", why)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

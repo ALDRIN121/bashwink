@@ -70,6 +70,20 @@ REQUIRED_MANIFEST_KEYS = (
     "buildInputs",
 )
 
+# The directory `build.ts` creates for each target, which is not the same string as either the
+# manifest key or OPENCODE_TARGET: it prefixes `cli-` and omits `-baseline`. Derived here rather
+# than guessed at the point of use.
+OPENCODE_TARGET_SUFFIX: dict[str, str] = {
+    "darwin-arm64": "darwin-arm64",
+    "darwin-x64": "darwin-x64",
+    "linux-arm64": "linux-arm64",
+    "linux-arm64-musl": "linux-arm64-musl",
+    "linux-x64": "linux-x64",
+    "linux-x64-musl": "linux-x64-musl",
+    "win32-arm64": "windows-arm64",
+    "win32-x64": "windows-x64",
+}
+
 # The pins this build is allowed to claim. Taken from the vendored tree, not from this file, so a
 # changed vendor pin cannot be papered over by a stale constant.
 VENDOR = Path("vendor/engine")
@@ -173,31 +187,108 @@ def _vendor_pins() -> dict:
     }
 
 
-def _toolchain_versions(zig_daemon: str | None, zig_opentui: str | None) -> dict:
-    def version_of(executable: str | None) -> str | None:
-        if not executable:
-            return None
-        try:
-            out = subprocess.run([executable, "version"], capture_output=True, text=True, timeout=60)
-        except (OSError, subprocess.SubprocessError):
-            return None
-        return out.stdout.strip() or None
+def _toolchain_versions(
+    zig_daemon: str | None = None,
+    zig_opentui: str | None = None,
+    toolchain_path: str | None = None,
+) -> dict:
+    """Record the exact tools that produced this artifact.
 
-    cargo = shutil.which("cargo")
-    rustc = shutil.which("rustc")
-    bun = shutil.which("bun")
+    Versions are resolved through an explicit list of executables first and `PATH` second. A null
+    entry would mean "the build ran with a toolchain nobody recorded", which defeats the point of
+    the manifest, so the caller can pass `--toolchain-path` and each tool is reported by its own
+    version output rather than a constant.
+    """
+
+    def resolve(name: str) -> str | None:
+        explicit = os.environ.get(f"BASHWINK_{name.upper()}")
+        if explicit and Path(explicit).is_file():
+            return explicit
+        search = [toolchain_path] if toolchain_path else []
+        search.extend(os.environ.get("PATH", "").split(os.pathsep))
+        for directory in search:
+            if not directory:
+                continue
+            candidate = Path(directory) / name
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+        return None
+
+    def version_of(executable: str | None) -> tuple[str | None, str | None]:
+        if not executable:
+            return None, None
+        name = Path(executable).name
+        # `rustc` and `cargo` both accept `--version`; `zig` only accepts `version` (no dashes).
+        # Using one form for all of them silently recorded nulls for the tools that disagree, which
+        # is the opposite of what a provenance field is for.
+        argv = [executable, "version"] if name.startswith("zig") else [executable, "--version"]
+        try:
+            out = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            return executable, None
+        if out.returncode != 0:
+            return executable, None
+        return executable, out.stdout.strip().splitlines()[0] if out.stdout.strip() else None
+
+    rustc_path, rustc_version = version_of(resolve("rustc"))
+    cargo_path, cargo_version = version_of(resolve("cargo"))
+    bun_path, bun_version = version_of(resolve("bun"))
+    _, zig_pty_version = version_of(zig_daemon)
+    _, zig_opentui_version = version_of(zig_opentui)
     return {
-        "rust": version_of(rustc),
-        "cargo": version_of(cargo),
-        "bun": version_of(bun),
-        "zigPtyHelper": version_of(zig_daemon),
-        "zigOpentui": version_of(zig_opentui),
+        "rust": rustc_version,
+        "cargo": cargo_version,
+        "bun": bun_version,
+        "zigPtyHelper": zig_pty_version,
+        "zigOpentui": zig_opentui_version,
+        "paths": {
+            "rustc": rustc_path,
+            "cargo": cargo_path,
+            "bun": bun_path,
+            "zigPtyHelper": zig_daemon,
+            "zigOpentui": zig_opentui,
+        },
     }
+
+
+# The two Zig pins. They are deliberately different versions and neither may substitute for the
+# other: the daemon's build.rs was pinned against 0.16.0, OpenTUI's build.zig requires 0.17.0.
+WANT_ZIG_PTY = "0.16.0"
+WANT_ZIG_OPENTUI = "0.17.0"
+
+
+def default_zig(wanted: str) -> str | None:
+    """Find a Zig of exactly `wanted` under the known toolchain roots, or return None.
+
+    Wrong versions are skipped rather than accepted. A build recorded against an unverified
+    toolchain is not attributable, and "close enough" here silently changes what the compiler emits.
+    """
+    roots = [
+        Path("/tmp/zig-install"),
+        repo_root() / "build" / "toolchains",
+        Path.home() / ".local" / "share" / "zig",
+    ]
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for candidate in sorted(root.glob("zig-*")):
+            binary = candidate / "zig"
+            if not binary.is_file():
+                continue
+            try:
+                out = subprocess.run([str(binary), "version"], capture_output=True, text=True, timeout=30)
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if out.stdout.strip() == wanted:
+                return str(binary)
+    return None
 
 
 def manifest_for_target(target: str, *, zig_daemon: str | None = None, zig_opentui: str | None = None) -> dict:
     """The manifest skeleton for a target, before any artifacts exist."""
     spec = supported_target(target)
+    zig_daemon = zig_daemon or default_zig(WANT_ZIG_PTY)
+    zig_opentui = zig_opentui or default_zig(WANT_ZIG_OPENTUI)
     pins = _vendor_pins()
     return {
         "schemaVersion": SCHEMA_VERSION,
@@ -237,19 +328,46 @@ def preflight(*, engine_dir: Path, pty_dir: Path, target: str) -> dict[str, Path
         )
 
     # OpenTUI's native library for this target, which `--skip-install` will not fetch.
-    opentui_name = {
-        "darwin": f"libopentui-{spec['arch']}.dylib",
-        "linux": f"libopentui-{spec['arch']}.so",
-        "win32": f"opentui-{spec['arch']}.dll",
-    }[spec["os"]]
-    opentui_dirs = list((engine_dir / "node_modules" / "@opentui").glob(f"core-{spec['os']}-{spec['arch']}*"))
-    found = any((d / opentui_name).is_file() or list(d.glob("*.dylib")) or list(d.glob("*.so")) for d in opentui_dirs)
-    if not found:
+    #
+    # This check is deliberately stricter than "a .dylib exists". The registry package ships a
+    # stock libopentui that statically links FFmpeg (measured: 38 `avcodec`, 48 `libav`,
+    # 15 `avformat` markers), and accepting it would silently ship the exact obligation this
+    # project rebuilt the library to remove. So the library is scanned and refused if a marker is
+    # present.
+    opentui_dirs = sorted(
+        {
+            *((engine_dir / "node_modules" / "@opentui").glob(f"core-{spec['os']}-{spec['arch']}*")),
+            # Bun hoists workspace dependencies into a `.bun` store, so the package may only exist
+            # there. Without this, a stock FFmpeg-carrying library is invisible to the scan and the
+            # refusal reads "missing" instead of naming FFmpeg — a much weaker message for a much
+            # worse problem.
+            *(
+                (engine_dir / "node_modules" / ".bun").glob(
+                    f"@opentui+core-{spec['os']}-{spec['arch']}@*/node_modules/@opentui/core-{spec['os']}-{spec['arch']}"
+                )
+            ),
+        }
+    )
+    opentui_libs: list[Path] = []
+    for directory in opentui_dirs:
+        for pattern in ("*.dylib", "*.so", "*.dll"):
+            opentui_libs.extend(sorted(directory.glob(pattern)))
+    if not opentui_libs:
         missing.append(
             f"an OpenTUI native library for {target} under "
             f"{engine_dir}/node_modules/@opentui/core-{spec['os']}-{spec['arch']}* — built without "
             "FFmpeg per release/NOFFMPEG_RUNTIME.md"
         )
+    else:
+        for library in opentui_libs:
+            markers = ffmpeg_markers(library)
+            if markers:
+                raise BuildRefused(
+                    f"{library} contains FFmpeg markers {sorted(markers)}. This is the stock registry "
+                    "library, not the no-FFmpeg rebuild; building with it would reintroduce the "
+                    "FFmpeg obligation. Replace it with the local libopentui build "
+                    "(release/NOFFMPEG_RUNTIME.md)."
+                )
 
     if missing:
         raise BuildRefused(
@@ -257,7 +375,25 @@ def preflight(*, engine_dir: Path, pty_dir: Path, target: str) -> dict[str, Path
             "downloads a published runtime:\n  - " + "\n  - ".join(missing)
         )
 
-    return {"engine": engine_dir, "pty": pty_binary, "opentui": opentui_dirs[0]}
+    return {"engine": engine_dir, "pty": pty_binary, "opentui": opentui_libs[0]}
+
+
+# Markers that indicate FFmpeg code is linked in. `_ff_` is included because FFmpeg's internal
+# symbol prefix survives stripping in some builds; the published no-FFmpeg runtime matches none of
+# these, while the stock registry library matches all five.
+FFMPEG_MARKERS = (b"avcodec", b"avformat", b"swscale", b"swresample", b"libavutil", b"_ff_")
+
+
+def ffmpeg_markers(path: Path) -> set[str]:
+    """Return the FFmpeg markers found in `path`'s bytes, without loading the whole file."""
+    found: set[str] = set()
+    with path.open("rb") as handle:
+        while chunk := handle.read(8 << 20):
+            for marker in FFMPEG_MARKERS:
+                if marker in chunk and marker.decode() not in found:
+                    found.add(marker.decode())
+    return found
+
 
 
 def build(
@@ -317,7 +453,11 @@ def build(
     target_out = contained_path(out_root, target)
     target_out.mkdir(parents=True, exist_ok=True)
 
-    manifest = manifest_for_target(target)
+    manifest = manifest_for_target(
+        target,
+        zig_daemon=os.environ.get("BASHWINK_ZIG_PTY"),
+        zig_opentui=os.environ.get("BASHWINK_ZIG_OPENTUI"),
+    )
     manifest["pty"].update(
         {
             "name": inputs["pty"].name,
@@ -366,6 +506,36 @@ def build(
                 f"the stock build failed with exit {result.returncode}. stderr tail:\n"
                 f"{result.stderr[-2000:]}"
             )
+
+        # Record the artifact the build actually produced, not the path it was asked to produce.
+        # A manifest with a null digest would satisfy a schema check and prove nothing.
+        produced = target_out / "dist" / f"cli-{OPENCODE_TARGET_SUFFIX[target]}" / "bin" / (
+            "opencode.exe" if spec["os"] == "win32" else "opencode"
+        )
+        if not produced.is_file():
+            candidates = sorted((target_out / "dist").glob("cli-*/bin/opencode*"))
+            if not candidates:
+                raise BuildRefused(
+                    f"the build reported success but no engine binary exists under {target_out / 'dist'}. "
+                    "A missing artifact is a failure, not an empty success."
+                )
+            produced = candidates[0]
+
+        markers = ffmpeg_markers(produced)
+        if markers:
+            raise BuildRefused(
+                f"the built engine {produced} contains FFmpeg markers {sorted(markers)}. The "
+                "no-FFmpeg library substitution did not take effect; refusing to record this "
+                "artifact as the local engine."
+            )
+
+        manifest["engine"] = {
+            "name": produced.name,
+            "sha256": sha256_file(produced),
+            "bytes": produced.stat().st_size,
+            "path": str(produced.relative_to(target_out)),
+            "ffmpegMarkers": [],
+        }
 
     (target_out / "engine-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest

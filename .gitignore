@@ -50,3 +50,6 @@ build/
 
 # Private-alpha npm tarballs are distributed out of band; only their manifests and checksums are committed.
 release/standard/*/*.tgz
+
+# The stock build writes its app archive here; it is build output, not source.
+vendor/engine/packages/cli/.cache/

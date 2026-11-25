@@ -47,6 +47,64 @@ def load_builder():
         ) from exc
 
 
+class FfmpegLibraryTest(unittest.TestCase):
+    """The stock registry library must be refused, and the no-FFmpeg build accepted.
+
+    This is the licensing-adjacent check with teeth. A builder that only asked "is there a
+    .dylib?" would accept the stock registry package — measured at 38 `avcodec`, 48 `libav`,
+    15 `avformat` markers — and ship FFmpeg under a notice file that claims it was removed.
+    """
+
+    def test_stock_library_with_ffmpeg_markers_is_refused(self):
+        mod = load_builder()
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp) / "libopentui.dylib"
+            lib.write_bytes(b"\x00\x01" + b"avcodec" + b"\x00avformat\x00swscale\x00")
+            self.assertEqual(
+                mod.ffmpeg_markers(lib),
+                {"avcodec", "avformat", "swscale"},
+            )
+
+    def test_clean_library_reports_no_markers(self):
+        mod = load_builder()
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp) / "libopentui.dylib"
+            lib.write_bytes(b"\x00\x01opentui\x00renderer\x00")
+            self.assertEqual(mod.ffmpeg_markers(lib), set())
+
+    def test_vendored_library_on_disk_is_the_clean_rebuild(self):
+        """Whatever is installed in the platform package must be FFmpeg-free.
+
+        This test used to assert the *stock* library was detectable, which was true before the
+        no-FFmpeg rebuild replaced it. The durable invariant is the opposite direction: the library
+        the build will actually consume must scan clean, because that is the condition Gate D
+        depends on. Skipped rather than passed when the package is absent — a green result from not
+        looking is the failure this whole class exists to prevent.
+        """
+        mod = load_builder()
+        candidates = sorted(
+            (REPO / "vendor" / "engine" / "node_modules" / ".bun").glob(
+                "@opentui+core-darwin-arm64@*/node_modules/@opentui/core-darwin-arm64/*.dylib"
+            )
+        )
+        if not candidates:
+            self.skipTest("no vendored @opentui library installed to scan")
+        for library in candidates:
+            self.assertEqual(
+                mod.ffmpeg_markers(library),
+                set(),
+                f"{library} still contains FFmpeg markers; the no-FFmpeg rebuild has not been applied",
+            )
+
+    def test_no_ffmpeg_rebuild_is_accepted(self):
+        """A library with no markers passes, which is what the local rebuild must look like."""
+        mod = load_builder()
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp) / "libopentui.dylib"
+            lib.write_bytes(b"\x00opentui\x00vt\x00renderer\x00")
+            self.assertEqual(mod.ffmpeg_markers(lib), set())
+
+
 class UnsupportedTargetTest(unittest.TestCase):
     def test_unknown_target_is_refused_by_name(self):
         mod = load_builder()

@@ -13,41 +13,12 @@ and [BW-030](docs/bashwink/BW-030_EXECUTION_BACKEND_DESIGN.md). See `docs/bashwi
 
 ## v0.1.0-alpha.1 private npm candidate
 
-If you have access to this repository, you can [build the installer from source](#build-the-installer-from-source).
-You can also use the maintainer's `npm-rc2` installer, `bashwink-0.1.0-alpha.1.tgz`. The
-maintainer's local copy is in `release/standard/0.1.0-alpha.1-npm-rc2/`. Verify that copy with
-the [candidate's SHA256SUMS file](release/standard/0.1.0-alpha.1-npm-rc2/SHA256SUMS).
-
-npm fetches the pinned Bun and OpenCode runtimes during installation. The CLI runs in standard
-native mode, where approved shell commands run with your user account's access. Use a disposable
-Git project and review each approval.
-
-The optional VM is a separate Apple Silicon candidate with its own distribution gate.
-[macOS VM qualification report](docs/bashwink/releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md)
-
-### Build the installer from source
-
-On Windows 11 x64, install Node.js 22 with npm, Git, Python 3.12, and Bun 1.4.4. Make sure
-`python` and `bun` are on your PATH. In PowerShell, clone the private repository and build
-from the clean checkout.
-
-```powershell
-git clone https://github.com/ALDRIN121/bashwink.git
-Set-Location bashwink
-bun install --frozen-lockfile
-$packageDir = Join-Path $env:TEMP ("bashwink-build-" + [guid]::NewGuid())
-python scripts/build_npm_package.py --out $packageDir
-Set-Location $packageDir
-```
-
-The build writes `bashwink-0.1.0-alpha.1.tgz` and `SHA256SUMS` to that folder. Follow the
-installation steps below using both files from your own build. The manifest in that folder
-records the Git commit you built.
-
 ### Install on Windows 11 x64
 
-Use Node.js 22 with npm, Git, PowerShell, and access to the npm registry. Windows ARM64 is
-unsupported. Put the tarball and `SHA256SUMS` in the same folder and open PowerShell there.
+For a first test, get the prebuilt `bashwink-0.1.0-alpha.1.tgz` and `SHA256SUMS` from the
+maintainer. Use Node.js 22 with npm, Git, PowerShell, and internet access. Open PowerShell in
+the folder containing both files. npm fetches the pinned Bun and OpenCode runtimes during
+installation. Windows ARM64 is unsupported.
 
 1. Verify the tarball. Stop if the two hashes differ, ignoring letter case.
 
@@ -64,7 +35,8 @@ unsupported. Put the tarball and `SHA256SUMS` in the same folder and open PowerS
    bashwink.cmd doctor
    ```
 
-3. Open a disposable Git project in PowerShell and run `bashwink.cmd`.
+3. Open a disposable Git project in PowerShell and run `bashwink.cmd`. Review each approval.
+   In standard mode, approved shell commands run with your user account's access.
 
 The install checks need no model key. To help qualify Windows, follow the tester kit and return
 the generated JSON and completed checklist. Live coding checks use your own provider key and a
@@ -77,6 +49,30 @@ a live Windows model test, and licensing acceptance for the private alpha are st
 [Hosted CI results](https://github.com/ALDRIN121/bashwink/actions/runs/45578123343)
 · [Qualification report](docs/bashwink/FINAL_ALPHA_QUALIFICATION_REPORT.md)
 · [Platform results](docs/bashwink/SUPPORTED_PLATFORMS.md)
+
+The maintainer's `npm-rc2` files are in `release/standard/0.1.0-alpha.1-npm-rc2/`.
+[Candidate checksum](release/standard/0.1.0-alpha.1-npm-rc2/SHA256SUMS)
+
+### Build the installer from source
+
+Use this path to create a new installer. Building also requires Python 3.12 and Bun 1.4.4
+on your PATH. In PowerShell, clone the private repository and build from the clean checkout.
+
+```powershell
+git clone https://github.com/ALDRIN121/bashwink.git
+Set-Location bashwink
+bun install --frozen-lockfile
+$packageDir = Join-Path $env:TEMP ("bashwink-build-" + [guid]::NewGuid())
+python scripts/build_npm_package.py --out $packageDir
+Set-Location $packageDir
+```
+
+The build writes `bashwink-0.1.0-alpha.1.tgz` and `SHA256SUMS` to that folder. Use both
+files from your own build and follow the [Windows install steps](#install-on-windows-11-x64).
+The build manifest records the Git commit you built.
+
+The optional VM is a separate Apple Silicon candidate with its own distribution gate.
+[macOS VM qualification report](docs/bashwink/releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md)
 
 ## Layout
 

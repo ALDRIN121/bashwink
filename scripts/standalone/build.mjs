@@ -77,22 +77,61 @@ function checkPrerequisites() {
   return { node: process.version, npm: npmCheck.stdout.trim() };
 }
 
-function sourceFiles() {
-  const standaloneDir = path.join(REPO_ROOT, "packages", "bw-cli", "src", "standalone");
-  const standaloneFiles = readdirSync(standaloneDir)
+export function discoverStandaloneSources(repoRoot = REPO_ROOT) {
+  const standaloneDir = path.join(repoRoot, "packages", "bw-cli", "src", "standalone");
+  const seeds = readdirSync(standaloneDir)
     .filter((name) => name.endsWith(".ts"))
     .sort()
     .map((name) => path.join("packages", "bw-cli", "src", "standalone", name));
 
-  return [
-    path.join("packages", "bw-evidence", "src", "scope.ts"),
-    path.join("packages", "bw-evidence", "src", "recorder.ts"),
-    path.join("packages", "bw-cli", "src", "paths.ts"),
-    path.join("packages", "bw-cli", "src", "trust.ts"),
-    path.join("packages", "bw-cli", "src", "test-changes.ts"),
-    path.join("packages", "bw-cli", "src", "usage-guard.ts"),
-    ...standaloneFiles,
-  ];
+  const packagesRoot = path.resolve(repoRoot, "packages");
+  const visited = new Set();
+  const queue = [];
+
+  const enqueue = (relPath) => {
+    const normalized = relPath.split(path.sep).join("/");
+    if (visited.has(normalized)) return;
+    visited.add(normalized);
+    queue.push(normalized);
+  };
+
+  for (const s of seeds) enqueue(s);
+
+  while (queue.length > 0) {
+    const relTs = queue.shift();
+    const absTs = path.join(repoRoot, relTs);
+    if (!existsSync(absTs)) {
+      throw new Error(`Missing standalone source dependency: ${relTs}`);
+    }
+    const rawTs = readFileSync(absTs, "utf8");
+    const stripped = stripTypeScriptTypes(rawTs, {
+      mode: "strip",
+      sourceUrl: relTs,
+    });
+    for (const spec of extractModuleSpecifiers(stripped)) {
+      if (!spec.startsWith("./") && !spec.startsWith("../")) continue;
+      let resolved = path.resolve(path.dirname(absTs), spec);
+      if (resolved.endsWith(".js") && !existsSync(resolved)) {
+        const tsCandidate = resolved.slice(0, -3) + ".ts";
+        if (existsSync(tsCandidate)) resolved = tsCandidate;
+      }
+      if (!existsSync(resolved)) {
+        throw new Error(`Broken relative import '${spec}' in ${relTs} (expected ${resolved})`);
+      }
+      if (!resolved.startsWith(packagesRoot + path.sep)) {
+        throw new Error(`Standalone dependency '${resolved}' escapes packages/`);
+      }
+      if (resolved.endsWith(".ts")) {
+        enqueue(path.relative(repoRoot, resolved));
+      }
+    }
+  }
+
+  return [...visited].sort();
+}
+
+function sourceFiles() {
+  return discoverStandaloneSources(REPO_ROOT);
 }
 
 function rewriteRelativeTsSpecifiers(jsCode) {
@@ -115,7 +154,8 @@ function walkFiles(dir, prefix = "") {
 
 function extractModuleSpecifiers(jsSource) {
   const specs = [];
-  const staticFromRe = /^[ \t]*(?:import|export)\b[^\n;]*?\bfrom\s*["']([^"']+)["']/gm;
+  const staticFromRe =
+    /^[ \t]*(?:import|export)\s+(?:\*(?:\s+as\s+[A-Za-z_$][\w$]*)?|\{[^}]*\}|[A-Za-z_$][\w$]*(?:\s*,\s*(?:\{[^}]*\}|\*\s+as\s+[A-Za-z_$][\w$]*))?)\s+from\s*["']([^"']+)["']/gm;
   const sideEffectImportRe = /^[ \t]*import\s+["']([^"']+)["']/gm;
   const dynamicRe = /\b(?:import|require)\s*\(\s*["']([^"']+)["']\s*\)/g;
   for (const re of [staticFromRe, sideEffectImportRe, dynamicRe]) {

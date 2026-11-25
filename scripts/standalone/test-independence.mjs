@@ -21,6 +21,7 @@ import { once } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { discoverStandaloneSources } from "./build.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
@@ -65,18 +66,13 @@ async function main() {
   mkdirSync(work, { recursive: true });
 
   // Copy ONLY the standalone checkout footprint (NO vendor/, build/, node_modules/, .bun/)
+  const discoveredDeps = discoverStandaloneSources(REPO_ROOT).map((rel) => [rel, rel]);
   const copies = [
     ["package.json", "package.json"],
     ["LICENSE", "LICENSE"],
     ["release/npm", "release/npm"],
     ["scripts/standalone", "scripts/standalone"],
-    ["packages/bw-evidence/src/recorder.ts", "packages/bw-evidence/src/recorder.ts"],
-    ["packages/bw-evidence/src/scope.ts", "packages/bw-evidence/src/scope.ts"],
-    ["packages/bw-cli/src/paths.ts", "packages/bw-cli/src/paths.ts"],
-    ["packages/bw-cli/src/trust.ts", "packages/bw-cli/src/trust.ts"],
-    ["packages/bw-cli/src/test-changes.ts", "packages/bw-cli/src/test-changes.ts"],
-    ["packages/bw-cli/src/usage-guard.ts", "packages/bw-cli/src/usage-guard.ts"],
-    ["packages/bw-cli/src/standalone", "packages/bw-cli/src/standalone"],
+    ...discoveredDeps,
     ["packages/bw-cli/test/standalone", "packages/bw-cli/test/standalone"],
   ];
   for (const [srcRel, dstRel] of copies) {

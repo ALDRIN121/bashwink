@@ -333,6 +333,11 @@ jobs:
       # provider is not a live model.
       - name: Qualify the installed package (scripted provider)
         run: python fixtures/release/npm_qual.py build/npm/bashwink-0.1.0-alpha.1.tgz --out build/npm/qualification.json
+      # Validates the tester-kit script itself under Windows PowerShell 5.1 (no provider, so no live steps).
+      - name: Run the Windows tester-kit script
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\release\tester-kit\windows-qualify.ps1 -Tarball build\npm\bashwink-0.1.0-alpha.1.tgz -Out build\npm\tester-kit-result.json
       - name: Keep the evidence
         if: always()
         uses: actions/upload-artifact@v5

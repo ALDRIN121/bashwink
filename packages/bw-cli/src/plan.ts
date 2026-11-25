@@ -119,7 +119,7 @@ export function validatePlan(value: unknown): ValidationResult {
     for (const [i, file] of value.files.entries()) {
       if (typeof file !== "string" || file.trim() === "")
         add(`files[${i}]`, "file path must be a non-empty string")
-      else if (file.startsWith("/") || file.includes(".."))
+      else if (file.startsWith("/") || /^[A-Za-z]:/.test(file) || file.includes(".."))
         add(`files[${i}]`, `'${file}' must be repo-relative and may not traverse upward`)
     }
 

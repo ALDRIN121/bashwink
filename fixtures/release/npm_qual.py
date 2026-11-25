@@ -67,12 +67,16 @@ class Mock:
     def __init__(self, workdir: Path, script: dict):
         self.log, self.port_file = workdir / "requests.jsonl", workdir / "port"
         (workdir / "script.json").write_text(json.dumps(script), encoding="utf-8")
-        self.proc = subprocess.Popen([sys.executable, "-I", str(PROVIDER), "--script", str(workdir / "script.json"), "--log", str(self.log),
-                                      "--port-file", str(self.port_file)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.err = workdir / "provider.err"
+        with self.err.open("wb") as err:
+            self.proc = subprocess.Popen([sys.executable, "-I", str(PROVIDER), "--script", str(workdir / "script.json"), "--log", str(self.log),
+                                          "--port-file", str(self.port_file)], stdout=subprocess.DEVNULL, stderr=err)
         for _ in range(100):
             if self.port_file.exists() and self.port_file.read_text().strip():
                 break
             time.sleep(0.1)
+        if not (self.port_file.exists() and self.port_file.read_text().strip()):
+            raise RuntimeError(f"the scripted provider did not start (exit {self.proc.poll()}): {self.err.read_text(errors='replace')[-400:]}")
         self.port = int(self.port_file.read_text())
 
     def events(self, kind: str | None = None) -> list[dict]:

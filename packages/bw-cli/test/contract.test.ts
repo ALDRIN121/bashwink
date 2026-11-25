@@ -140,6 +140,9 @@ describe("BW-055 — validation refuses contracts that cannot be audited", () =>
     expect(issuePaths({ ...derived(), allowedPaths: ["src\\greeting.ts"] })).toContain(
       "allowedPaths[0]",
     )
+    // A Windows drive is absolute even with forward slashes, and would escape the workspace there.
+    for (const drive of ["C:/Windows/system.ini", "d:/other", "C:"])
+      expect(issuePaths({ ...derived(), allowedPaths: [drive] })).toContain("allowedPaths[0]")
   })
 
   test("the same path allowed and forbidden", () => {

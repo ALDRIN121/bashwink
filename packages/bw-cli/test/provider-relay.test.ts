@@ -1,5 +1,5 @@
 import { expect } from "bun:test"
-import { posixTest } from "./platform.js"
+import { macosTest, posixTest } from "./platform.js"
 import { mkdtempSync, rmSync, statSync } from "node:fs"
 import { request } from "node:http"
 import { tmpdir } from "node:os"
@@ -41,13 +41,7 @@ function post(
         }
       },
     )
-    // The server may answer an oversized request and close before the client finishes writing it; Linux then
-    // reports EPIPE on the write while the response is still on its way. Give the response a moment to arrive.
-    outgoing.on("error", (error: NodeJS.ErrnoException) => {
-      if (error.code === "EPIPE" || error.code === "ECONNRESET")
-        setTimeout(() => reject(error), 500)
-      else reject(error)
-    })
+    outgoing.on("error", reject)
     outgoing.end(body)
   })
 }
@@ -182,7 +176,9 @@ posixTest(
   },
 )
 
-posixTest("refuses oversized requests before dispatch", async () => {
+// macOS only: the relay closes the socket once the body passes 4 MiB while the client is still writing. Whether the client
+// then sees the 413 or a reset depends on socket buffer sizes (Linux resets). The relay itself exists only on macOS.
+macosTest("refuses oversized requests before dispatch", async () => {
   await fixture(
     {
       resolve: resolvePublic,

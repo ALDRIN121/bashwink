@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto"
+import path from "node:path"
 import { physicalPath } from "@bashwink/evidence"
 
 const SESSION_ROUTE = /^\/api\/(?:experimental\/)?session\/(ses_[A-Za-z0-9_-]+)(?:\/|$)/
@@ -24,7 +25,9 @@ export function startsModelWork(method: string, pathname: string): boolean {
 function inWorkspace(directory: unknown, workspace: string): boolean {
   if (typeof directory !== "string") return false
   try {
-    return directory.startsWith("/") && physicalPath(directory) === workspace
+    // `path.isAbsolute`, not `startsWith("/")`: on Windows an absolute path begins with a drive letter, and refusing
+    // every one of them made every session action fail with 403 there.
+    return path.isAbsolute(directory) && physicalPath(directory) === workspace
   } catch {
     return false
   }

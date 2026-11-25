@@ -124,6 +124,7 @@ describe("plan validation", () => {
   test("absolute and upward-traversing file paths are refused", () => {
     const absolute = validatePlan(plan([task("a")], { files: ["/etc/passwd"] }))
     expect(absolute.ok).toBe(false)
+    expect(validatePlan(plan([task("a")], { files: ["C:/Windows/system.ini"] })).ok).toBe(false)
     const upward = validatePlan(plan([task("a")], { files: ["../../secrets.env"] }))
     expect(upward.ok).toBe(false)
   })

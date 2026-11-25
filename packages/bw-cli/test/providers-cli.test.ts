@@ -11,6 +11,7 @@
  */
 
 import { describe, expect, test } from "bun:test"
+import { posixTest } from "./platform.js"
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -500,7 +501,8 @@ describe("BW-091 — pre-flight blocks a doomed run before it starts", () => {
     }
   })
 
-  test("a model outside the config is not pre-flighted, so the runtime still decides", () => {
+  // POSIX only: the stub runtime is a `#!/bin/sh` script, which Windows cannot execute.
+  posixTest("a model outside the config is not pre-flighted, so the runtime still decides", () => {
     const box = sandbox()
     const stub = stubRuntime()
     try {

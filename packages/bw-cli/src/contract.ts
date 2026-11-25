@@ -115,9 +115,12 @@ function pathIssue(value: unknown): string | undefined {
   return undefined
 }
 
-/** Local helper so this module keeps no `node:path` import for one POSIX check. */
+/**
+ * Absolute on any platform: a leading slash, or a Windows drive (`C:` or `C:/x`, which `path.resolve` treats as absolute
+ * on Windows). Kept free of `node:path` so the answer does not depend on the host the contract is validated on.
+ */
 function pathKind(value: string): "absolute" | "relative" {
-  return value.startsWith("/") ? "absolute" : "relative"
+  return value.startsWith("/") || /^[A-Za-z]:/.test(value) ? "absolute" : "relative"
 }
 
 function stringList(

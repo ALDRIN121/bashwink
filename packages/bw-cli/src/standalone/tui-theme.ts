@@ -649,7 +649,7 @@ export function renderOpenCodeDiff(
       ? true
       : options.view === "unified"
         ? false
-        : maxWidth > 110 && !options.create
+        : maxWidth >= 96 && !options.create
 
   const badgeParts: string[] = []
   if (counts.additions > 0) badgeParts.push(style.green(`+${counts.additions}`))
@@ -1040,4 +1040,362 @@ export function flushPendingEscape(state: KeyParserState): ParsedKeyEvent[] {
     return [{ kind: "key", name: "escape" }]
   }
   return []
+}
+
+function wrapFormattedTokens(styled: string, maxCols: number): string[] {
+  const width = Math.max(8, maxCols)
+  if (visibleWidth(styled) <= width) return [styled]
+
+  // Split into atomic tokens while tracking active SGR codes so wrapping never breaks color/bold across lines.
+  const out: string[] = []
+  let line = ""
+  let lineW = 0
+  let activeSgr = ""
+  let i = 0
+
+  const flushLine = () => {
+    out.push(activeSgr ? `${line}\x1b[0m` : line)
+    line = activeSgr
+    lineW = 0
+  }
+
+  while (i < styled.length) {
+    if (styled.charCodeAt(i) === 0x1b && styled[i + 1] === "[") {
+      let j = i + 2
+      while (j < styled.length && !(styled.charCodeAt(j) >= 0x40 && styled.charCodeAt(j) <= 0x7e)) j += 1
+      const seq = styled.slice(i, j < styled.length ? j + 1 : styled.length)
+      line += seq
+      if (seq.endsWith("m")) {
+        activeSgr = seq === "\x1b[0m" || seq === "\x1b[39m" || seq === "\x1b[22m" || seq === "\x1b[23m" || seq === "\x1b[49m" ? "" : `${activeSgr}${seq}`
+      }
+      i = j < styled.length ? j + 1 : styled.length
+      continue
+    }
+
+    // Consume either a space run or a non-space word up to next whitespace/escape
+    if (styled[i] === " ") {
+      if (lineW + 1 > width && lineW > 0) {
+        flushLine()
+      } else {
+        line += " "
+        lineW += 1
+      }
+      i += 1
+      continue
+    }
+
+    let j = i
+    let wordPlain = ""
+    while (j < styled.length && styled[j] !== " " && styled.charCodeAt(j) !== 0x1b) {
+      wordPlain += styled[j]
+      j += 1
+    }
+    const wordW = visibleWidth(wordPlain)
+    if (lineW > 0 && lineW + wordW > width) {
+      // Trim trailing space before wrapping cleanly to next line
+      while (line.endsWith(" ")) line = line.slice(0, -1)
+      flushLine()
+    }
+    if (wordW <= width) {
+      line += wordPlain
+      lineW += wordW
+    } else {
+      for (const ch of wordPlain) {
+        const cw = charDisplayWidth(ch)
+        if (lineW + cw > width && lineW > 0) flushLine()
+        line += ch
+        lineW += cw
+      }
+    }
+    i = j
+  }
+  if (line !== "" || out.length === 0) {
+    out.push(activeSgr ? `${line}\x1b[0m` : line)
+  }
+  return out
+}
+
+/**
+ * Render inline Markdown spans (`code`, **bold**, *italic*, [label](url)) cleanly using ANSI styling.
+ */
+export function renderInlineMarkdown(text: string, style: TuiStyle): string {
+  // Replace inline code spans first so markers inside backticks stay literal.
+  const codePlaceholders: string[] = []
+  let out = text.replace(/`([^`\n]+)`/g, (_m, code: string) => {
+    const token = `\x00CODE${codePlaceholders.length}\x00`
+    codePlaceholders.push(style.cyan(code))
+    return token
+  })
+
+  out = out.replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, (_m, label: string, url: string) =>
+    `${style.blue(label)} ${style.dim(`(${url})`)}`,
+  )
+  out = out.replace(/\*\*([^*\n]+)\*\*/g, (_m, boldText: string) => style.bold(boldText))
+  out = out.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, (_m, pre: string, it: string) => `${pre}${style.italic(it)}`)
+  out = out.replace(/(^|\s)_([^_\n]+)_(?=$|\s|[.,:;!?])/g, (_m, pre: string, it: string) => `${pre}${style.italic(it)}`)
+
+  for (let i = 0; i < codePlaceholders.length; i += 1) {
+    out = out.split(`\x00CODE${i}\x00`).join(codePlaceholders[i]!)
+  }
+  return out
+}
+
+function splitMarkdownTableRow(line: string): string[] {
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "")
+  const cells: string[] = []
+  let cur = ""
+  for (let i = 0; i < trimmed.length; i += 1) {
+    if (trimmed[i] === "\\" && trimmed[i + 1] === "|") {
+      cur += "|"
+      i += 1
+      continue
+    }
+    if (trimmed[i] === "|") {
+      cells.push(cur.trim())
+      cur = ""
+      continue
+    }
+    cur += trimmed[i]
+  }
+  cells.push(cur.trim())
+  return cells
+}
+
+function isTableSeparatorLine(line: string): boolean {
+  const t = line.trim()
+  if (!t.includes("-") || !t.includes("|")) return false
+  return /^\|?(?:\s*:?-{2,}:?\s*\|)+\s*(?::?-{2,}:?\s*\|?)?$/.test(t)
+}
+
+function renderMarkdownTable(
+  headerCells: string[],
+  bodyRows: string[][],
+  maxWidth: number,
+  style: TuiStyle,
+): string[] {
+  const colCount = Math.max(1, headerCells.length, ...bodyRows.map((r) => r.length))
+  const padRow = (r: string[]) => Array.from({ length: colCount }, (_, i) => renderInlineMarkdown(r[i] ?? "", style))
+  const styledHeader = padRow(headerCells)
+  const styledBody = bodyRows.map(padRow)
+
+  const naturalWidths = Array.from({ length: colCount }, (_, c) =>
+    Math.max(
+      4,
+      visibleWidth(styledHeader[c]!),
+      ...styledBody.map((r) => visibleWidth(r[c]!)),
+    ),
+  )
+
+  // Reserve 2-char indent + box borders (colCount + 1) + 2 spaces cell padding per column
+  const overhead = 2 + (colCount + 1) + colCount * 2
+  const availInner = Math.max(colCount * 8, maxWidth - overhead)
+  const colWidths = [...naturalWidths]
+  let total = colWidths.reduce((a, b) => a + b, 0)
+  while (total > availInner) {
+    let widestIdx = 0
+    for (let i = 1; i < colWidths.length; i += 1) {
+      if (colWidths[i]! > colWidths[widestIdx]!) widestIdx = i
+    }
+    if (colWidths[widestIdx]! <= 8) break
+    colWidths[widestIdx] = colWidths[widestIdx]! - 1
+    total -= 1
+  }
+
+  const hRule = (left: string, mid: string, right: string) =>
+    style.dim(`  ${left}${colWidths.map((w) => "─".repeat(w + 2)).join(mid)}${right}`)
+
+  const renderDataRow = (cells: string[], isHeader: boolean): string[] => {
+    const wrappedCols = cells.map((cell, c) => wrapFormattedTokens(cell, colWidths[c]!))
+    const rowLines = Math.max(1, ...wrappedCols.map((wc) => wc.length))
+    const rendered: string[] = []
+    for (let lineIdx = 0; lineIdx < rowLines; lineIdx += 1) {
+      const colsJoined = wrappedCols
+        .map((wc, c) => {
+          const piece = wc[lineIdx] ?? ""
+          const vis = visibleWidth(piece)
+          const pad = " ".repeat(Math.max(0, colWidths[c]! - vis))
+          const content = isHeader ? style.accentBold(stripAnsiSequences(piece)) : piece
+          return ` ${content}${pad} `
+        })
+        .join(style.dim("│"))
+      rendered.push(`  ${style.dim("│")}${colsJoined}${style.dim("│")}`)
+    }
+    return rendered
+  }
+
+  const out: string[] = [
+    hRule("┌", "┬", "┐"),
+    ...renderDataRow(styledHeader, true),
+    hRule("├", "┼", "┤"),
+  ]
+  for (let r = 0; r < styledBody.length; r += 1) {
+    out.push(...renderDataRow(styledBody[r]!, false))
+    if (r < styledBody.length - 1) out.push(hRule("├", "┼", "┤"))
+  }
+  out.push(hRule("└", "┴", "┘"))
+  return out
+}
+
+/**
+ * Render Markdown text cleanly for terminal output (OpenCode style):
+ * - Aligned Unicode box tables with automatic column shrinking & cell wrapping
+ * - Bordered fenced code blocks with language tags
+ * - Styled headings, lists, blockquotes, horizontal rules, inline code, bold, italic, and links
+ */
+export function renderOpenCodeMarkdown(
+  markdown: string,
+  maxWidth: number,
+  style: TuiStyle,
+): string[] {
+  const width = Math.max(24, maxWidth)
+  const rawLines = markdown.replace(/\r\n/g, "\n").split("\n")
+  const out: string[] = []
+  let i = 0
+
+  while (i < rawLines.length) {
+    const line = rawLines[i]!
+    const trimmed = line.trim()
+
+    if (trimmed === "") {
+      if (out.length > 0 && out.at(-1) !== "") out.push("")
+      i += 1
+      continue
+    }
+
+    // Fenced code blocks
+    const fenceMatch = /^```([^\s`]*)/.exec(trimmed)
+    if (fenceMatch) {
+      const lang = fenceMatch[1]?.trim() || "code"
+      out.push(`  ${style.accent("┃")} ${style.muted(lang)}`)
+      i += 1
+      while (i < rawLines.length && !rawLines[i]!.trim().startsWith("```")) {
+        const codeLines = wrapPlainText(rawLines[i]!, Math.max(16, width - 5))
+        for (const cl of codeLines) {
+          out.push(`  ${style.accent("┃")} ${style.cyan(cl)}`)
+        }
+        i += 1
+      }
+      if (i < rawLines.length && rawLines[i]!.trim().startsWith("```")) i += 1
+      out.push(`  ${style.dim("╹")}`)
+      continue
+    }
+
+    // Markdown table: current line has pipes AND next line is separator
+    if (
+      line.includes("|") &&
+      i + 1 < rawLines.length &&
+      isTableSeparatorLine(rawLines[i + 1]!)
+    ) {
+      const header = splitMarkdownTableRow(line)
+      i += 2
+      const body: string[][] = []
+      while (i < rawLines.length && rawLines[i]!.includes("|") && rawLines[i]!.trim() !== "") {
+        body.push(splitMarkdownTableRow(rawLines[i]!))
+        i += 1
+      }
+      out.push(...renderMarkdownTable(header, body, width, style))
+      continue
+    }
+
+    // Headings
+    const headingMatch = /^(#{1,6})\s+(.+)$/.exec(trimmed)
+    if (headingMatch) {
+      if (out.length > 0 && out.at(-1) !== "") out.push("")
+      const level = headingMatch[1]!.length
+      const content = renderInlineMarkdown(headingMatch[2]!, style)
+      const wrapped = wrapFormattedTokens(content, Math.max(16, width - 4))
+      for (const w of wrapped) {
+        out.push(`  ${level <= 2 ? style.accentBold(stripAnsiSequences(w)) : style.bold(stripAnsiSequences(w))}`)
+      }
+      i += 1
+      continue
+    }
+
+    // Horizontal rule
+    if (/^(?:-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      out.push(`  ${style.dim("─".repeat(Math.min(Math.max(12, width - 4), 72)))}`)
+      i += 1
+      continue
+    }
+
+    // Blockquote
+    if (trimmed.startsWith(">")) {
+      const body = trimmed.replace(/^>\s?/, "")
+      const wrapped = wrapFormattedTokens(renderInlineMarkdown(body, style), Math.max(16, width - 6))
+      for (const w of wrapped) {
+        out.push(`  ${style.accent("┃")} ${style.muted(stripAnsiSequences(w))}`)
+      }
+      i += 1
+      continue
+    }
+
+    // Bullet / numbered list
+    const listMatch = /^(\s*)([-*+]|\d+\.)\s+(.+)$/.exec(line)
+    if (listMatch) {
+      const indent = " ".repeat(Math.min(6, listMatch[1]!.length))
+      const marker = /^\d/.test(listMatch[2]!) ? style.muted(listMatch[2]!) : style.accent("•")
+      const content = renderInlineMarkdown(listMatch[3]!, style)
+      const wrapped = wrapFormattedTokens(content, Math.max(16, width - 6 - indent.length))
+      wrapped.forEach((w, idx) => {
+        out.push(idx === 0 ? `  ${indent}${marker} ${w}` : `  ${indent}  ${w}`)
+      })
+      i += 1
+      continue
+    }
+
+    // Regular paragraph line
+    const wrapped = wrapFormattedTokens(renderInlineMarkdown(line, style), Math.max(16, width - 4))
+    for (const w of wrapped) out.push(`  ${w}`)
+    i += 1
+  }
+
+  while (out.length > 0 && out.at(-1) === "") out.pop()
+  return out
+}
+
+/**
+ * OpenCode-inspired `BlockTool` / `ShellDisplay` card for completed `run_command` executions.
+ */
+export function renderOpenCodeShellCard(
+  opts: {
+    readonly command: string
+    readonly output?: string
+    readonly status: "ok" | "error" | "denied"
+    readonly exitCode?: number | null
+    readonly signal?: string | null
+    readonly maxWidth?: number
+  },
+  style: TuiStyle,
+): string[] {
+  const width = Math.max(36, opts.maxWidth ?? 90)
+  const statusText =
+    opts.status === "denied"
+      ? style.yellow("declined")
+      : opts.status === "ok"
+        ? style.green(`✓ exit ${opts.exitCode ?? 0}`)
+        : style.red(
+            opts.signal
+              ? `✗ signal ${opts.signal}`
+              : `✗ exit ${opts.exitCode === null || opts.exitCode === undefined ? "error" : opts.exitCode}`,
+          )
+  const rail = opts.status === "ok" ? style.accent("┃") : opts.status === "denied" ? style.yellow("┃") : style.red("┃")
+  const cmdMax = Math.max(12, width - 20)
+  const cmdLine = `${rail} ${style.bold("$")} ${style.bold(truncatePlain(opts.command, cmdMax))}  ${statusText}`
+
+  const lines = [cmdLine]
+  const rawBodyLines = (opts.output ?? "")
+    .split(/\r?\n/)
+    .filter((l, idx) => !(idx === 0 && l.startsWith("exitCode:")))
+    .map((l) => l.trimEnd())
+    .filter((l) => l !== "")
+  const maxBody = 6
+  const shown = rawBodyLines.slice(0, maxBody)
+  for (const bl of shown) {
+    lines.push(`${rail}   ${style.muted(truncatePlain(bl, Math.max(16, width - 8)))}`)
+  }
+  if (rawBodyLines.length > maxBody) {
+    lines.push(`${rail}   ${style.dim(`… (${rawBodyLines.length - maxBody} more line(s))`)}`)
+  }
+  lines.push(style.dim("╹"))
+  return lines
 }

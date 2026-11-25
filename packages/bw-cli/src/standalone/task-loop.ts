@@ -734,26 +734,30 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
 
         if (call.name === "list_files") {
           const r = executeListFiles(boundary, call.input)
+          const targetDir = String(call.input["directory"] ?? ".")
           const res: ToolDispatchResult = {
             callId: call.id,
             tool: call.name,
             status: r.ok ? "ok" : "error",
             output: r.output,
+            target: targetDir,
           }
           recorder.recordTool("after", ref, { status: r.ok ? "completed" : "error", output: r.output })
-          actions.push({ callId: call.id, tool: call.name, summary: String(call.input["directory"] ?? "."), decision: r.ok ? "allow" : "error" })
+          actions.push({ callId: call.id, tool: call.name, summary: targetDir, decision: r.ok ? "allow" : "error" })
           results.push(res)
           deps.onEvent?.({ type: "tool_completed", result: res })
         } else if (call.name === "read_file") {
           const r = executeReadFile(boundary, call.input, activeSecret)
+          const targetPath = String(call.input["path"] ?? "")
           const res: ToolDispatchResult = {
             callId: call.id,
             tool: call.name,
             status: r.ok ? "ok" : "error",
             output: r.output,
+            target: targetPath,
           }
           recorder.recordTool("after", ref, { status: r.ok ? "completed" : "error", output: r.output })
-          actions.push({ callId: call.id, tool: call.name, summary: String(call.input["path"] ?? ""), decision: r.ok ? "allow" : "error" })
+          actions.push({ callId: call.id, tool: call.name, summary: targetPath, decision: r.ok ? "allow" : "error" })
           results.push(res)
           deps.onEvent?.({ type: "tool_completed", result: res })
         } else if (call.name === "edit_file") {
@@ -843,18 +847,26 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
             abortedOrUncertain = true
             break
           }
+          const cleanDiff = sanitizeSecretText(prep.prepared.diffPreview, activeSecret)
           const res: ToolDispatchResult = {
             callId: call.id,
             tool: call.name,
             status: applied.ok ? "ok" : "error",
             output: applied.ok ? `Applied edit to ${applied.changedFile}.` : applied.reason,
-            ...(applied.ok ? { changedFile: applied.changedFile } : {}),
+            target: prep.prepared.relativePath,
+            ...(applied.ok
+              ? {
+                  changedFile: applied.changedFile,
+                  patch: cleanDiff,
+                  ...(prep.prepared.create ? { create: true } : {}),
+                }
+              : {}),
           }
           if (applied.ok) {
             changedFilesSet.add(applied.changedFile)
             appliedDiffs.push({
               path: applied.changedFile,
-              patch: sanitizeSecretText(prep.prepared.diffPreview, activeSecret),
+              patch: cleanDiff,
               ...(prep.prepared.create ? { create: true } : {}),
             })
           }
@@ -999,6 +1011,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
             tool: call.name,
             status: succeeded ? "ok" : "error",
             output: formattedOutput,
+            target: cmdDisplay,
             exitCode: run.exitCode,
             signal: run.signal,
           }

@@ -73,6 +73,8 @@ import {
   getTerminalLayout,
   padPlainRight,
   renderOpenCodeDiff,
+  renderOpenCodeMarkdown,
+  renderOpenCodeShellCard,
   truncatePathMiddle,
   truncatePlain,
   type ParsedKeyEvent,
@@ -992,11 +994,15 @@ function runDoctor(cwd: string, env: NodeJS.ProcessEnv, io: TerminalIO): number 
 
 function renderTaskOutcome(result: TaskResult, io: TerminalIO): void {
   const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+  const cols = terminalCols(io)
   if (result.finalText.trim() !== "") {
-    io.write(`\n${sanitizeTerminalText(result.finalText.trim())}\n`)
+    const cleanMd = sanitizeTerminalText(result.finalText.trim())
+    const rendered = renderOpenCodeMarkdown(cleanMd, cols, style)
+    io.write(`\n${rendered.join("\n")}\n`)
   }
-  io.write(`\n${style.dim("--- Task Summary ---")}\n`)
-  const outcomeLine = `Outcome   ${result.outcome}${result.stopReason ? ` — ${sanitizeTerminalText(result.stopReason)}` : ""}`
+  const ruleW = Math.min(Math.max(20, cols - 4), 72)
+  io.write(`\n  ${style.dim("─".repeat(ruleW))}\n`)
+  const outcomeLine = `  Outcome   ${result.outcome}${result.stopReason ? ` — ${sanitizeTerminalText(result.stopReason)}` : ""}`
   const outcomeColored =
     result.outcome === "completed"
       ? style.green(outcomeLine)
@@ -1009,15 +1015,15 @@ function renderTaskOutcome(result: TaskResult, io: TerminalIO): void {
       const c = countDiffChanges(d.patch)
       return `${d.path} (${style.green(`+${c.additions}`)} ${style.red(`-${c.deletions}`)})`
     })
-    io.write(`Changed   ${fileSummaries.join(", ")}\n`)
+    io.write(`  Changed   ${fileSummaries.join(", ")}\n`)
   } else {
-    io.write(`Changed   ${result.changedFiles.length > 0 ? result.changedFiles.join(", ") : "none"}\n`)
+    io.write(`  Changed   ${result.changedFiles.length > 0 ? result.changedFiles.join(", ") : "none"}\n`)
   }
   if (result.changedTests.length > 0) {
-    io.write(`Tests     modified test files: ${result.changedTests.join(", ")} (verify independently)\n`)
+    io.write(`  ${style.yellow("Tests")}     modified test files: ${result.changedTests.join(", ")} (verify independently)\n`)
   }
   if (result.commands.length === 0) {
-    io.write("Commands  none\n")
+    io.write(`  ${style.muted("Commands  none")}\n`)
   } else {
     for (const cmd of result.commands) {
       const cmdStr = sanitizeTerminalText([cmd.command, ...cmd.args].join(" "))
@@ -1029,16 +1035,16 @@ function renderTaskOutcome(result: TaskResult, io: TerminalIO): void {
             : cmd.signal
               ? `signal ${cmd.signal}`
               : `exited ${cmd.exitCode === null ? "unknown" : String(cmd.exitCode)}`
-      io.write(`Command   ${cmdStr} -> ${status}\n`)
+      io.write(`  Command   ${truncatePlain(cmdStr, Math.max(24, cols - 28))} -> ${status}\n`)
     }
   }
   io.write(
-    `Usage     ${result.requests} request(s), ${result.usage.inputTokens} in / ${result.usage.outputTokens} out tokens` +
+    `  ${style.muted("Usage")}     ${result.requests} request(s), ${result.usage.inputTokens} in / ${result.usage.outputTokens} out tokens` +
       (result.usage.costUsd !== undefined ? `, est. $${result.usage.costUsd.toFixed(6)}` : "") +
       "\n",
   )
-  io.write(`Evidence  ${result.evidenceFile}\n`)
-  io.write(`Run       ${result.runRecordFile}\n`)
+  io.write(`  ${style.dim(`Evidence  ${result.evidenceFile}`)}\n`)
+  io.write(`  ${style.dim(`Run       ${result.runRecordFile}`)}\n`)
 }
 
 function renderResumedSessionContext(io: TerminalIO, session: SessionRecord): void {
@@ -1921,6 +1927,38 @@ export async function runStandalone(
 
         startSpinnerAndCancel()
 
+        const shownDiffCallIds = new Set<string>()
+        const readBurst: Array<{ readonly tool: "read_file" | "list_files"; readonly target: string; readonly ok: boolean }> = []
+
+        const flushReadBurst = () => {
+          if (readBurst.length === 0) return
+          const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+          if (readBurst.length <= 3) {
+            for (const entry of readBurst) {
+              const target = sanitizeTerminalText(entry.target || ".")
+              if (entry.tool === "list_files") {
+                const icon = entry.ok ? style.accent("✱") : style.red("✗")
+                io.write(`  ${icon} ${style.muted(`List ${target}`)}\n`)
+              } else {
+                const icon = entry.ok ? style.muted("→") : style.yellow("✗")
+                io.write(`  ${icon} ${style.muted(entry.ok ? `Read ${target}` : `Read ${target} (not found)`)}\n`)
+              }
+            }
+          } else {
+            const dirs = readBurst.filter((r) => r.tool === "list_files")
+            const files = readBurst.filter((r) => r.tool === "read_file")
+            const failed = readBurst.filter((r) => !r.ok).length
+            const parts: string[] = []
+            if (dirs.length > 0) parts.push(`listed ${dirs.length} dir${dirs.length === 1 ? "" : "s"}`)
+            if (files.length > 0) parts.push(`read ${files.length} file${files.length === 1 ? "" : "s"}`)
+            const samples = [...new Set(readBurst.filter((r) => r.ok && r.target && r.target !== ".").map((r) => r.target))].slice(0, 3)
+            const sampleText = samples.length > 0 ? ` (${samples.join(", ")}${readBurst.length > 3 ? ", …" : ""})` : ""
+            const errText = failed > 0 ? ` · ${failed} unreadable` : ""
+            io.write(`  ${style.green("✓")} ${style.muted(`Explored ${parts.join(", ")}${sampleText}${errText}`)}\n`)
+          }
+          readBurst.length = 0
+        }
+
         let result: TaskResult
         try {
           result = await runTask(
@@ -1944,13 +1982,13 @@ export async function runStandalone(
               onEvent: (event: TaskEvent) => {
                 if (event.type === "model_requested") {
                   spinnerText = `Waiting for ${event.model} at ${formatDestination(event.endpoint)}`
-                  if (!(io instanceof RawTerminalIO) || event.step === 1) {
-                    clearSpinnerLine()
+                  if (!(io instanceof RawTerminalIO) && event.step === 1) {
                     io.write(`Waiting for ${event.model} at ${formatDestination(event.endpoint)}...\n`)
                   }
                   startSpinnerAndCancel()
                 } else if (event.type === "guardian_review") {
                   clearSpinnerLine()
+                  flushReadBurst()
                   const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
                   const tag =
                     event.verdict === "APPROVE"
@@ -1959,7 +1997,7 @@ export async function runStandalone(
                         ? style.red("DENY")
                         : style.yellow("ESCALATE")
                   const reasonSuffix = event.reason ? ` (${sanitizeTerminalText(event.reason)})` : ""
-                  io.write(`${style.accent("◆")} Smart review [${tag}]${reasonSuffix}\n`)
+                  io.write(`  ${style.accent("◆")} Smart review [${tag}]${reasonSuffix}\n`)
                   startSpinnerAndCancel()
                 } else if (event.type === "tool_approved") {
                   if (event.tool === "edit_file" && event.relativePath && event.resolvedPath) {
@@ -1972,26 +2010,75 @@ export async function runStandalone(
                     event.source !== "user-always"
                   ) {
                     clearSpinnerLine()
+                    flushReadBurst()
                     const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
-                    io.write(`${style.muted(`  ↳ approved (${event.source})`)}\n`)
+                    io.write(`  ${style.muted(`↳ approved (${event.source})`)}\n`)
                     startSpinnerAndCancel()
                   }
                 } else if (event.type === "tool_completed") {
-                  clearSpinnerLine()
                   const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+                  if (event.result.tool === "list_files" || event.result.tool === "read_file") {
+                    const target = event.result.target ?? (event.result.tool === "list_files" ? "." : "")
+                    readBurst.push({
+                      tool: event.result.tool,
+                      target,
+                      ok: event.result.status === "ok",
+                    })
+                    const readCount = readBurst.filter((r) => r.tool === "read_file").length
+                    const dirCount = readBurst.filter((r) => r.tool === "list_files").length
+                    const progressParts: string[] = []
+                    if (dirCount > 0) progressParts.push(`${dirCount} dir${dirCount === 1 ? "" : "s"}`)
+                    if (readCount > 0) progressParts.push(`${readCount} file${readCount === 1 ? "" : "s"}`)
+                    spinnerText =
+                      event.result.tool === "read_file"
+                        ? `Reading ${sanitizeTerminalText(target)} (${progressParts.join(", ")})`
+                        : `Listing ${sanitizeTerminalText(target || ".")} (${progressParts.join(", ")})`
+                    startSpinnerAndCancel()
+                    return
+                  }
+
+                  clearSpinnerLine()
+                  flushReadBurst()
                   if (event.result.tool === "edit_file") {
+                    if (
+                      event.result.status === "ok" &&
+                      event.result.patch &&
+                      !shownDiffCallIds.has(event.result.callId)
+                    ) {
+                      const cleanPatch = sanitizeTerminalText(event.result.patch)
+                      const rendered = renderOpenCodeDiff(
+                        cleanPatch,
+                        {
+                          path: event.result.target ?? event.result.changedFile ?? "file",
+                          create: event.result.create,
+                          maxWidth: terminalCols(io),
+                          view: "auto",
+                        },
+                        style,
+                      )
+                      io.write(`\n${rendered.join("\n")}\n`)
+                    }
                     const icon = event.result.status === "ok" ? style.green("✓") : style.red("✗")
-                    io.write(`${icon} ${event.result.output}\n`)
+                    io.write(`  ${icon} ${event.result.output}\n`)
                   } else if (event.result.tool === "run_command") {
-                    const icon = event.result.status === "ok" ? style.green("✓") : style.yellow("!")
-                    io.write(`${icon} ${sanitizeTerminalText(event.result.output.split("\n")[0] ?? "run_command")}\n`)
-                  } else if (event.result.tool === "list_files" || event.result.tool === "read_file") {
-                    io.write(`${style.muted("→")} ${event.result.tool} -> ${event.result.status}\n`)
+                    const shellLines = renderOpenCodeShellCard(
+                      {
+                        command: sanitizeTerminalText(event.result.target ?? "command"),
+                        output: sanitizeTerminalText(event.result.output),
+                        status: event.result.status,
+                        ...(event.result.exitCode !== undefined ? { exitCode: event.result.exitCode } : {}),
+                        ...(event.result.signal !== undefined ? { signal: event.result.signal } : {}),
+                        maxWidth: terminalCols(io),
+                      },
+                      style,
+                    )
+                    io.write(`${shellLines.map((l) => `  ${l}`).join("\n")}\n`)
                   }
                 }
               },
               confirmAction: async (req: ApprovalRequest): Promise<ApprovalDecision> => {
                 pauseSpinnerAndCancel()
+                flushReadBurst()
                 try {
                   const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
                   if (req.kind === "edit_file") {
@@ -2002,9 +2089,11 @@ export async function runStandalone(
                         path: req.prepared.relativePath,
                         create: req.prepared.create,
                         maxWidth: terminalCols(io),
+                        view: "auto",
                       },
                       style,
                     )
+                    shownDiffCallIds.add(req.callId)
                     io.write(`\n${rendered.join("\n")}\n`)
                     if (req.reason) {
                       const prefix = req.smartDenied ? style.red("Blocked:") : style.yellow("Note:")
@@ -2017,13 +2106,14 @@ export async function runStandalone(
                     })
                   }
                   const cmdLine = sanitizeTerminalText([req.prepared.command, ...req.prepared.args].join(" "))
-                  io.write(`\nRun      ${cmdLine}\n`)
-                  io.write(`Dir      ${sanitizeTerminalText(req.prepared.cwd)}\n`)
-                  io.write(`Warning  ${req.hostAccessWarning}\n`)
+                  io.write(`\n  ${style.yellow("┃")} ${style.bold("$")} ${style.bold(cmdLine)}\n`)
+                  io.write(`  ${style.yellow("┃")} ${style.muted(`Dir      ${sanitizeTerminalText(req.prepared.cwd)}`)}\n`)
+                  io.write(`  ${style.yellow("┃")} ${style.muted(`Warning  ${req.hostAccessWarning}`)}\n`)
                   if (req.reason) {
                     const prefix = req.smartDenied ? style.red("Blocked:") : style.yellow("Note:")
-                    io.write(`${prefix} ${sanitizeTerminalText(req.reason)}\n`)
+                    io.write(`  ${style.yellow("┃")} ${prefix} ${sanitizeTerminalText(req.reason)}\n`)
                   }
+                  io.write(`  ${style.dim("╹")}\n`)
                   return await askPermissionDecision(io, "Run this command? [y/N]", {
                     allowAlways: req.allowAlways ?? true,
                     ...(req.suggestedSummary ? { alwaysSummary: req.suggestedSummary } : {}),
@@ -2037,6 +2127,7 @@ export async function runStandalone(
           )
         } finally {
           pauseSpinnerAndCancel()
+          flushReadBurst()
         }
 
         currentAbort = undefined

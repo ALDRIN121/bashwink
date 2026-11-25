@@ -37,6 +37,8 @@ import {
   formatStatusFooterLine,
   getTerminalLayout,
   renderOpenCodeDiff,
+  renderOpenCodeMarkdown,
+  renderOpenCodeShellCard,
   stripAnsiSequences,
   truncatePathMiddle,
   truncatePlain,
@@ -770,6 +772,177 @@ test("real PTY OpenCode bottom-pinned raised prompt, Shift+Tab mode cycling, Alw
     const tailAfterGoodbye = parsed.output.split("Both files updated.")[1] ?? ""
     const strippedTail = stripAnsiSequences(tailAfterGoodbye).trimEnd()
     assert.ok(!strippedTail.endsWith("▀"))
+  } finally {
+    await new Promise<void>((resolve) => srv.close(() => resolve()))
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("OpenCode markdown table/code renderer, shell card, grouped read burst, and auto-mode split diff in PTY", async (t) => {
+  const plain = createStyle(false)
+  const mdLines = renderOpenCodeMarkdown(
+    [
+      "## Workspace Folders",
+      "",
+      "| Folder | Summary |",
+      "|---|---|",
+      "| `read_file` | Reads a file safely without touching `_private_var` markers. |",
+      "| `bw-cli` | Standalone TypeScript CLI with **evidence** logging. |",
+      "",
+      "```ts",
+      "export const ok = true;",
+      "```",
+    ].join("\n"),
+    64,
+    plain,
+  )
+  const mdJoined = mdLines.join("\n")
+  assert.ok(mdJoined.includes("Workspace Folders"))
+  assert.ok(!mdJoined.includes("## "))
+  assert.ok(mdJoined.includes("┌"))
+  assert.ok(mdJoined.includes("└"))
+  assert.ok(mdJoined.includes("read_file"))
+  assert.ok(mdJoined.includes("_private_var"))
+  assert.ok(mdJoined.includes("┃ ts"))
+  assert.ok(mdLines.every((l) => visibleWidth(l) <= 64))
+
+  const shellCard = renderOpenCodeShellCard(
+    { command: "npm test", output: "exitCode: 0\npass 1\npass 2", status: "ok", exitCode: 0, maxWidth: 80 },
+    plain,
+  ).join("\n")
+  assert.ok(shellCard.includes("$ npm test"))
+  assert.ok(shellCard.includes("✓ exit 0"))
+  assert.ok(shellCard.includes("pass 1"))
+
+  const pyCheck = spawnSync("python3", ["-c", "import pty, termios"], { encoding: "utf8" })
+  if (pyCheck.status !== 0) {
+    t.skip("python3 pty module unavailable")
+    return
+  }
+
+  const root = mkdtempSync(path.join(tmpdir(), "bw-job-ui-"))
+  const home = path.join(root, "home")
+  const ws = path.join(root, "ws")
+  mkdirSync(home, { recursive: true })
+  mkdirSync(ws, { recursive: true })
+  for (const name of ["a.txt", "b.txt", "c.txt", "d.txt"]) {
+    writeFileSync(path.join(ws, name), `${name}: old-value\n`, "utf8")
+  }
+
+  let step = 0
+  const srv = createServer((req, res) => {
+    let raw = ""
+    req.on("data", (c) => (raw += String(c)))
+    req.on("end", () => {
+      req.resume()
+      step += 1
+      res.writeHead(200, { "content-type": "application/json" })
+      if (step === 1) {
+        // Burst of 5 read/list calls -> must collapse cleanly into grouped summary instead of 5 spam lines
+        res.end(
+          JSON.stringify({
+            choices: [
+              {
+                finish_reason: "tool_calls",
+                message: {
+                  role: "assistant",
+                  content: "",
+                  tool_calls: [
+                    { id: "l1", type: "function", function: { name: "list_files", arguments: "{}" } },
+                    { id: "r1", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: "a.txt" }) } },
+                    { id: "r2", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: "b.txt" }) } },
+                    { id: "r3", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: "c.txt" }) } },
+                    { id: "r4", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: "d.txt" }) } },
+                  ],
+                },
+              },
+            ],
+          }),
+        )
+        return
+      }
+      if (step === 2) {
+        // Edit in auto mode -> auto-applied AND still shows side-by-side split diff comparison!
+        res.end(
+          JSON.stringify({
+            choices: [
+              {
+                finish_reason: "tool_calls",
+                message: {
+                  role: "assistant",
+                  content: "",
+                  tool_calls: [
+                    {
+                      id: "ed1",
+                      type: "function",
+                      function: {
+                        name: "edit_file",
+                        arguments: JSON.stringify({ path: "a.txt", oldText: "old-value", newText: "new-value" }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        )
+        return
+      }
+      res.end(
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: "stop",
+              message: {
+                role: "assistant",
+                content: "## Done\n\n| File | Status |\n|---|---|\n| `a.txt` | updated cleanly |",
+              },
+            },
+          ],
+        }),
+      )
+    })
+  })
+
+  await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", resolve))
+  const port = (srv.address() as { port: number }).port
+
+  try {
+    const resolved = paths({ BASHWINK_HOME: home })
+    mkdirSync(resolved.config, { recursive: true })
+    writeFileSync(
+      path.join(resolved.config, "standalone.json"),
+      JSON.stringify({
+        version: 1,
+        providerId: "custom-local",
+        endpointType: "local",
+        baseURL: `http://127.0.0.1:${port}/v1`,
+        model: "ui-model",
+        credential: { kind: "none" },
+        updatedAt: "2026-11-26T00:00:00.000Z",
+      }),
+      "utf8",
+    )
+    grantWorkspaceTrust(resolved.config, ws, "tester")
+
+    const steps = [
+      { wait: "bashwink> ", send: "/mode auto\r" },
+      { wait: "Permission mode set to 'auto'." },
+      { wait: "bashwink> ", send: "inspect and update\r" },
+      { wait: "Outcome   completed" },
+      { wait: "bashwink> ", send: "/exit\r" },
+    ]
+    const parsed = await runPtyDriver(ws, home, 36, 130, steps)
+    assert.equal(parsed.exitCode, 0, parsed.output)
+    const clean = stripAnsiSequences(parsed.output)
+    assert.ok(clean.includes("Explored listed 1 dir, read 4 files"))
+    assert.ok(!clean.includes("→ read_file -> ok"))
+    assert.ok(clean.includes("← Edit a.txt"))
+    // Split side-by-side separator (` - ` left and ` + ` right) shown automatically even in auto mode!
+    assert.ok(clean.includes("1 - a.txt: old-value") && clean.includes("1 + a.txt: new-value"))
+    assert.ok(clean.includes("│"))
+    // Markdown table rendered via Unicode box drawing
+    assert.ok(clean.includes("┌") && clean.includes("File") && clean.includes("updated cleanly"))
   } finally {
     await new Promise<void>((resolve) => srv.close(() => resolve()))
     rmSync(root, { recursive: true, force: true })

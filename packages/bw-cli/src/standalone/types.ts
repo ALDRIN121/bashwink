@@ -98,6 +98,9 @@ export interface ToolDispatchResult {
   readonly tool: string
   readonly status: "ok" | "error" | "denied"
   readonly output: string
+  readonly target?: string
+  readonly patch?: string
+  readonly create?: boolean
   readonly exitCode?: number | null
   readonly signal?: string | null
   readonly changedFile?: string

@@ -28,6 +28,7 @@ import {
   formatStatusFooterLine,
   getTerminalLayout,
   padPlainRight,
+  paintPromptSurfaceRow,
   truncatePlain,
   visibleWidth,
   wrapComposerLines,
@@ -41,6 +42,7 @@ import {
   type TuiStyle,
 } from "./tui-theme.ts"
 import { listWorkspaceFiles, type SessionRecord, type SessionTurn } from "./session.ts"
+import type { ApprovalDecision } from "./types.ts"
 
 export interface SlashCommandSpec {
   readonly name: string
@@ -133,6 +135,14 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     aliases: [],
     description: "Trust current workspace for interactive edit/command approvals",
     category: "Workspace",
+  },
+  {
+    name: "mode",
+    aliases: ["approvals", "permissions"],
+    description: "Switch permission mode (manual, accept-edits, smart guardian, auto)",
+    category: "Workspace",
+    shortcut: "shift+tab",
+    argumentHint: "[manual|accept-edits|smart|auto|reset]",
   },
   {
     name: "status",
@@ -236,6 +246,9 @@ export class RawTerminalSession {
   private attached = false
   private lastCols: number
   private lastRows: number
+  private estRow = 1
+  private estCol = 0
+  private inAltScreen = false
 
   constructor() {
     this.isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY)
@@ -260,6 +273,10 @@ export class RawTerminalSession {
     return this.readTerminalSize().rows
   }
 
+  cursorRow(): number {
+    return this.estRow
+  }
+
   layout(): TerminalLayout {
     const { cols, rows } = this.readTerminalSize()
     return getTerminalLayout(cols, rows)
@@ -267,6 +284,74 @@ export class RawTerminalSession {
 
   write(text: string): void {
     process.stdout.write(text)
+    this.trackWrittenCursor(text)
+  }
+
+  private trackWrittenCursor(text: string): void {
+    const { cols, rows } = this.readTerminalSize()
+    let i = 0
+    while (i < text.length) {
+      const code = text.charCodeAt(i)
+      if (code === 0x1b && text[i + 1] === "[") {
+        let j = i + 2
+        while (j < text.length && !(text.charCodeAt(j) >= 0x40 && text.charCodeAt(j) <= 0x7e)) j += 1
+        const final = text[j] ?? ""
+        const params = text.slice(i + 2, j)
+        if (params === "?1049" && final === "h") this.inAltScreen = true
+        else if (params === "?1049" && final === "l") this.inAltScreen = false
+        else if (!this.inAltScreen) {
+          if (params === "2" && final === "J") {
+            this.estRow = 1
+            this.estCol = 0
+          } else if (final === "H" || final === "f") {
+            const parts = params.split(";")
+            const r = Number.parseInt(parts[0] || "1", 10)
+            const c = Number.parseInt(parts[1] || "1", 10)
+            this.estRow = Math.min(rows, Math.max(1, Number.isFinite(r) ? r : 1))
+            this.estCol = Math.min(Math.max(0, cols - 1), Math.max(0, (Number.isFinite(c) ? c : 1) - 1))
+          } else if (final === "A") {
+            const n = Math.max(1, Number.parseInt(params || "1", 10) || 1)
+            this.estRow = Math.max(1, this.estRow - n)
+          } else if (final === "B") {
+            const n = Math.max(1, Number.parseInt(params || "1", 10) || 1)
+            this.estRow = Math.min(rows, this.estRow + n)
+          }
+        }
+        i = j < text.length ? j + 1 : text.length
+        continue
+      }
+      if (code === 0x1b && text[i + 1] === "]") {
+        let j = i + 2
+        while (j < text.length) {
+          if (text.charCodeAt(j) === 0x07) {
+            j += 1
+            break
+          }
+          if (text.charCodeAt(j) === 0x1b && text[j + 1] === "\\") {
+            j += 2
+            break
+          }
+          j += 1
+        }
+        i = j
+        continue
+      }
+      if (!this.inAltScreen) {
+        if (code === 0x0a) {
+          this.estRow = Math.min(rows, this.estRow + 1)
+          this.estCol = 0
+        } else if (code === 0x0d) {
+          this.estCol = 0
+        } else if (code >= 0x20) {
+          this.estCol += 1
+          if (this.estCol > cols) {
+            this.estRow = Math.min(rows, this.estRow + 1)
+            this.estCol = 1
+          }
+        }
+      }
+      i += 1
+    }
   }
 
   private ensureAttached(): void {
@@ -395,6 +480,7 @@ export type ComposerAction =
   | { readonly kind: "sessions" }
   | { readonly kind: "timeline" }
   | { readonly kind: "transcript" }
+  | { readonly kind: "cycle_mode"; readonly draft: string }
   | { readonly kind: "clear_screen" }
   | { readonly kind: "exit" }
 
@@ -403,6 +489,7 @@ export interface ComposerOptions {
   readonly style: TuiStyle
   readonly promptLabel: string
   readonly statusSummary: string
+  readonly permissionMode?: string
   readonly getStatusSummary?: (layout: TerminalLayout) => string
   readonly getMetadata?: (layout: TerminalLayout) => PromptMetadataInput
   readonly getStatusFooter?: (layout: TerminalLayout) => Omit<StatusFooterInput, "statusMessage">
@@ -484,6 +571,8 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
   let renderedCursorVisualCol = 0
   let lastPaintedCols = raw.cols()
   let lastPaintedRows: string[] = []
+  let prePinRow = Math.max(1, raw.cursorRow())
+  let pinSpacerRows = 0
 
   const getAutocomplete = (maxItems = 7): { mode: "slash" | "file"; tokenStart: number; items: AutocompleteItem[] } | undefined => {
     if (searchingHistory) return undefined
@@ -559,11 +648,17 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
     return rowsAbove
   }
 
-  const clearRenderedBlock = () => {
-    if (renderedTotalLines === 0) return
-    const upRows = physicalRowsAboveCursor(raw.cols())
+  const clearRenderedBlock = (erasePinSpacer = false) => {
+    if (renderedTotalLines === 0 && (!erasePinSpacer || pinSpacerRows === 0)) return
     let seq = "\r"
-    if (upRows > 0) seq += `\x1b[${upRows}A`
+    if (renderedTotalLines > 0) {
+      const upRows = physicalRowsAboveCursor(raw.cols())
+      if (upRows > 0) seq += `\x1b[${upRows}A`
+    }
+    if (erasePinSpacer && pinSpacerRows > 0) {
+      seq += `\x1b[${pinSpacerRows}A`
+      pinSpacerRows = 0
+    }
     seq += "\x1b[J"
     raw.write(seq)
     renderedTotalLines = 0
@@ -572,12 +667,25 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
     lastPaintedRows = []
   }
 
+  const railColorForMode = (text: string): string => {
+    const mode = opts.permissionMode
+    if (mode === "smart") return style.accent(text)
+    if (mode === "auto") return style.yellow(text)
+    if (mode === "accept-edits") return style.cyan(text)
+    return style.accent(text)
+  }
+
   const render = (firstPaint = false, reflowFromCols?: number) => {
+    if (reflowFromCols !== undefined) {
+      clearRenderedBlock(true)
+      firstPaint = true
+    }
+
     const layout = raw.layout()
     const cols = layout.cols
     const rows = layout.rows
     const railPlain = "┃ "
-    const railStyled = style.accent(railPlain)
+    const railStyled = railColorForMode(railPlain)
     const firstPrefix = `${railPlain}${opts.promptLabel}`
     const contPrefix = `${railPlain}${" ".repeat(Math.max(0, opts.promptLabel.length - 2))}│ `
     const { row: curRow, col: curCol, lines: bufLines } = cursorRowCol(buffer, cursor)
@@ -585,7 +693,7 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
     const placeholder =
       layout.isCompact || layout.isShort
         ? "Ask Bashwink (/ cmd, @ file)"
-        : "Ask Bashwink to inspect, edit, or test… (type / for commands, @ for files)"
+        : "Ask Bashwink to inspect, edit, or test… (/ cmd, @ file, Shift+Tab mode)"
 
     const wrapped = wrapComposerLines(
       bufLines,
@@ -603,20 +711,23 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
 
     const outLines: string[] = []
     if (!layout.isShort && rows >= 14) {
-      outLines.push(railStyled)
+      outLines.push(paintPromptSurfaceRow(railStyled, cols, style.enabled))
     }
 
     const promptLinesStart = outLines.length
-    outLines.push(...wrapped.visualRows)
+    for (const vRow of wrapped.visualRows) {
+      outLines.push(paintPromptSurfaceRow(vRow, cols, style.enabled))
+    }
 
     const maxAuto = Math.max(2, Math.min(7, rows - wrapped.visualRows.length - 5))
     const auto = getAutocomplete(maxAuto)
     if (!auto && !searchingHistory && opts.getMetadata && rows >= 14) {
       const meta = formatPromptMetadata(opts.getMetadata(layout), Math.max(14, cols - 4), style)
-      outLines.push(`${railStyled}${meta}`)
+      outLines.push(paintPromptSurfaceRow(`${railStyled}${meta}`, cols, style.enabled))
     }
 
-    outLines.push(style.dim(`╹${"▀".repeat(Math.max(10, cols - 1))}`))
+    const capStr = `╹${"▀".repeat(Math.max(10, cols - 1))}`
+    outLines.push(style.enabled ? style.promptCap(capStr) : style.dim(capStr))
 
     if (auto) {
       if (autoIndex >= auto.items.length) autoIndex = Math.max(0, auto.items.length - 1)
@@ -679,10 +790,30 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
     const targetCursorCol = Math.min(Math.max(0, cols - 1), wrapped.visualCursorCol)
 
     let frame = SYNC_START
-    if (!firstPaint && renderedTotalLines > 0) {
-      const upRows = reflowFromCols !== undefined ? physicalRowsAboveCursor(cols) : renderedCursorRow
+    if (firstPaint) {
+      prePinRow = Math.min(rows, Math.max(1, raw.cursorRow()))
+      const targetStartRow = Math.max(1, rows - outLines.length + 1)
+      if (prePinRow <= targetStartRow) {
+        const gap = targetStartRow - prePinRow
+        if (gap > 0) frame += "\n".repeat(gap)
+        pinSpacerRows = gap
+      } else {
+        const scrollDown = Math.max(0, outLines.length - 1)
+        if (scrollDown > 0) frame += `${"\n".repeat(scrollDown)}\x1b[${scrollDown}A`
+        pinSpacerRows = 0
+        prePinRow = targetStartRow
+      }
+    } else if (renderedTotalLines > 0) {
       frame += "\r"
-      if (upRows > 0) frame += `\x1b[${upRows}A`
+      if (renderedCursorRow > 0) frame += `\x1b[${renderedCursorRow}A`
+      if (outLines.length !== renderedTotalLines) {
+        const newTargetStartRow = Math.max(1, rows - outLines.length + 1)
+        const nextSpacer = Math.max(0, newTargetStartRow - prePinRow)
+        const deltaSpacer = nextSpacer - pinSpacerRows
+        if (deltaSpacer < 0) frame += `\x1b[${-deltaSpacer}A`
+        else if (deltaSpacer > 0) frame += "\n".repeat(deltaSpacer)
+        pinSpacerRows = nextSpacer
+      }
       frame += "\x1b[J"
     }
     frame += outLines.join("\n")
@@ -702,14 +833,39 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
   }
 
   const commitFinalPromptLine = (submittedText: string) => {
-    clearRenderedBlock()
-    const cols = raw.cols()
+    clearRenderedBlock(true)
     const preview = submittedText
       .split("\n")
-      .map((l, idx) => `${style.accent("┃ ")}${idx === 0 ? `${opts.promptLabel}${l}` : `  ${l}`}`)
+      .map((l, idx) => `${railColorForMode("┃ ")}${idx === 0 ? `${opts.promptLabel}${l}` : `  ${l}`}`)
       .join("\n")
-    raw.write(`${preview}\n${style.dim(`╹${"▀".repeat(Math.min(Math.max(15, cols - 1), 79))}`)}\n`)
+    raw.write(`${preview}\n`)
   }
+
+  const SILENT_CLEAR_COMMANDS = new Set([
+    "exit",
+    "quit",
+    "q",
+    "clear",
+    "new",
+    "help",
+    "?",
+    "sessions",
+    "resume",
+    "continue",
+    "timeline",
+    "rewind",
+    "checkpoint",
+    "undo",
+    "transcript",
+    "diff",
+    "mode",
+    "approvals",
+    "permissions",
+    "model",
+    "models",
+    "connect",
+    "setup",
+  ])
 
   return await new Promise<ComposerAction>((resolve) => {
     let settled = false
@@ -717,8 +873,11 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
       if (settled) return
       settled = true
       cleanup()
-      if (commitText !== undefined) commitFinalPromptLine(commitText)
-      else clearRenderedBlock()
+      const shouldCommit =
+        commitText !== undefined &&
+        !(action.kind === "command" && SILENT_CLEAR_COMMANDS.has(action.name))
+      if (shouldCommit) commitFinalPromptLine(commitText)
+      else clearRenderedBlock(true)
       resolve(action)
     }
 
@@ -1091,6 +1250,9 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
         case "pageup":
           finish({ kind: "transcript" })
           return
+        case "shift+tab":
+          finish({ kind: "cycle_mode", draft: buffer })
+          return
         default:
           return
       }
@@ -1302,6 +1464,137 @@ export async function askHybridConfirm(
         if (ev.name === "enter") {
           if (typed !== "") finish(typed)
           else finish(highlighted === "yes" ? "y" : "n")
+        }
+      }
+    }
+    const cleanup = raw.beginCapture(onKey, () => render())
+    render()
+  })
+}
+
+export interface HybridPermissionOptions {
+  readonly allowAlways: boolean
+  readonly alwaysSummary?: string
+  readonly signal?: AbortSignal
+}
+
+/**
+ * OpenCode/Hermes 3-way interactive permission selector:
+ * `[ Allow once (y) ]  [ Always allow (a) ]  [ Reject (n) ]`
+ * Supports typed `y`/`a`/`n` + `Enter`, `Left`/`Right`/`Tab` navigation + `Enter`, and `Esc` to reject.
+ */
+export async function askHybridPermission(
+  raw: RawTerminalSession,
+  style: TuiStyle,
+  promptText: string,
+  opts: HybridPermissionOptions,
+): Promise<ApprovalDecision> {
+  const choices: ApprovalDecision[] = opts.allowAlways
+    ? ["once", "always", "reject"]
+    : ["once", "reject"]
+  let typed = ""
+  let selectedIdx = choices.length - 1
+  let renderedRows = 0
+
+  const resolveTypedDecision = (text: string): ApprovalDecision => {
+    const clean = text.trim().toLowerCase()
+    if (clean === "y" || clean === "yes") return "once"
+    if ((clean === "a" || clean === "always") && opts.allowAlways) return "always"
+    return "reject"
+  }
+
+  const pill = (dec: ApprovalDecision, active: boolean): string => {
+    const label =
+      dec === "once"
+        ? " Allow once (y) "
+        : dec === "always"
+          ? " Always allow (a) "
+          : " Reject (n) "
+    if (active) return style.selectedRow(label)
+    if (dec === "once") return style.green(label.trim())
+    if (dec === "always") return style.cyan(label.trim())
+    return style.muted(label.trim())
+  }
+
+  const render = () => {
+    const layout = raw.layout()
+    let frame = SYNC_START
+    if (renderedRows > 1) frame += `\r\x1b[${renderedRows - 1}A\x1b[J`
+    else if (renderedRows === 1) frame += "\r\x1b[2K"
+
+    const active = choices[selectedIdx] ?? "reject"
+    const bar = choices.map((c) => pill(c, typed === "" && c === active)).join(style.dim(" · "))
+    const wideInline = layout.cols >= promptText.length + (typed === "" ? (opts.allowAlways ? 58 : 36) : typed.length + 4)
+    const lines: string[] = []
+    if (wideInline) {
+      const hintW = typed === "" ? (opts.allowAlways ? 56 : 34) : typed.length + 4
+      const safePrompt = truncatePlain(promptText, Math.max(12, layout.cols - hintW))
+      lines.push(`${safePrompt}  ${typed === "" ? `[${bar}]` : typed}`)
+    } else {
+      lines.push(truncatePlain(promptText, layout.cols))
+      lines.push(`  ${typed === "" ? `[${bar}]` : typed}`)
+    }
+    if (typed === "" && active === "always" && opts.alwaysSummary) {
+      lines.push(style.dim(truncatePlain(`  ↳ Will remember for this workspace: ${opts.alwaysSummary}`, layout.cols)))
+    }
+    frame += `${lines.join("\n")}${CURSOR_SHOW}${SYNC_END}`
+    raw.write(frame)
+    renderedRows = lines.length
+  }
+
+  return await new Promise<ApprovalDecision>((resolve) => {
+    let done = false
+    const onAbort = () => finish("reject")
+    const finish = (val: ApprovalDecision) => {
+      if (done) return
+      done = true
+      signal?.removeEventListener("abort", onAbort)
+      cleanup()
+      raw.write("\n")
+      resolve(val)
+    }
+    const signal = opts.signal
+    if (signal?.aborted) {
+      finish("reject")
+      return
+    }
+    signal?.addEventListener("abort", onAbort, { once: true })
+
+    const onKey = (ev: ParsedKeyEvent) => {
+      if (ev.kind === "ctrl" && (ev.key === "c" || ev.key === "d")) {
+        finish("reject")
+        return
+      }
+      if (ev.kind === "char") {
+        typed += ev.text
+        render()
+        return
+      }
+      if (ev.kind === "key") {
+        if (ev.name === "escape") {
+          finish("reject")
+          return
+        }
+        if ((ev.name === "left" || ev.name === "up") && typed === "") {
+          selectedIdx = (selectedIdx - 1 + choices.length) % choices.length
+          render()
+          return
+        }
+        if ((ev.name === "right" || ev.name === "down" || ev.name === "tab") && typed === "") {
+          selectedIdx = (selectedIdx + 1) % choices.length
+          render()
+          return
+        }
+        if (ev.name === "backspace") {
+          if (typed.length > 0) {
+            typed = typed.slice(0, -1)
+            render()
+          }
+          return
+        }
+        if (ev.name === "enter") {
+          if (typed !== "") finish(resolveTypedDecision(typed))
+          else finish(choices[selectedIdx] ?? "reject")
         }
       }
     }

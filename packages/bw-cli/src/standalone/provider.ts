@@ -186,6 +186,7 @@ export interface CompleteRequest {
   readonly env?: NodeJS.ProcessEnv
   readonly apiKeyOverride?: string
   readonly maxOutputTokens?: number
+  readonly temperature?: number
   readonly timeoutMs?: number
   readonly maxResponseBytes?: number
   readonly fetchImpl?: typeof fetch
@@ -537,6 +538,7 @@ export async function complete(req: CompleteRequest): Promise<ProviderCompletion
             messages: converted.messages,
             ...(req.tools.length > 0 ? { tools: toAnthropicTools(req.tools) } : {}),
             max_tokens: req.maxOutputTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS,
+            ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
             stream: false,
           })
         })()
@@ -545,6 +547,7 @@ export async function complete(req: CompleteRequest): Promise<ProviderCompletion
           messages: toWireMessages(req.messages),
           ...(req.tools.length > 0 ? { tools: toWireTools(req.tools) } : {}),
           ...(req.maxOutputTokens !== undefined ? { max_tokens: req.maxOutputTokens } : {}),
+          ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
           stream: false,
         })
 

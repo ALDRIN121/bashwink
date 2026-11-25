@@ -646,3 +646,132 @@ test("real PTY auto-adjusts composer and modals live across wide -> narrow -> wi
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test("real PTY OpenCode bottom-pinned raised prompt, Shift+Tab mode cycling, Always allow persistence, and clean /exit", async (t) => {
+  const pyCheck = spawnSync("python3", ["-c", "import pty, termios"], { encoding: "utf8" })
+  if (pyCheck.status !== 0) {
+    t.skip("python3 pty module unavailable")
+    return
+  }
+
+  const root = mkdtempSync(path.join(tmpdir(), "bw-opencode-box-"))
+  const home = path.join(root, "home")
+  const ws = path.join(root, "ws")
+  mkdirSync(home, { recursive: true })
+  mkdirSync(ws, { recursive: true })
+  writeFileSync(path.join(ws, "one.txt"), "old1\n", "utf8")
+  writeFileSync(path.join(ws, "two.txt"), "old2\n", "utf8")
+
+  let turn = 0
+  const srv = createServer((req, res) => {
+    let raw = ""
+    req.on("data", (c) => (raw += String(c)))
+    req.on("end", () => {
+      const body = JSON.parse(raw) as { messages?: Array<{ role: string }> }
+      const hasToolMsg = (body.messages ?? []).some((m) => m.role === "tool")
+      res.writeHead(200, { "content-type": "application/json" })
+      if (!hasToolMsg) {
+        turn += 1
+        res.end(
+          JSON.stringify({
+            choices: [
+              {
+                finish_reason: "tool_calls",
+                message: {
+                  role: "assistant",
+                  content: "",
+                  tool_calls: [
+                    {
+                      id: `e_${turn}_1`,
+                      type: "function",
+                      function: {
+                        name: "edit_file",
+                        arguments: JSON.stringify({ path: "one.txt", oldText: "old1", newText: "new1" }),
+                      },
+                    },
+                    {
+                      id: `e_${turn}_2`,
+                      type: "function",
+                      function: {
+                        name: "edit_file",
+                        arguments: JSON.stringify({ path: "two.txt", oldText: "old2", newText: "new2" }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+            usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+          }),
+        )
+        return
+      }
+      res.end(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { role: "assistant", content: "Both files updated." } }],
+          usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25 },
+        }),
+      )
+    })
+  })
+
+  await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", resolve))
+  const port = (srv.address() as { port: number }).port
+
+  try {
+    const resolved = paths({ BASHWINK_HOME: home })
+    mkdirSync(resolved.config, { recursive: true })
+    writeFileSync(
+      path.join(resolved.config, "standalone.json"),
+      JSON.stringify({
+        version: 1,
+        providerId: "custom-local",
+        endpointType: "local",
+        baseURL: `http://127.0.0.1:${port}/v1`,
+        model: "box-model",
+        credential: { kind: "none" },
+        updatedAt: "2026-11-26T00:00:00.000Z",
+      }),
+      "utf8",
+    )
+    grantWorkspaceTrust(resolved.config, ws, "tester")
+
+    const steps = [
+      { wait: "bashwink> " },
+      { wait: "mode:manual" },
+      { wait: "shift+tab" },
+      // Shift+Tab cycles mode while preserving draft text
+      { send: "draft text\x1b[Z" },
+      { wait: "mode:accept-edits" },
+      { send: "\x1b[Z" },
+      { wait: "mode:smart" },
+      { send: "\x1b[Z" },
+      { wait: "mode:auto" },
+      { send: "\x1b[Z" },
+      { wait: "mode:manual" },
+      { send: "\x03" }, // Clear "draft text"
+      { wait: "Cleared input", send: "update both files\r" },
+      { wait: "Apply this change? [y/N]" },
+      { wait: "Always allow (a)" },
+      { send: "a\r" }, // Save Always allow for edit_file -> second edit auto-approves without prompting!
+      { wait: "Both files updated." },
+      { wait: "bashwink> ", send: "/exit\r" },
+    ]
+    const parsed = await runPtyDriver(ws, home, 30, 110, steps)
+    assert.equal(parsed.exitCode, 0, parsed.output)
+    // OpenCode raised surface background ANSI (48;5;235) was painted!
+    assert.ok(parsed.output.includes("\x1b[48;5;235m"), "Expected OpenCode raised prompt background")
+    assert.equal(readFileSync(path.join(ws, "one.txt"), "utf8"), "new1\n")
+    assert.equal(readFileSync(path.join(ws, "two.txt"), "utf8"), "new2\n")
+    // Verify confirmation widget appeared only ONCE across the two edits, and second edit used the saved rule
+    assert.equal(parsed.output.split("Always allow (a)").length - 1, 1)
+    assert.ok(parsed.output.includes("approved (rule)"))
+    // Verify clean /exit left NO orphaned "╹▀▀▀▀" after the final prompt
+    const tailAfterGoodbye = parsed.output.split("Both files updated.")[1] ?? ""
+    const strippedTail = stripAnsiSequences(tailAfterGoodbye).trimEnd()
+    assert.ok(!strippedTail.endsWith("▀"))
+  } finally {
+    await new Promise<void>((resolve) => srv.close(() => resolve()))
+    rmSync(root, { recursive: true, force: true })
+  }
+})

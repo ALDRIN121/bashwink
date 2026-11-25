@@ -40,6 +40,7 @@ export interface TuiStyle {
   yellow(s: string): string
   cyan(s: string): string
   blue(s: string): string
+  promptCap(s: string): string
   selectedRow(s: string): string
   diffLine(line: string): string
 }
@@ -55,10 +56,11 @@ export function createStyle(enabled: boolean): TuiStyle {
     accentBold: (s) => wrapAnsi("\x1b[1;38;5;75m", "\x1b[22;39m", s, enabled),
     muted: (s) => wrapAnsi("\x1b[38;5;244m", "\x1b[39m", s, enabled),
     green: (s) => wrapAnsi("\x1b[38;5;114m", "\x1b[39m", s, enabled),
-    red: (s) => wrapAnsi("\x1b[38;5;203m", "\x1b[39m", s, enabled),
+    red: (s: string) => wrapAnsi("\x1b[38;5;203m", "\x1b[39m", s, enabled),
     yellow: (s) => wrapAnsi("\x1b[38;5;221m", "\x1b[39m", s, enabled),
     cyan: (s) => wrapAnsi("\x1b[38;5;80m", "\x1b[39m", s, enabled),
     blue: (s) => wrapAnsi("\x1b[38;5;111m", "\x1b[39m", s, enabled),
+    promptCap: (s) => wrapAnsi("\x1b[38;5;235m", "\x1b[39m", s, enabled),
     selectedRow: (s) => wrapAnsi("\x1b[48;5;237;38;5;255m", "\x1b[49;39m", s, enabled),
     diffLine: (line) => {
       if (!enabled) return line
@@ -180,6 +182,17 @@ export function padPlainRight(text: string, cols: number): string {
   const truncated = truncatePlain(text, cols)
   const w = visibleWidth(truncated)
   return w < cols ? truncated + " ".repeat(cols - w) : truncated
+}
+
+/**
+ * Fill a styled row cleanly to `cols` width with OpenCode's subtle raised prompt surface (`#212121` / `48;5;235`).
+ */
+export function paintPromptSurfaceRow(styledRow: string, cols: number, enabled: boolean): string {
+  const w = visibleWidth(styledRow)
+  const pad = w < cols ? " ".repeat(cols - w) : ""
+  if (!enabled) return `${styledRow}${pad}`
+  const safeInner = styledRow.split("\x1b[49m").join("\x1b[48;5;235m")
+  return `\x1b[48;5;235m${safeInner}${pad}\x1b[49m`
 }
 
 export function wrapPlainText(text: string, maxCols: number): string[] {
@@ -360,6 +373,7 @@ export interface PromptMetadataInput {
   readonly model: string
   readonly provider?: string
   readonly variant?: string
+  readonly permissionMode?: string
   readonly trustLabel?: string
   readonly trusted?: boolean
 }
@@ -376,20 +390,23 @@ export function formatPromptMetadata(
   const width = Math.max(12, maxWidth)
   const agent = width < 40 ? undefined : input.agent
   const provider = width < 40 ? undefined : input.provider
+  const modeTag = input.permissionMode ? `mode:${input.permissionMode}` : undefined
   const candidates: Array<{
     agent?: string | undefined
     model: string
     provider?: string | undefined
     variant?: string | undefined
+    mode?: string | undefined
     trust?: string | undefined
   }> = [
-    { agent, model: input.model, provider, variant: input.variant, trust: input.trustLabel },
-    { agent, model: input.model, provider: provider?.split(" / ").at(-1), variant: input.variant, trust: input.trustLabel },
-    { agent, model: input.model, variant: input.variant, trust: input.trustLabel },
+    { agent, model: input.model, provider, variant: input.variant, mode: modeTag, trust: input.trustLabel },
+    { agent, model: input.model, provider: provider?.split(" / ").at(-1), variant: input.variant, mode: modeTag, trust: input.trustLabel },
+    { agent, model: input.model, mode: modeTag, trust: input.trustLabel },
+    { agent, model: input.model, mode: input.permissionMode },
     { agent, model: input.model },
   ]
   const plainLen = (c: (typeof candidates)[number]) =>
-    [c.agent, c.model, c.provider, c.variant, c.trust].filter(Boolean).join(" · ").length
+    [c.agent, c.model, c.provider, c.variant, c.mode, c.trust].filter(Boolean).join(" · ").length
 
   let chosen = candidates.find((c) => plainLen(c) <= width)
   if (!chosen) {
@@ -405,6 +422,13 @@ export function formatPromptMetadata(
   segs.push(style.bold(chosen.model))
   if (chosen.provider) segs.push(style.muted(chosen.provider))
   if (chosen.variant) segs.push(style.yellow(chosen.variant))
+  if (chosen.mode) {
+    const m = input.permissionMode
+    if (m === "smart") segs.push(style.accentBold(chosen.mode))
+    else if (m === "auto") segs.push(style.yellow(chosen.mode))
+    else if (m === "accept-edits") segs.push(style.cyan(chosen.mode))
+    else segs.push(style.muted(chosen.mode))
+  }
   if (chosen.trust) segs.push(input.trusted ? style.green(chosen.trust) : style.yellow(chosen.trust))
   return segs.join(style.dim(" · "))
 }

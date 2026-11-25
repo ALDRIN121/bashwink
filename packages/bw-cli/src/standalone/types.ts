@@ -110,11 +110,22 @@ export interface WorkspaceContextChunk {
   readonly untrusted: true
 }
 
+export type PermissionMode = "manual" | "accept-edits" | "smart" | "auto"
+
+export type ApprovalDecision = "once" | "always" | "reject"
+
+export interface SavedPermissionRule {
+  readonly tool: "edit_file" | "run_command"
+  readonly pattern: string
+  readonly grantedAt: string
+}
+
 export interface RunActionRecord {
   readonly callId: string
   readonly tool: string
   readonly summary: string
   readonly decision: "allow" | "approve" | "deny" | "error"
+  readonly approvalSource?: string
   readonly exitCode?: number | null
   readonly signal?: string | null
   readonly target?: string
@@ -182,7 +193,8 @@ export type TaskEvent =
   | { readonly type: "model_requested"; readonly step: number; readonly model: string; readonly endpoint: string }
   | { readonly type: "model_responded"; readonly step: number; readonly finishReason: FinishReason; readonly usage?: ModelUsage }
   | { readonly type: "tool_proposed"; readonly callId: string; readonly tool: string; readonly summary: string; readonly preview?: string }
-  | { readonly type: "tool_approved"; readonly callId: string; readonly tool: string }
+  | { readonly type: "guardian_review"; readonly callId: string; readonly tool: string; readonly verdict: "APPROVE" | "DENY" | "ESCALATE"; readonly reason?: string }
+  | { readonly type: "tool_approved"; readonly callId: string; readonly tool: string; readonly source?: string; readonly relativePath?: string; readonly resolvedPath?: string }
   | { readonly type: "tool_denied"; readonly callId: string; readonly tool: string; readonly reason: string }
   | { readonly type: "tool_completed"; readonly result: ToolDispatchResult }
   | { readonly type: "assistant_text"; readonly text: string }
@@ -193,6 +205,8 @@ export interface TaskInput {
   readonly prompt: string
   readonly trusted: boolean
   readonly config: StandaloneConfig
+  readonly permissionMode?: PermissionMode
+  readonly savedRules?: readonly SavedPermissionRule[]
   readonly history?: readonly ChatMessage[]
   readonly budgets?: Partial<TaskBudgets>
   readonly signal?: AbortSignal

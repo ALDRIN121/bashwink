@@ -29,10 +29,18 @@ import {
   type TestConnectionResult,
 } from "./provider.ts"
 import {
+  PERMISSION_MODES,
   canonicalWorkspace,
+  clearWorkspacePermissionRules,
   createBoundaryContext,
   grantWorkspaceTrust,
+  isValidPermissionMode,
   isWorkspaceTrusted,
+  loadWorkspacePermissions,
+  nextPermissionMode,
+  permissionModeLabel,
+  saveAlwaysPermissionRule,
+  setWorkspacePermissionMode,
   verifyEvidenceFile,
 } from "./security.ts"
 import {
@@ -78,6 +86,7 @@ import {
   SLASH_COMMANDS,
   askHybridChoice,
   askHybridConfirm,
+  askHybridPermission,
   formatRelativeTime,
   openCommandPalette,
   openScrollableModal,
@@ -87,9 +96,18 @@ import {
   runInteractiveComposer,
   type ComposerAction,
   type HybridChoiceOption,
+  type HybridPermissionOptions,
   type PaletteCommandItem,
 } from "./tui-widgets.ts"
-import type { CredentialConfig, StandaloneConfig, TaskEvent, TaskResult } from "./types.ts"
+import type {
+  ApprovalDecision,
+  CredentialConfig,
+  PermissionMode,
+  SavedPermissionRule,
+  StandaloneConfig,
+  TaskEvent,
+  TaskResult,
+} from "./types.ts"
 
 export const STANDALONE_VERSION = "0.2.0-alpha.1"
 
@@ -371,6 +389,10 @@ class RawTerminalIO implements TerminalIO {
     return await askHybridConfirm(this.raw, this.style, prompt, signal)
   }
 
+  async askPermission(prompt: string, opts: HybridPermissionOptions): Promise<ApprovalDecision> {
+    return await askHybridPermission(this.raw, this.style, prompt, opts)
+  }
+
   close(): void {
     this.raw.dispose()
   }
@@ -407,10 +429,11 @@ export function renderHelp(configDir: string, dataDir: string): string {
     "  /model, /connect         Choose provider, enter API key / env var, select or fetch models, and test",
     "  /test, /status           Test saved model connection or view session & budget status",
     "  /diff, /compact          Inspect edits or compact conversation context",
-    "  /trust, /evidence        Trust workspace or verify hash-chained evidence.jsonl",
+    "  /mode, /trust, /evidence Switch approval mode (manual/accept-edits/smart/auto) or verify log",
     "  /help, /exit             Show help or quit",
     "",
     "KEYBOARD SHORTCUTS",
+    "  Shift+Tab                Cycle permission mode (manual -> accept-edits -> smart -> auto)",
     "  Ctrl+P                   Command palette (fuzzy search all commands)",
     "  Ctrl+O                   Session browser & switcher",
     "  Esc Esc                  Timeline & checkpoint rewind",
@@ -451,6 +474,23 @@ async function askYesNo(io: TerminalIO, prompt: string, signal?: AbortSignal): P
     return await io.askConfirm(prompt, signal)
   }
   return await io.ask(prompt, signal)
+}
+
+async function askPermissionDecision(
+  io: TerminalIO,
+  prompt: string,
+  opts: HybridPermissionOptions,
+): Promise<ApprovalDecision> {
+  if (io instanceof RawTerminalIO) {
+    return await io.askPermission(prompt, opts)
+  }
+  const suffix = opts.allowAlways ? " [Allow once (y) / Always allow (a) / Reject (n)] " : " "
+  const ans = await io.ask(`${prompt}${suffix}`, opts.signal)
+  if (ans === null) return "reject"
+  const clean = ans.trim().toLowerCase()
+  if (clean === "y" || clean === "yes") return "once"
+  if ((clean === "a" || clean === "always") && opts.allowAlways) return "always"
+  return "reject"
 }
 
 function parseCredentialChoice(cred: CredentialConfig): string {
@@ -1026,28 +1066,32 @@ function buildStatusSummary(
   trusted: boolean,
   config?: StandaloneConfig,
   layout?: TerminalLayout,
+  permissionMode: PermissionMode = "manual",
 ): string {
   const modelText = config ? config.model : "no model"
   const trustText = trusted ? "trusted" : "read-only"
+  const modeText = permissionModeLabel(permissionMode, Boolean(layout?.isCompact))
   const costText =
     session.usageTotals.costUsd !== undefined ? ` · $${session.usageTotals.costUsd.toFixed(4)}` : ""
   if (layout?.isCompact) {
-    return `${truncatePlain(session.title, 18)} (${session.turns.length}t) · ${modelText} · ${trustText}`
+    return `${truncatePlain(session.title, 18)} (${session.turns.length}t) · ${modelText} · ${modeText}`
   }
   if (layout && !layout.isWide) {
-    return `${truncatePlain(session.title, 28)} (${session.turns.length}t) · ${modelText} · ${trustText}${costText} · ctrl+p palette · ctrl+o sessions`
+    return `${truncatePlain(session.title, 28)} (${session.turns.length}t) · ${modelText} · ${modeText} · ${trustText}${costText} · shift+tab mode`
   }
-  return `${session.title} (${session.turns.length}t) · ${modelText} · ${trustText}${costText} · ctrl+p palette · ctrl+o sessions · ctrl+t transcript · esc×2 rewind`
+  return `${session.title} (${session.turns.length}t) · ${modelText} · ${modeText} · ${trustText}${costText} · shift+tab mode · ctrl+p palette · ctrl+o sessions`
 }
 
 function buildComposerMetadata(
   trusted: boolean,
   config?: StandaloneConfig,
+  permissionMode: PermissionMode = "manual",
 ): PromptMetadataInput {
   return {
     agent: "build",
     model: config ? config.model : "no model selected (/model)",
     ...(config?.providerId ? { provider: config.providerId } : {}),
+    permissionMode,
     trustLabel: trusted ? "trusted" : "read-only",
     trusted,
   }
@@ -1076,6 +1120,7 @@ function buildComposerStatusFooter(
     ...(tokensText ? { tokensText } : {}),
     ...(costText ? { costText } : {}),
     shortcuts: [
+      { key: "shift+tab", label: "mode" },
       { key: "ctrl+p", label: "commands" },
       { key: "ctrl+o", label: "sessions" },
       { key: "esc×2", label: "rewind" },
@@ -1274,6 +1319,9 @@ export async function runStandalone(
     const canonical = canonicalWorkspace(cwd)
     ensurePaths(resolved)
     const gitBranch = detectGitBranch(canonical)
+    const initialPerms = loadWorkspacePermissions(resolved.config, canonical)
+    let permissionMode: PermissionMode = initialPerms.mode
+    let savedRules: readonly SavedPermissionRule[] = initialPerms.rules
 
     let activeSession: SessionRecord = createSession(canonical, gitBranch)
     if (continueFlag) {
@@ -1486,6 +1534,54 @@ export async function runStandalone(
           io.write(`Trusted ${canonical}.\n`)
           return "continue"
         }
+        if (cmdName === "mode" || cmdName === "approvals" || cmdName === "permissions") {
+          const sub = cmdArgs.trim().toLowerCase()
+          if (sub === "reset" || sub === "clear") {
+            savedRules = clearWorkspacePermissionRules(resolved.config, canonical).rules
+            io.write(`Cleared saved Always-allow rules for ${canonical}.\n`)
+            return "continue"
+          }
+          if (sub !== "" && isValidPermissionMode(sub)) {
+            permissionMode = setWorkspacePermissionMode(resolved.config, canonical, sub).mode
+            io.write(`Permission mode set to '${permissionMode}'.\n`)
+            return "continue"
+          }
+          if (sub === "" && io instanceof RawTerminalIO) {
+            const picked = await io.askChoice(
+              `Permission mode (current: ${permissionMode}, saved always-rules: ${savedRules.length}):`,
+              [
+                ...PERMISSION_MODES.map((m): HybridChoiceOption => ({
+                  value: m,
+                  display:
+                    m === "manual"
+                      ? `${m}${m === permissionMode ? " (active)" : ""} — Confirm edits & commands [Allow once / Always allow / Reject]`
+                      : m === "accept-edits"
+                        ? `${m}${m === permissionMode ? " (active)" : ""} — Auto-apply workspace edits; confirm commands (Claude Code style)`
+                        : m === "smart"
+                          ? `${m}${m === permissionMode ? " (active)" : ""} — Guardian LLM security reviewer + breaker (Hermes style)`
+                          : `${m}${m === permissionMode ? " (active)" : ""} — Auto-allow edits & safe checks; guardian reviews risky commands`,
+                })),
+                {
+                  value: "reset",
+                  display: `reset rules — Clear ${savedRules.length} saved workspace Always-allow rule(s)`,
+                },
+              ],
+            )
+            if (picked === "reset") {
+              savedRules = clearWorkspacePermissionRules(resolved.config, canonical).rules
+              io.write(`Cleared saved Always-allow rules for ${canonical}.\n`)
+            } else if (picked && isValidPermissionMode(picked)) {
+              permissionMode = setWorkspacePermissionMode(resolved.config, canonical, picked).mode
+              io.write(`Permission mode set to '${permissionMode}'.\n`)
+            }
+            return "continue"
+          }
+          io.write(
+            `Mode: ${permissionMode} (${savedRules.length} saved Always-allow rule(s)).\n` +
+              "Usage: /mode [manual | accept-edits | smart | auto | reset]\n",
+          )
+          return "continue"
+        }
         if (cmdName === "setup" || cmdName === "connect" || cmdName === "model" || cmdName === "models") {
           const res = await runInteractiveSetup(io, resolved.config, env, activeConfig)
           if (res.status === "saved") {
@@ -1586,6 +1682,7 @@ export async function runStandalone(
           io.write(`Session   ${activeSession.title} (${activeSession.id})\n`)
           io.write(`Turns     ${activeSession.turns.length} (${activeSession.messages.length} context messages)\n`)
           io.write(`Workspace ${canonical} (${trustedNow ? "trusted" : "read-only"})\n`)
+          io.write(`Mode      ${permissionMode} (${savedRules.length} saved Always-allow rule(s))\n`)
           io.write(
             `Model     ${activeConfig ? `${activeConfig.model} at ${formatDestination(activeConfig.baseURL)}` : "none"}\n`,
           )
@@ -1625,9 +1722,10 @@ export async function runStandalone(
             raw: io.raw,
             style: io.style,
             promptLabel,
-            statusSummary: buildStatusSummary(activeSession, trusted, activeConfig, io.raw.layout()),
-            getStatusSummary: (layout) => buildStatusSummary(activeSession, trusted, activeConfig, layout),
-            getMetadata: () => buildComposerMetadata(trusted, activeConfig),
+            permissionMode,
+            statusSummary: buildStatusSummary(activeSession, trusted, activeConfig, io.raw.layout(), permissionMode),
+            getStatusSummary: (layout) => buildStatusSummary(activeSession, trusted, activeConfig, layout, permissionMode),
+            getMetadata: () => buildComposerMetadata(trusted, activeConfig, permissionMode),
             getStatusFooter: () => buildComposerStatusFooter(canonical, env, activeSession),
             workspace: canonical,
             history: promptHistory,
@@ -1635,6 +1733,15 @@ export async function runStandalone(
           })
           draftBuffer = ""
           if (action.kind === "exit") break
+          if (action.kind === "cycle_mode") {
+            permissionMode = setWorkspacePermissionMode(
+              resolved.config,
+              canonical,
+              nextPermissionMode(permissionMode),
+            ).mode
+            draftBuffer = action.draft
+            continue
+          }
           if (action.kind === "clear_screen") {
             io.write("\x1b[2J\x1b[H")
             renderCliHeader(io, canonical, trusted, activeConfig, activeSession)
@@ -1822,6 +1929,8 @@ export async function runStandalone(
               prompt: trimmed,
               trusted,
               config: activeConfig,
+              permissionMode,
+              savedRules,
               history: activeSession.messages,
               signal: currentAbort.signal,
             },
@@ -1829,6 +1938,9 @@ export async function runStandalone(
               paths: resolved,
               env,
               ...(options.completeImpl ? { completeImpl: options.completeImpl } : {}),
+              onSavePermissionRule: (rule) => {
+                savedRules = saveAlwaysPermissionRule(resolved.config, canonical, rule).rules
+              },
               onEvent: (event: TaskEvent) => {
                 if (event.type === "model_requested") {
                   spinnerText = `Waiting for ${event.model} at ${formatDestination(event.endpoint)}`
@@ -1837,6 +1949,33 @@ export async function runStandalone(
                     io.write(`Waiting for ${event.model} at ${formatDestination(event.endpoint)}...\n`)
                   }
                   startSpinnerAndCancel()
+                } else if (event.type === "guardian_review") {
+                  clearSpinnerLine()
+                  const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+                  const tag =
+                    event.verdict === "APPROVE"
+                      ? style.green("APPROVE")
+                      : event.verdict === "DENY"
+                        ? style.red("DENY")
+                        : style.yellow("ESCALATE")
+                  const reasonSuffix = event.reason ? ` (${sanitizeTerminalText(event.reason)})` : ""
+                  io.write(`${style.accent("◆")} Smart review [${tag}]${reasonSuffix}\n`)
+                  startSpinnerAndCancel()
+                } else if (event.type === "tool_approved") {
+                  if (event.tool === "edit_file" && event.relativePath && event.resolvedPath) {
+                    const cp = captureFileCheckpoint(canonical, event.relativePath, event.resolvedPath)
+                    if (cp) turnCheckpoints.push(cp)
+                  }
+                  if (
+                    event.source &&
+                    event.source !== "user" &&
+                    event.source !== "user-always"
+                  ) {
+                    clearSpinnerLine()
+                    const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+                    io.write(`${style.muted(`  ↳ approved (${event.source})`)}\n`)
+                    startSpinnerAndCancel()
+                  }
                 } else if (event.type === "tool_completed") {
                   clearSpinnerLine()
                   const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
@@ -1851,11 +1990,11 @@ export async function runStandalone(
                   }
                 }
               },
-              confirmAction: async (req: ApprovalRequest): Promise<boolean> => {
+              confirmAction: async (req: ApprovalRequest): Promise<ApprovalDecision> => {
                 pauseSpinnerAndCancel()
                 try {
+                  const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
                   if (req.kind === "edit_file") {
-                    const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
                     const cleanPatch = sanitizeTerminalText(req.prepared.diffPreview)
                     const rendered = renderOpenCodeDiff(
                       cleanPatch,
@@ -1867,28 +2006,29 @@ export async function runStandalone(
                       style,
                     )
                     io.write(`\n${rendered.join("\n")}\n`)
-                    const ans = await askYesNo(
-                      io,
-                      "Apply this change? [y/N] ",
-                      currentAbort?.signal,
-                    )
-                    const approved = isYes(ans)
-                    if (approved) {
-                      const cp = captureFileCheckpoint(
-                        canonical,
-                        req.prepared.relativePath,
-                        req.prepared.resolvedPath,
-                      )
-                      if (cp) turnCheckpoints.push(cp)
+                    if (req.reason) {
+                      const prefix = req.smartDenied ? style.red("Blocked:") : style.yellow("Note:")
+                      io.write(`${prefix} ${sanitizeTerminalText(req.reason)}\n`)
                     }
-                    return approved
+                    return await askPermissionDecision(io, "Apply this change? [y/N]", {
+                      allowAlways: req.allowAlways ?? true,
+                      ...(req.suggestedSummary ? { alwaysSummary: req.suggestedSummary } : {}),
+                      ...(currentAbort ? { signal: currentAbort.signal } : {}),
+                    })
                   }
                   const cmdLine = sanitizeTerminalText([req.prepared.command, ...req.prepared.args].join(" "))
                   io.write(`\nRun      ${cmdLine}\n`)
                   io.write(`Dir      ${sanitizeTerminalText(req.prepared.cwd)}\n`)
                   io.write(`Warning  ${req.hostAccessWarning}\n`)
-                  const ans = await askYesNo(io, "Run this command? [y/N] ", currentAbort?.signal)
-                  return isYes(ans)
+                  if (req.reason) {
+                    const prefix = req.smartDenied ? style.red("Blocked:") : style.yellow("Note:")
+                    io.write(`${prefix} ${sanitizeTerminalText(req.reason)}\n`)
+                  }
+                  return await askPermissionDecision(io, "Run this command? [y/N]", {
+                    allowAlways: req.allowAlways ?? true,
+                    ...(req.suggestedSummary ? { alwaysSummary: req.suggestedSummary } : {}),
+                    ...(currentAbort ? { signal: currentAbort.signal } : {}),
+                  })
                 } finally {
                   startSpinnerAndCancel()
                 }

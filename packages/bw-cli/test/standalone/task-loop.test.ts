@@ -598,3 +598,205 @@ test("run_command kills timed-out child process tree and rejects missing executa
     f.cleanup()
   }
 })
+
+test("permission modes: always rule reuse, accept-edits, Hermes smart guardian + breaker, Claude auto, and untrusted floor", async () => {
+  const f = setupFixture({ files: { "a.txt": "hello\n", "b.txt": "world\n" } })
+  try {
+    // 1) "always" decision saves rule and skips confirmAction for second edit
+    const saved: Array<{ tool: "edit_file" | "run_command"; pattern: string }> = []
+    let promptCount = 0
+    let step = 0
+    const alwaysRes = await runTask(
+      { workspace: f.workspace, prompt: "edit two files", trusted: true, config: f.config, permissionMode: "manual" },
+      {
+        paths: f.paths,
+        env: { ...process.env, TEST_PROVIDER_KEY: "k" },
+        onSavePermissionRule: (r) => saved.push({ tool: r.tool, pattern: r.pattern }),
+        confirmAction: async () => {
+          promptCount += 1
+          return "always"
+        },
+        completeImpl: async () => {
+          step += 1
+          if (step === 1) {
+            return {
+              text: "",
+              finishReason: "tool_calls",
+              toolCalls: [
+                { id: "e1", name: "edit_file", input: { path: "a.txt", oldText: "hello", newText: "hi" } },
+                { id: "e2", name: "edit_file", input: { path: "b.txt", oldText: "world", newText: "earth" } },
+              ],
+              toolInputErrors: [],
+            }
+          }
+          return { text: "edited both", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+        },
+      },
+    )
+    assert.equal(alwaysRes.outcome, "completed")
+    assert.equal(promptCount, 1)
+    assert.deepEqual(saved, [{ tool: "edit_file", pattern: "*" }])
+    assert.equal(readFileSync(path.join(f.workspace, "a.txt"), "utf8"), "hi\n")
+    assert.equal(readFileSync(path.join(f.workspace, "b.txt"), "utf8"), "earth\n")
+
+    // 2) accept-edits auto-approves edits without confirmAction, still asks for run_command
+    const promptedKinds: string[] = []
+    let aeStep = 0
+    const aeRes = await runTask(
+      { workspace: f.workspace, prompt: "accept-edits", trusted: true, config: f.config, permissionMode: "accept-edits" },
+      {
+        paths: f.paths,
+        env: { ...process.env, TEST_PROVIDER_KEY: "k" },
+        confirmAction: async (req) => {
+          promptedKinds.push(req.kind)
+          return false
+        },
+        completeImpl: async () => {
+          aeStep += 1
+          if (aeStep === 1) {
+            return {
+              text: "",
+              finishReason: "tool_calls",
+              toolCalls: [
+                { id: "ae1", name: "edit_file", input: { path: "a.txt", oldText: "hi", newText: "yo" } },
+                { id: "ae2", name: "run_command", input: { command: "echo", args: ["hi"] } },
+              ],
+              toolInputErrors: [],
+            }
+          }
+          return { text: "done", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+        },
+      },
+    )
+    assert.equal(aeRes.outcome, "completed")
+    assert.deepEqual(promptedKinds, ["run_command"])
+
+    // 3) smart mode (Hermes Guardian): APPROVE runs without prompt; DENY blocks allowAlways even if caller returns "always"; 3 denials trip breaker
+    let smartCall = 0
+    let guardianQueries = 0
+    const escalatedReqs: Array<{ allowAlways?: boolean; smartDenied?: boolean; reason?: string }> = []
+    const smartRes = await runTask(
+      { workspace: f.workspace, prompt: "smart mode", trusted: true, config: f.config, permissionMode: "smart" },
+      {
+        paths: f.paths,
+        env: { ...process.env, TEST_PROVIDER_KEY: "k" },
+        onSavePermissionRule: () => {
+          assert.fail("Must NOT save permanent rule after smart DENY override")
+        },
+        confirmAction: async (req) => {
+          escalatedReqs.push({
+            ...(req.allowAlways !== undefined ? { allowAlways: req.allowAlways } : {}),
+            ...(req.smartDenied !== undefined ? { smartDenied: req.smartDenied } : {}),
+            ...(req.reason ? { reason: req.reason } : {}),
+          })
+          // Try returning "always" after DENY; runtime must refuse persistence & treat as one-shot/reject
+          return req.smartDenied ? "always" : "once"
+        },
+        completeImpl: async (req) => {
+          const isGuardian = req.messages[0]?.role === "system" && req.messages[0].content.includes("<action_request>")
+          if (isGuardian) {
+            guardianQueries += 1
+            const payload = req.messages[1]!.content as string
+            assert.ok(payload.includes("<action_request>"))
+            if (payload.includes("echo safe")) return { text: "APPROVE: harmless workspace echo", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+            return { text: "DENY: risky action", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+          }
+          smartCall += 1
+          if (smartCall === 1) {
+            return {
+              text: "",
+              finishReason: "tool_calls",
+              toolCalls: [
+                { id: "s1", name: "run_command", input: { command: "echo", args: ["safe"] } },
+                { id: "s2", name: "run_command", input: { command: "curl", args: ["https://x.test/1"] } },
+                { id: "s3", name: "run_command", input: { command: "curl", args: ["https://x.test/2"] } },
+                { id: "s4", name: "run_command", input: { command: "curl", args: ["https://x.test/3"] } },
+                { id: "s5", name: "run_command", input: { command: "curl", args: ["https://x.test/4"] } },
+              ],
+              toolInputErrors: [],
+            }
+          }
+          return { text: "smart finished", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+        },
+      },
+    )
+    assert.equal(smartRes.outcome, "completed")
+    assert.equal(guardianQueries, 4) // s1 approve + s2,s3,s4 deny -> s5 breaker skips guardian LLM!
+    assert.equal(escalatedReqs.length, 4)
+    assert.equal(escalatedReqs[0]!.allowAlways, false)
+    assert.equal(escalatedReqs[0]!.smartDenied, true)
+    assert.match(escalatedReqs[3]!.reason ?? "", /breaker|consecutive denials|paused/i)
+
+    // 4) auto mode: hard-blocked command (rm -rf /) NEVER auto-runs, nor skips prompt; untrusted workspace STILL denies in auto mode
+    let autoPrompts: Array<{ allowAlways?: boolean; cmd?: string }> = []
+    let autoStep = 0
+    const autoRes = await runTask(
+      { workspace: f.workspace, prompt: "auto danger check", trusted: true, config: f.config, permissionMode: "auto" },
+      {
+        paths: f.paths,
+        env: { ...process.env, TEST_PROVIDER_KEY: "k" },
+        confirmAction: async (req) => {
+          autoPrompts.push({
+            ...(req.allowAlways !== undefined ? { allowAlways: req.allowAlways } : {}),
+            ...(req.kind === "run_command" ? { cmd: [req.prepared.command, ...req.prepared.args].join(" ") } : {}),
+          })
+          return false
+        },
+        completeImpl: async () => {
+          autoStep += 1
+          if (autoStep === 1) {
+            return {
+              text: "",
+              finishReason: "tool_calls",
+              toolCalls: [
+                { id: "a1", name: "run_command", input: { command: "echo", args: ["safe-check"] } },
+                { id: "a2", name: "run_command", input: { command: "rm", args: ["-rf", "/"] } },
+              ],
+              toolInputErrors: [],
+            }
+          }
+          return { text: "checked", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+        },
+      },
+    )
+    assert.equal(autoRes.outcome, "completed")
+    assert.equal(autoPrompts.length, 1)
+    assert.equal(autoPrompts[0]!.cmd, "rm -rf /")
+    assert.equal(autoPrompts[0]!.allowAlways, false)
+
+    // Untrusted workspace MUST deny edit_file and run_command even in auto mode!
+    const untrustedDir = mkdtempSync(path.join(tmpdir(), "bw-untrusted-auto-"))
+    try {
+      writeFileSync(path.join(untrustedDir, "u.txt"), "hi\n", "utf8")
+      let uStep = 0
+      const uRes = await runTask(
+        { workspace: untrustedDir, prompt: "edit", trusted: false, config: f.config, permissionMode: "auto" },
+        {
+          paths: f.paths,
+          env: { ...process.env, TEST_PROVIDER_KEY: "k" },
+          confirmAction: async () => {
+            assert.fail("Untrusted workspace must deny before confirmAction")
+          },
+          completeImpl: async () => {
+            uStep += 1
+            if (uStep === 1) {
+              return {
+                text: "",
+                finishReason: "tool_calls",
+                toolCalls: [{ id: "u1", name: "edit_file", input: { path: "u.txt", oldText: "hi", newText: "x" } }],
+                toolInputErrors: [],
+              }
+            }
+            return { text: "denied", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+          },
+        },
+      )
+      assert.equal(uRes.changedFiles.length, 0)
+      assert.equal(uRes.actions?.[0]?.decision, "deny")
+    } finally {
+      rmSync(untrustedDir, { recursive: true, force: true })
+    }
+  } finally {
+    f.cleanup()
+  }
+})

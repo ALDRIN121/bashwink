@@ -4,17 +4,38 @@
   "description": "Bashwink: an evidence-first AI coding CLI built on a pinned OpenCode runtime. Private alpha.",
   "license": "MIT",
   "type": "commonjs",
-  "bin": { "bashwink": "bin/bashwink.js" },
-  "files": ["bin/", "lib/", "share/", "README.md", "LICENSE"],
-  "engines": { "node": ">=18" },
-  "os": ["darwin", "linux", "win32"],
-  "cpu": ["x64", "arm64"],
+  "bin": {
+    "bashwink": "bin/bashwink.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "share/",
+    "README.md",
+    "LICENSE",
+    "libexec/",
+    "engine-manifest.json"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
   "dependencies": {
-    "bun": "1.4.4",
-    "@opencode/cli": "2.3.2"
+    "bun": "1.4.4"
   },
   "scripts": {
     "prepublishOnly": "node -e \"console.error('bashwink: this is a private alpha; publishing is not authorized'); process.exit(1)\""
   },
-  "repository": { "type": "git", "url": "git+https://github.com/ALDRIN121/bashwink.git" }
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ALDRIN121/bashwink.git"
+  }
 }

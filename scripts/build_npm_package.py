@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import platform
 import json
 import re
 import shutil
@@ -58,7 +59,59 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def stage_package(stage: Path, commit: str, bun: str) -> dict:
+def platform_arch() -> str:
+    """The manifest target key for this host, spelled the way build_local_engine.py writes it."""
+    machine = platform.machine().lower()
+    arch = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x64", "amd64": "x64"}.get(machine, machine)
+    os_name = {"darwin": "darwin", "linux": "linux", "win32": "win32"}.get(sys.platform, sys.platform)
+    return f"{os_name}-{arch}"
+
+
+def validate_engine_input(engine_dir: Path, target: str) -> dict:
+    """Verify an engine artifact directory before it goes into the tarball.
+
+    The packager must not be a way to ship an unverified binary. Everything here is checked against
+    the manifest the build itself wrote, and every failure names the specific fault rather than
+    "invalid engine".
+    """
+    manifest_path = engine_dir / "engine-manifest.json"
+    if not manifest_path.is_file():
+        raise SystemExit(
+            f"engine input {engine_dir} has no engine-manifest.json. Build it first: "
+            f"python3 scripts/build_local_engine.py --target {target}"
+        )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    if manifest.get("schemaVersion") != 1:
+        raise SystemExit(f"engine manifest schema {manifest.get('schemaVersion')} is not supported (expected 1)")
+    if manifest.get("target") != target:
+        raise SystemExit(
+            f"engine input is built for '{manifest.get('target')}', not '{target}'. A tarball may only "
+            "contain an engine for the platform it targets."
+        )
+
+    engine = manifest.get("engine") or {}
+    declared = engine.get("sha256")
+    if not declared:
+        raise SystemExit("engine manifest has no sha256; an unverifiable artifact cannot be packaged")
+    artifact = engine_dir / (engine.get("path") or "")
+    if not artifact.is_file():
+        raise SystemExit(f"engine manifest names '{engine.get('path')}', which does not exist under {engine_dir}")
+    actual = sha256(artifact)
+    if actual != declared:
+        raise SystemExit(
+            f"engine digest mismatch: manifest says {declared}, artifact is {actual}. "
+            "The artifact was modified after the build; rebuild rather than packaging it."
+        )
+    if engine.get("ffmpegMarkers"):
+        raise SystemExit(
+            f"engine contains FFmpeg markers {engine['ffmpegMarkers']}; this build must ship the no-FFmpeg "
+            "OpenTUI library."
+        )
+    return {"manifest": manifest, "artifact": artifact, "sha256": actual, "target": target}
+
+
+def stage_package(stage: Path, commit: str, bun: str, engine_dir: Path | None = None, target: str | None = None) -> dict:
     manifest = json.loads((TEMPLATE / "package.json").read_text())
     cli_version = json.loads((ROOT / "packages/bw-cli/package.json").read_text())["version"]
     if manifest["version"] != cli_version:
@@ -89,6 +142,25 @@ def stage_package(stage: Path, commit: str, bun: str) -> dict:
     docs = TEMPLATE / "docs"
     if docs.is_dir():
         shutil.copytree(docs, stage / "share/doc")
+    # The local engine, when one was supplied. It is placed beside the manifest so the launcher and
+    # the runtime resolve it relative to the package root, and it replaces the registry
+    # @opencode/cli dependency entirely.
+    if engine_dir is not None:
+        engine = validate_engine_input(engine_dir, target or "")
+        libexec = stage / "libexec"
+        libexec.mkdir()
+        shutil.copyfile(engine["artifact"], libexec / engine["artifact"].name)
+        (libexec / engine["artifact"].name).chmod(0o755)
+        packaged = dict(engine["manifest"])
+        packaged["engine"] = dict(packaged["engine"], path=f"libexec/{engine['artifact'].name}")
+        # A shipped manifest describes an artifact. Build logs, the argv that produced it, and the
+        # builder's tool paths do not belong in a package: they leak the build machine and are not
+        # reproducibility facts for the person installing it. Stripped here rather than trusted to
+        # the builder, because an older artifact may predate the builder's own hygiene.
+        for key in ("buildResult", "buildCommand", "toolchains"):
+            packaged.pop(key, None)
+        (stage / "engine-manifest.json").write_text(json.dumps(packaged, indent=2) + "\n", encoding="utf-8")
+
     notices = TEMPLATE / "THIRD_PARTY_NOTICES.txt"
     (stage / "share/licenses").mkdir(parents=True)
     (stage / "share/licenses/THIRD_PARTY_NOTICES.txt").write_text(notice_text(notices.read_text(encoding="utf-8"), bundled_packages(lib / "bashwink.js")), encoding="utf-8")
@@ -140,11 +212,24 @@ def audit(tarball: Path) -> dict:
             text = data.decode("utf-8", errors="ignore")
             if re.search(r"workspace:", text) and member.name.endswith("package.json"):
                 problems.append(f"{member.name}: unresolved workspace dependency")
-            for pattern in (r"/Users/[A-Za-z0-9._-]+/", r"[A-Z]:\\Users\\[A-Za-z0-9._-]+\\", r"/home/[a-z][a-z0-9_-]+/"):
-                found = re.search(pattern, text)
-                if found:
-                    problems.append(f"{member.name}: development-machine path {found.group(0)!r}")
-            if re.search(r"(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)", text):
+
+            # A compiled Bun binary embeds the build machine's module paths and Rust crate paths as
+            # `__dirname` literals. That is inherent to `bun build --compile`, not a packaging
+            # mistake: the published v0.1.0-alpha.1 engine contains /Users/runner/ 257 times. So the
+            # path rules apply to TEXT files, where a stray /Users/<name>/ is a real leak, and not to
+            # the engine artifact, where it would fail every correct build.
+            binary = b"\x00" in data[:8192]
+            if not binary:
+                for pattern in (r"/Users/[A-Za-z0-9._-]+/", r"[A-Z]:\\Users\\[A-Za-z0-9._-]+\\", r"/home/[a-z][a-z0-9_-]+/"):
+                    found = re.search(pattern, text)
+                    if found:
+                        problems.append(f"{member.name}: development-machine path {found.group(0)!r}")
+
+            # `\bsk-` rather than a bare `sk-`: the loose form matched the concatenated HTML link
+            # relations "mask-icon" + "shortcut icon" inside every Bun-compiled binary, which is not
+            # a credential and buried the check in noise. Word boundaries keep it meaningful for a
+            # real key while dropping that class of false positive.
+            if re.search(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}|(?<![A-Za-z0-9])ghp_[A-Za-z0-9]{20,}|(?<![A-Za-z0-9])AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----[^-]{0,20}?[A-Za-z0-9+/]{40,}", text):
                 problems.append(f"{member.name}: credential-shaped string")
     for name in names:
         if re.search(r"(^|/)(\.git|\.env|node_modules|__pycache__|test|tests)(/|$)", name) or name.endswith((".sqlite", ".db", ".log")):
@@ -216,7 +301,8 @@ def resolve_bun(override: str | None, offer_install: bool, resources: ExitStack)
     return bun
 
 
-def build_package(out_dir: Path | None, bun: str, commit: str, install: bool) -> int:
+def build_package(out_dir: Path | None, bun: str, commit: str, install: bool,
+                  engine_dir: Path | None = None, engine_target: str | None = None) -> int:
     if install:
         run([bun, "install", "--frozen-lockfile"], cwd=ROOT)
     if out_dir is None:
@@ -227,7 +313,7 @@ def build_package(out_dir: Path | None, bun: str, commit: str, install: bool) ->
             shutil.rmtree(out)
         out.mkdir(parents=True)
     stage = out / "stage/package"
-    manifest = stage_package(stage, commit, bun)
+    manifest = stage_package(stage, commit, bun, engine_dir, engine_target)
     bundled = bundled_packages(stage / "lib/bashwink.js")
     packed = capture([NPM, "pack", "--ignore-scripts", "--pack-destination", out, stage], cwd=out).splitlines()[-1]
     tarball = out / packed
@@ -257,6 +343,9 @@ def main() -> int:
     parser.add_argument("--install", action="store_true", help="Install locked dependencies, build, and install Bashwink globally")
     parser.add_argument("--bun", help="Explicit path to the pinned Bun executable")
     parser.add_argument("--allow-dirty", action="store_true")
+    parser.add_argument("--engine-dir", type=Path,
+                        help="Directory holding a validated engine + engine-manifest.json (from scripts/build_local_engine.py)")
+    parser.add_argument("--engine-target", help="Target the engine was built for, e.g. darwin-arm64 (default: this host)")
     args = parser.parse_args()
     if args.out is None and not args.install:
         parser.error("--out is required when building without --install")
@@ -268,7 +357,10 @@ def main() -> int:
     commit = capture(["git", "rev-parse", "HEAD"], cwd=ROOT) + ("+dirty" if status else "")
     with ExitStack() as resources:
         bun = resolve_bun(args.bun, args.install, resources)
-        return build_package(args.out, bun, commit, args.install)
+        engine_target = args.engine_target
+    if args.engine_dir is not None and engine_target is None:
+        engine_target = platform_arch()
+    return build_package(args.out, bun, commit, args.install, args.engine_dir, engine_target)
 
 
 if __name__ == "__main__":

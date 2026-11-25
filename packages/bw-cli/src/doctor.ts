@@ -29,7 +29,10 @@ import { recentRuns, runtimeLogHint } from "./run-health.js"
 import { canonicalWorkspace, isTrusted, readTrust } from "./trust.js"
 import { credentialSummary, runAuthCommand, runModelCommand } from "./providers-cli.js"
 import { selectBackend } from "./execution-backend.js"
-import { STANDARD_BUILD } from "./release.js"
+import { RELEASE_BUILD, STANDARD_BUILD } from "./release.js"
+
+/** Where this module lives, for a packaged install to locate the engine manifest beside it. */
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
 
 export type CheckStatus = "ok" | "warn" | "fail"
 
@@ -145,12 +148,27 @@ export function diagnose(options: DoctorOptions = {}): DoctorReport {
     })
   } else
     try {
-      const runtime = resolveRuntime({ cwd })
+      // A packaged install names its engine in a manifest; resolve that the same way a run does, so
+      // `doctor` cannot report "no runtime" for an install that launches fine. Falling through to
+      // the legacy search first would also tell the user to install a registry @opencode/cli, which
+      // a local-engine install must never need.
+      const engineManifest =
+        RELEASE_BUILD || STANDARD_BUILD
+          ? (process.env["BASHWINK_ENGINE_MANIFEST"] ?? path.join(MODULE_DIR, "..", "engine-manifest.json"))
+          : undefined
+      const runtime = resolveRuntime(
+        engineManifest !== undefined && existsSync(engineManifest)
+          ? { engineManifest, cwd }
+          : { cwd },
+      )
       checks.push({
         id: "runtime",
         title: "OpenCode runtime",
         status: "ok",
-        detail: `found ${runtime.command} (pinned ${PINNED_RUNTIME_VERSION}, via ${runtime.source})`,
+        detail:
+          runtime.source === "manifest"
+            ? `verified local engine ${runtime.command} (pinned ${PINNED_RUNTIME_VERSION}, sha256 ${runtime.sha256?.slice(0, 16)}…, via manifest)`
+            : `found ${runtime.command} (pinned ${PINNED_RUNTIME_VERSION}, via ${runtime.source})`,
       })
     } catch (error) {
       const message = error instanceof RuntimeNotFoundError ? error.message : String(error)
@@ -159,7 +177,10 @@ export function diagnose(options: DoctorOptions = {}): DoctorReport {
         title: "OpenCode runtime",
         status: "fail",
         detail: message.split("\n")[0] ?? message,
-        fix: `bun add @opencode/cli@${PINNED_RUNTIME_VERSION}`,
+        fix:
+          RELEASE_BUILD || STANDARD_BUILD
+            ? "rebuild the local engine (scripts/build_local_engine.py) or reinstall Bashwink"
+            : `bun add @opencode/cli@${PINNED_RUNTIME_VERSION}`,
       })
     }
 

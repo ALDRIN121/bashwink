@@ -39,26 +39,37 @@ Hosted runner only: **Windows Server 2025 x64, build 26100, not Windows 11**, ru
 | Terminal rendering, real Ctrl+C, closing the terminal, SmartScreen/antivirus, long paths, AVX2-less CPU | **NOT_RUN** (manual checklist) |
 | Windows ARM64 | **not supported**; refused by the launcher; hosted ARM64 not attempted |
 
-## 5. Live-model qualification: BLOCKED
+## 5. Live-model qualification: PASS on macOS arm64 (headless path, both wire protocols); NOT_RUN everywhere else
 
-`~/.config/bashwink-qual/commandcode.key` does not exist for this session. Facts, from metadata only (the file was never opened or searched for): effective user
-`aldrinjoseph`; `HOME=/Users/aldrinjoseph` (matches the directory service); no sandbox markers in the environment; `~/.config` exists (mode 700) and was last modified
-**2026-10-18**, so no `bashwink-qual` directory has ever been created inside it; `ls` of the directory and `stat` of the file both return "No such file or directory". This is not
-a permission or isolation block: the file is simply not on this filesystem (it may have been created on another machine, account or environment). No other credential directory was searched.
+**How the key became available.** The first attempt found no key file at `~/.config/bashwink-qual/commandcode.key` (metadata only; it never existed on this filesystem). The owner then pointed to the key's
+real location, `~/.hermes/.env` (variable `COMMANDCODE_API_KEY`, mode 600, owned by the owner), in a pasted note. The session read **that one variable** from **that one file**, wrote it to a mode-600 file in the session scratchpad,
+used it only as `--key-file`, and **deleted the copy afterwards**. The original file was not modified. No other credential file or directory was opened or searched. The value was never printed; only its length (93) and mode were shown.
 
-**Exact minimal action for the owner**, typed in a terminal you control (the key is not echoed, not passed as an argument and not shown to this session):
+**Run.** `fixtures/release/npm_live.py` against the installed tarball (SHA-256 `486a1da4…a5b2`) on the developer's Mac (macOS arm64), real endpoint `https://api.commandcode.ai/provider/v1`, models `claude-sonnet-5` (**Anthropic**
+messages protocol) and `gpt-6.1-sol` (**OpenAI** chat protocol), fresh install and profile in a path with spaces and non-ASCII characters, limits 40 requests / 300,000 tokens. Result files: `release/standard/0.1.0-alpha.1-npm-rc2/live-macos-arm64/{live.json,live.log}`.
 
-```sh
-mkdir -p ~/.config/bashwink-qual && chmod 700 ~/.config/bashwink-qual
-( umask 077; printf 'CommandCode key (hidden): '; stty -echo; IFS= read -r K; stty echo; printf '\n'; printf '%s' "$K" > ~/.config/bashwink-qual/commandcode.key; unset K )
-ls -l ~/.config/bashwink-qual/commandcode.key      # expect -rw-------  and a non-zero size
-```
+| Check (all against a real model) | Result |
+| --- | --- |
+| Authentication through `auth check` against the real endpoint | PASS |
+| Coding task: run the failing test, fix `sum.js`, run it again (exit 0, 11 s) | PASS |
+| The project's test passes when **run independently** afterwards; `git diff` touches only `sum.js`, the test file is unchanged | PASS |
+| Output arrived progressively (55 lines, first after 0.2 s, last after 10.6 s; observed, not judged) | PASS |
+| Usage summary printed with real figures: `6 model requests of 40 allowed`, `668 input, 370 output`, cached 43,391 read / 3,792 written | PASS |
+| With no declared price the cost is shown as `unknown`, never `$0` | PASS |
+| Evidence records real tool calls (`edit`, `shell`) attributed to the model; hash chain verifies | PASS |
+| Session continuation: a follow-up in the same session knows which file was changed | PASS |
+| Model switch inside the session (Anthropic to OpenAI protocol); evidence attributes both models | PASS |
+| Cancellation (SIGINT to the process group) ends the run; no runtime or CLI process is left | PASS |
+| The key value is in no file under the profile or project and in no output (harness search, then an **independent** scan of 920 files including the repository and `.git`: 0 hits) | PASS |
+| Every run record is finalized (5 records) | PASS |
 
-Then run (spend capped at 40 requests and 300,000 tokens):
-`python3 fixtures/release/npm_live.py release/standard/0.1.0-alpha.1-npm-rc2/bashwink-0.1.0-alpha.1.tgz --key-file ~/.config/bashwink-qual/commandcode.key --model claude-sonnet-5:anthropic --switch-model gpt-6.1-sol:openai --out live.json`
-The script checks the key file is mode 600, uses it only as `--key-file`, reads the value only to search for it afterwards, and never prints it.
+19 passed, 0 failed, 0 not run. An earlier identical run (18/18, before the script was changed to record the usage figures) also passed; both are described here rather than choosing the better one.
 
-Until then **nothing here is a live-model result**. What ran instead is a scripted stand-in (OpenAI chat protocol only; the Anthropic protocol has never been exercised against the installed package: F-22).
+**What this does and does not prove.** It proves the installed package completes a real coding task on both wire protocols, switches models, continues sessions, cancels cleanly and keeps the key out of everything it wrote, on one Mac, with one small task.
+It does **not** prove: quality on realistic projects; the interactive terminal screen with a live model (the screen was only driven with the scripted provider); live behaviour of the request, token and retry limits (measured with the scripted provider); behaviour under provider rate limits or outages;
+the Windows or Linux path with a real model; or how the dollar limit behaves, because no price was declared. Provider billing was not inspected, so the spend is not stated: only the provider's own account shows it, and the request count above is what Bashwink observed.
+
+**A limitation seen in the live figures (F-26).** The token limit counts only uncached input, output and reasoning tokens. In this run that was about 1,000 counted tokens against about 47,000 cache reads and writes. The summary line says so, but the shipped guides do not. A token limit therefore under-states how much the provider processed. It is a design choice (cached reads are usually billed far below normal input), not a bug, but it is not documented in the package and the package was left unchanged here (see section 12).
 
 ## 6. Permission negative tests
 
@@ -118,11 +129,12 @@ A skipped or cancelled job is not a pass. A Windows hosted runner is **not** a W
 ## 12. Remaining external prerequisites (owner)
 
 1. **Fix GitHub Actions billing / spending limit**, then `gh workflow run verify.yml --ref release-candidate/v0.1.0-alpha.1-standard` and confirm all gating jobs and the Windows legs on `cf76323` or its successor.
-2. **Create the key file** (commands in section 5) and run the live script; review the JSON.
+2. ~~Create the key file and run the live script~~ done for macOS arm64 (section 5). Still open: a live run on Windows and Linux, and the interactive screen with a live model, which the owner can do by running `bashwink` in a throwaway project.
 3. **A Windows 11 x64 machine** (physical or VM), standard user, no Bun/OpenCode installed: run `release/tester-kit/windows-qualify.ps1` and the checklist; send back the result file.
 4. **Licensing decision** (option A, B or C) and counsel's view before anyone outside the invited group receives the package.
 5. **A person other than the author** follows the instructions below on a clean machine.
 6. Optional: Windows ARM64 hardware (unsupported until then), macOS Intel, Linux desktop.
+7. Decide whether the next candidate should carry the one documentation fix from F-26 (the token limit ignores cached tokens). It changes package contents, so it needs a new candidate, a new checksum and a new hosted run; it was not made unprompted.
 
 ## 13. Exact tester installation instructions
 
@@ -143,11 +155,11 @@ Remove: `npm uninstall -g bashwink` (your settings and run records stay). Do not
 
 | | Verdict |
 | --- | --- |
-| **PERSONAL USE** (the owner, macOS arm64, supervised, throwaway projects, own spending limit) | **CONDITIONAL**: install, permissions, cancellation, limits and the interactive screen are verified on this Mac; no real model has been used; run the live script first |
-| **SUPERVISED INTERNAL ALPHA** | **CONDITIONAL**: same, plus the owner's licensing acceptance |
-| **WINDOWS X64 INVITED ALPHA** | **BLOCKED**: needs hosted CI on the candidate (billing), a live run, and one physical Windows 11 run. Nothing found contradicts a later PASS; two real Windows defects were found and fixed; the fixes are not re-verified on Windows |
+| **PERSONAL USE** (the owner, macOS arm64, supervised, throwaway projects, own spending limit) | **PASS** for the headless `run` path: install, permissions, cancellation, limits and credential handling verified on this Mac, and a real coding task, model switch, continuation and cancellation passed live on both wire protocols (section 5). Limits of that claim: one small task; the interactive screen with a live model was not scripted; Bashwink's limits are not a spending ceiling, so set one at the provider |
+| **SUPERVISED INTERNAL ALPHA** | **CONDITIONAL**: the live run is done; still needed: the owner's recorded licensing acceptance, hosted CI on the candidate (billing), and one person other than the author following the instructions on a clean machine |
+| **WINDOWS X64 INVITED ALPHA** | **BLOCKED**: needs hosted CI on the candidate (billing), a live run **on Windows** (the live run so far is macOS only), and one physical Windows 11 run. Nothing found contradicts a later PASS; two real Windows defects were found and fixed; the fixes are not re-verified on Windows |
 | **WINDOWS ARM64 INVITED ALPHA** | **FAIL**: refused by design; no qualified execution path |
-| **GENERAL PRIVATE EXTERNAL ALPHA** | **FAIL**: mandatory gate items unmet (live model, clean-host evidence, hosted CI on the candidate, other architectures, licensing sign-off) |
+| **GENERAL PRIVATE EXTERNAL ALPHA** | **FAIL**: mandatory gate items unmet (live model beyond one Mac, clean-host evidence, hosted CI on the candidate, other architectures, licensing sign-off) |
 | **OPTIONAL SANDBOX DISTRIBUTION** | unchanged and not re-qualified in this stretch: **CONDITIONAL** for the owner's Mac, **FAIL** for external users |
 | **PUBLIC NPM RELEASE** | **NOT AUTHORIZED** |
 

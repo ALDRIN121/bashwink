@@ -1,0 +1,115 @@
+{
+  "kind": "live provider (real model)",
+  "platform": "darwin",
+  "summary": {
+    "PASS": 19,
+    "FAIL": 0,
+    "NOT_RUN": 0
+  },
+  "provider": "https://api.commandcode.ai/provider/v1",
+  "models": [
+    "claude-sonnet-5:anthropic",
+    "gpt-6.1-sol:openai"
+  ],
+  "limits": {
+    "BASHWINK_MAX_REQUESTS": "40",
+    "BASHWINK_MAX_TOKENS": "300000"
+  },
+  "checks": [
+    {
+      "check": "live: the key file exists, is non-empty and is private",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "live: npm install -g <tarball>",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "live: provider declared with --key-file (the config holds a path, never the key)",
+      "verdict": "PASS",
+      "detail": "scratchpad/live/commandcode.key}\n  models: claude-sonnet-5 [anthropic], gpt-6.1-sol [openai]\n\nset a default model with: bashwink model use live/claude-sonnet-5\n"
+    },
+    {
+      "check": "live: authentication succeeds against the real endpoint (auth check)",
+      "verdict": "PASS",
+      "detail": "live: key file /private/tmp/claude-501/-Users-aldrinjoseph-Developer-bashwink/21031cae-2616-463f-ac0c-3606b20b6685/scratchpad/live/commandcode.key (93 bytes, mo"
+    },
+    {
+      "check": "live: the project fails its test before the run",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "live: the coding run finishes (exit 0)",
+      "verdict": "PASS",
+      "detail": "exit 0 in 11s"
+    },
+    {
+      "check": "live: output arrived progressively (observed, not judged)",
+      "verdict": "PASS",
+      "detail": "55 lines; first after 0.2s, last after 10.6s"
+    },
+    {
+      "check": "live: the project's test passes afterwards (run independently of the model's claim)",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "live: the diff touches only sum.js and does not edit the test",
+      "verdict": "PASS",
+      "detail": "['M sum.js']"
+    },
+    {
+      "check": "live: a usage summary was printed",
+      "verdict": "PASS",
+      "detail": "Usage: 6 model requests of 40 allowed | tokens: 668 input, 370 output (cached: 43391 read, 3792 written; not counted against a token limit) | cost: unknown (no price is declared for this model; add one with `bashwink auth add ... --price`)"
+    },
+    {
+      "check": "live: with no declared price the cost is reported as unknown, never as $0",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "live: evidence recorded real tool calls attributed to the model",
+      "verdict": "PASS",
+      "detail": "['edit', 'shell']"
+    },
+    {
+      "check": "live: the evidence chain verifies",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "live: a continued session remembers the earlier work",
+      "verdict": "PASS",
+      "detail": "exit 0"
+    },
+    {
+      "check": "live: switching model within a session works and evidence attributes both models",
+      "verdict": "PASS",
+      "detail": "{'gpt-6.1-sol', 'claude-sonnet-5'}"
+    },
+    {
+      "check": "live: cancelling a running session ends it promptly",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "live: no runtime or CLI process is left behind after cancelling",
+      "verdict": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "live: the key value is in no file under the profile or project and not in any output",
+      "verdict": "PASS",
+      "detail": "searched without printing"
+    },
+    {
+      "check": "live: every run record is finalized with usage and evidence",
+      "verdict": "PASS",
+      "detail": "5 records"
+    }
+  ]
+}

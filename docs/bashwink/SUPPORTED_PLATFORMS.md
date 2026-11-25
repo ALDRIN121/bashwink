@@ -17,7 +17,7 @@ have failed or your spending limit needs to be increased"). The hosted results b
 | Ubuntu x64, hosted runner | **PASS** 10/10 (`6cb1e87`) | **PASS** 68/68 incl. the foreign-listener test (`6cb1e87`) | NOT_RUN | BLOCKED |
 | **Windows Server 2025 x64** (build 26100), hosted runner; **not Windows 11** | install 9/10: the one failure was the check script decoding a glyph (fixed, not re-run) | **61/64**: 1 real defect found (shell path check missed Windows paths; fixed, not re-run) and 2 suites stopped early on a test-script encoding error (fixed, not re-run) | NOT_RUN: no Windows pseudo-terminal harness; manual checklist only | BLOCKED |
 | Windows 11 x64, physical or VM desktop | NOT_RUN | NOT_RUN | NOT_RUN (manual checklist) | BLOCKED |
-| macOS arm64, developer's Mac (candidate `cf76323`) | **PASS** 10/10 | **PASS** 71 passed, 0 failed, 1 NOT_RUN (foreign-listener test: the port is held by a foreign process on this Mac) | **PASS** 17/17 PTY smoke (trust question, STANDARD label on screen, evidence, SIGTERM exit 130, second launch, uninstall) | BLOCKED |
+| macOS arm64, developer's Mac (candidate `cf76323`) | **PASS** 10/10 | **PASS** 71 passed, 0 failed, 1 NOT_RUN (foreign-listener test: the port is held by a foreign process on this Mac) | **PASS** 17/17 PTY smoke (trust question, STANDARD label on screen, evidence, SIGTERM exit 130, second launch, uninstall; scripted provider) | **PASS** 19/19 live headless run (real model, both wire protocols; `live-macos-arm64/`); interactive screen with a live model NOT_RUN |
 | macOS Intel (x64) | NOT_RUN | NOT_RUN | NOT_RUN | BLOCKED |
 | Linux arm64, musl, baseline-CPU variants | NOT_RUN | NOT_RUN | NOT_RUN | BLOCKED |
 | Windows 11 ARM64 | refused by design (launcher exits 1; unit-tested) | n/a | n/a | n/a |

@@ -1715,3 +1715,18 @@ The next run (`b6d06d7`, run `45538173450`) did not execute: every job was refus
 **The candidate commit has no hosted CI result.**
 
 Defects found and fixed this stretch are F-8 to F-17 in `FINAL_ALPHA_AUDIT.md`. Live provider, Windows 11 desktop, Linux desktop, macOS Intel, Windows ARM64: NOT_RUN.
+
+## 2026-11-25: live-provider qualification of candidate `npm-rc2` (macOS arm64)
+
+First recorded run of the installed package against a real model. Candidate tarball SHA-256 `486a1da4f571494263af99ddf4806c1367ad5273b031e1034de2b0df2a32a5b2`; source commit `cf76323` (`fixtures/release/npm_live.py` was extended afterwards, which is not package input).
+Provider `https://api.commandcode.ai/provider/v1`; models `claude-sonnet-5` (Anthropic protocol) and `gpt-6.1-sol` (OpenAI protocol); limits `BASHWINK_MAX_REQUESTS=40`, `BASHWINK_MAX_TOKENS=300000`.
+The key was supplied by the owner's pointer to `~/.hermes/.env`: one variable was copied to a mode-600 scratch file used only as `--key-file`, then deleted; never printed.
+
+| Command | Exit | Result |
+| --- | --- | --- |
+| `python3 fixtures/release/npm_live.py <tarball> --key-file <scratch key> --model claude-sonnet-5:anthropic --switch-model gpt-6.1-sol:openai --max-requests 40 --max-tokens 300000` (first run) | 0 | 18 passed, 0 failed, 0 not run (the script did not yet record usage figures) |
+| the same, after adding the usage figures and the "unpriced cost is unknown, not $0" check to the script | 0 | **19 passed, 0 failed, 0 not run**; `live-macos-arm64/live.json` and `live.log` |
+| independent scan for the key's value over 920 files (repository including `.git`, the run outputs) | 0 | 0 hits |
+
+Observed, live: coding run exit 0 in 11 s; usage `6 model requests of 40 allowed`, `668 input, 370 output`, cached 43,391 read and 3,792 written, cost `unknown` (no price declared); evidence tool calls `edit` and `shell`; both models attributed in the evidence; 5 finalized run records; cancellation left no process behind.
+New finding F-26 (the token limit ignores cached tokens; not in the shipped guides). Not run live: Windows, Linux, the interactive screen, limit enforcement against a real provider, a dollar limit. The provider's invoice was not inspected, so actual spend is not stated.

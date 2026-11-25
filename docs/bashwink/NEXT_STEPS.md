@@ -142,3 +142,9 @@ Blocked on the owner, in this order: (1) fix GitHub Actions billing and re-dispa
 (3) a Windows 11 x64 machine for `release/tester-kit/`; (4) the licensing decision (`STANDARD_PACKAGE_LICENSING.md` section 5); (5) a tester other than the author. Eligible without the owner:
 surface a limit stop inside the terminal UI (F-19); a no-progress detector (BW-076); a recovery test (`bashwink resume`) against the installed package; selecting the `-baseline` runtime on CPUs without AVX2;
 investigating the one `runtime health (ubuntu)` flake (F-24). BW-031 and BW-032 stay In progress. Full list: `FINAL_ALPHA_QUALIFICATION_REPORT.md` section 12.
+
+## 2026-11-25: after the live run on candidate `npm-rc2`
+
+Done: live qualification on macOS arm64 (19/19). Remaining blocked on the owner: (1) GitHub Actions billing, then re-dispatch `verify.yml`; (2) a Windows 11 x64 machine for `release/tester-kit/` (a live run on Windows needs a key delivered to that machine by the owner, never through this repository);
+(3) the licensing decision; (4) a tester other than the author. Eligible without the owner: document F-26 in `KNOWN_LIMITATIONS.md` and the tester guide (**changes package contents, so it needs a new candidate and a new checksum**; bundle it with any other package change rather than rebuilding for it alone);
+drive the interactive screen with a live model (the owner can simply use `bashwink` in a throwaway project); a live limit-enforcement run; the items listed under `npm-rc2` above. BW-031 and BW-032 stay In progress.

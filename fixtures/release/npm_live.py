@@ -127,7 +127,12 @@ def main() -> int:
             after = subprocess.run(["node", "test.js"], cwd=c.project, capture_output=True, text=True)
             check("live: the project's test passes afterwards (run independently of the model's claim)", after.returncode == 0 and "tests passed" in after.stdout)
             check("live: the diff touches only sum.js and does not edit the test", len(status) == 1 and status[0].endswith("sum.js") and "test.js" not in diff, str(status))
-            check("live: a usage summary was printed", re.search(r"Usage: \d+ model requests? of \d+ allowed", out) is not None)
+            block = re.search(r"Usage: \d+ model requests?[^\n]*(?:\n  [^\n]*)*", out)
+            check("live: a usage summary was printed", re.search(r"Usage: \d+ model requests? of \d+ allowed", out) is not None,
+                  " | ".join(s.strip() for s in block.group(0).splitlines()) if block else "no usage block")
+            # No price is declared for this provider here, so a dollar figure would be invented: the cost line must say unknown.
+            check("live: with no declared price the cost is reported as unknown, never as $0",
+                  block is not None and "cost: unknown" in block.group(0) and "$0" not in block.group(0))
             ev = c.evidence()
             tools = {e["call"].get("tool") for e in ev if e["phase"] == "after"}
             check("live: evidence recorded real tool calls attributed to the model", bool(tools) and any((e["payload"].get("model") or {}).get("id") for e in ev if e["phase"] == "model"), str(sorted(t for t in tools if t)))

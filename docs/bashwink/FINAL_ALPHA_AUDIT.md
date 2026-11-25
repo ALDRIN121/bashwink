@@ -17,9 +17,9 @@ below cite the last executed hosted run (`45537295390`, `6cb1e87`) where they re
 | 2 | Does plain `bashwink` launch the interactive CLI? | **PARTIAL** | PTY smoke 17/17 on macOS arm64 (candidate). Not run on Linux or Windows (the CI step for POSIX was added after the last executed run). Windows rendering is a manual checklist item. |
 | 3 | Does it use the current directory? | **YES** | Every harness scenario edits the project it is run in; a junction/symlink to the project edits the real directory (macOS, Ubuntu, Windows runs). |
 | 4 | Are required runtimes resolved automatically? | **YES** | Install check and harness on three hosted OSes and the Mac: `bun` and `@opencode/cli-<platform>` resolved with no source checkout and no PATH discovery. Windows `bin/*.exe` layout confirmed. Windows x64 CPUs without AVX2 are not handled (upstream `-baseline` packages are not selected). |
-| 5 | Does first-time provider setup work? | **YES for configuration; NOT_RUN live** | `auth add`/`model use`/`auth check` against the scripted provider on all platforms. No real endpoint (the key file is not visible). |
-| 6 | Can a real model complete a coding task? | **NOT_RUN** | Only the scripted provider ran. `npm_live.py` is ready, its logic exercised against the scripted provider with a synthetic key (16/16), never live. |
-| 7 | Can the user switch models? | **YES scripted; NOT_RUN live** | Continuing a session with `--model` of a second declared model: served by that model, earlier conversation carried, evidence attributes both (macOS, Ubuntu, Windows hosted). |
+| 5 | Does first-time provider setup work? | **YES** | Configuration: scripted provider on all platforms. Live: `auth add --key-file`, `model use` and `auth check` succeeded against the real endpoint on macOS arm64 (19/19, `release/standard/0.1.0-alpha.1-npm-rc2/live-macos-arm64/`). Not run live on Windows or Linux. |
+| 6 | Can a real model complete a coding task? | **YES, one small task, one Mac** | Live, through the installed package: the model ran the failing test, edited `sum.js`, re-ran the test; the test passes when run independently and the diff touches only `sum.js`. Both wire protocols were used (`claude-sonnet-5` Anthropic, `gpt-6.1-sol` OpenAI). This says nothing about realistic projects. |
+| 7 | Can the user switch models? | **YES, scripted and live (macOS arm64)** | Continuing a session with `--model` of a second declared model: served by that model, earlier conversation carried, evidence attributes both (macOS, Ubuntu, Windows hosted). |
 | 8 | Does session recovery work? | **PARTIAL** | Continuation with `--session` works. Recovery after a killed process (`bashwink resume`) was not run against the installed package. |
 | 9 | Are risky operations appropriately controlled? | **YES for the advertised controls** | Untrusted workspace: no write/read/shell; restricted contract removes the shell tool; code execution, web fetch/search and sub-agents refused; writes/reads outside the project refused. Shell is a **best-effort** path guard, not a sandbox (stated everywhere). |
 | 10 | Are explicit denials preserved? | **YES** | A user deny rule survives `--auto`; the control command ran, so `--auto` really was approving (macOS, Ubuntu, Windows hosted). |
@@ -92,13 +92,14 @@ Action: after each run the changed test files (written through the file tools) a
 
 **F-21 · Info · compliance.** Observed: neither `@opencode/cli*` nor `bun`/`@oven/bun-*` ships a licence or notice file. Action: stated in the notices; texts must come from upstream.
 
-**F-22 · Medium · unverified risk.** The Anthropic messages protocol (the declared protocol of the CommandCode example model) has never been exercised against the installed package: the
-scripted provider speaks only OpenAI chat. Action: needs the live run.
+**F-22 · Medium · unverified risk, narrowed 2026-11-25.** The Anthropic messages protocol had never been exercised against the installed package (the scripted provider speaks only OpenAI chat). **Now exercised live** on macOS arm64: `claude-sonnet-5` completed a real coding task and a session continuation through the installed package, then the session switched to the OpenAI-protocol `gpt-6.1-sol` (19/19). Still unverified: the Anthropic path on Windows and Linux, streaming rendering in the interactive screen, and tool-call edge cases beyond one small task.
 
 **F-23 · High (release process) · hosted CI unavailable.** GitHub refuses to start jobs (billing/spending limit). Impact: the candidate commit is not hosted-verified, and fixes made after
 run `45537295390` (F-11, F-13, F-14 partly, the harness encoding fixes) are unverified on Windows. Action (owner): fix billing, re-dispatch `verify.yml` on the branch.
 
 **F-24 · Low · flake.** `runtime health (ubuntu-latest)` failed once ("owned server closed stdout before advertising its endpoint") and passed on the next run with no related change. Cause unknown; not reproduced.
+
+**F-26 · Low · limitation, found by the live run.** Observed (live, macOS arm64): the usage summary reported `668 input, 370 output` tokens and `cached: 43,391 read, 3,792 written`. The token limit (`BASHWINK_MAX_TOKENS`) counts input, output and reasoning tokens but **not cached tokens**, by design (cached reads are normally billed well below normal input). Consequence: a token limit under-states how much the provider processed, here by about 45x. The runtime's summary line states this; `KNOWN_LIMITATIONS.md` and the tester guide do not. Action: not changed, because documentation inside the package changes the candidate; proposed for the next candidate (`NEXT_STEPS.md`). Residual: a user who sets only a token limit and relies on it as a spending bound is misled by the guides, though not by the summary line.
 
 **F-25 · Info · design limit (restated).** The shell tool checks only the obvious path arguments of a command; an approved command can read or write anything the user can. This is why the mode is called native and
 permission-controlled, never sandboxed.
@@ -106,5 +107,5 @@ permission-controlled, never sandboxed.
 ## Proven defects versus unverified risks
 
 Proven (reproduced, fixed): F-8, F-9, F-10, F-11, F-12, F-13, F-14, F-15, F-16, F-17.
-Proven limitations (measured, disclosed): F-18, F-19, F-20, F-21, F-25.
-Unverified risks: F-22 (Anthropic protocol), native-code CVEs in the pinned runtimes, Windows desktop rendering, Windows ARM64 and AVX2-less CPUs, the fixes after `6cb1e87` on Windows, the flake F-24.
+Proven limitations (measured, disclosed): F-18, F-19, F-20, F-21, F-25, F-26 (guides do not mention it yet).
+Unverified risks: F-22 (Anthropic protocol on Windows and Linux; macOS is now live-verified), native-code CVEs in the pinned runtimes, Windows desktop rendering, Windows ARM64 and AVX2-less CPUs, the fixes after `6cb1e87` on Windows, the flake F-24.

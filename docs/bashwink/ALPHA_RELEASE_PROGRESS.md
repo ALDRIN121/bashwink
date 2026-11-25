@@ -144,3 +144,9 @@ my own new PATHEXT test failed on Ubuntu and Windows (host-dependent, fixed); a 
 and is never called a sandbox; limits are described as not a hard ceiling; a cost limit without a price refuses to run. **Blocked: hosted CI (billing), the key file, a Windows 11 machine, legal sign-off.**
 Unverified (do not repeat as fact): any live-model behaviour; the Anthropic protocol path; Windows behaviour after commit `6cb1e87`; Windows desktop rendering; hosted CI on the candidate.
 Report: `FINAL_ALPHA_QUALIFICATION_REPORT.md`.
+
+## 2026-11-25 (later): live-provider run, candidate `npm-rc2`
+
+The owner pointed to the key's real location (`~/.hermes/.env`, one variable). The bounded live script passed 19/19 on macOS arm64 against both wire protocols (`release/standard/0.1.0-alpha.1-npm-rc2/live-macos-arm64/`); the temporary key copy was deleted and an independent scan found the key in 0 of 920 files.
+This closes "any live-model behaviour" and "the Anthropic protocol path" as unverified **for macOS arm64 only**. Still unverified: any live behaviour on Windows or Linux, the interactive screen with a live model, hosted CI on the candidate, Windows behaviour after `6cb1e87`, native-code CVEs.
+Still blocked on the owner: GitHub Actions billing, a Windows 11 x64 machine, the licensing decision, a tester other than the author. New: F-26 (token limit ignores cached tokens; guides silent). PERSONAL USE verdict moved from CONDITIONAL to PASS (headless path); every other verdict unchanged except wording.

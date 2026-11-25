@@ -1,0 +1,23 @@
+PASS    live: the key file exists, is non-empty and is private
+PASS    live: npm install -g <tarball>
+PASS    live: provider declared with --key-file (the config holds a path, never the key) - scratchpad/live/commandcode.key}
+  models: claude-sonnet-5 [anthropic], gpt-6.1-sol [openai]
+set a default model with: bashwink model use live/claude-sonnet-5
+PASS    live: authentication succeeds against the real endpoint (auth check) - live: key file /private/tmp/claude-501/-Users-aldrinjoseph-Developer-bashwink/21031cae-2616-463f-ac0c-3606b20b6685/scratchpad/live/commandcode.key (93 bytes, mo
+PASS    live: the project fails its test before the run
+PASS    live: the coding run finishes (exit 0) - exit 0 in 11s
+PASS    live: output arrived progressively (observed, not judged) - 55 lines; first after 0.2s, last after 10.6s
+PASS    live: the project's test passes afterwards (run independently of the model's claim)
+PASS    live: the diff touches only sum.js and does not edit the test - ['M sum.js']
+PASS    live: a usage summary was printed - Usage: 6 model requests of 40 allowed | tokens: 668 input, 370 output (cached: 43391 read, 3792 written; not counted against a token limit) | cost: unknown (no price is declared for this model; add one with `bashwink auth add ... --price`)
+PASS    live: with no declared price the cost is reported as unknown, never as $0
+PASS    live: evidence recorded real tool calls attributed to the model - ['edit', 'shell']
+PASS    live: the evidence chain verifies
+PASS    live: a continued session remembers the earlier work - exit 0
+PASS    live: switching model within a session works and evidence attributes both models - {'gpt-6.1-sol', 'claude-sonnet-5'}
+PASS    live: cancelling a running session ends it promptly
+PASS    live: no runtime or CLI process is left behind after cancelling
+PASS    live: the key value is in no file under the profile or project and not in any output - searched without printing
+PASS    live: every run record is finalized with usage and evidence - 5 records
+19 passed, 0 failed, 0 not run
+exit=0

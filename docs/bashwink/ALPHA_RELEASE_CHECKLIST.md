@@ -212,7 +212,7 @@ Supersedes the status of the `npm-rc1` section above; that section is kept as th
 | 3 | Verified Windows x64 installation | **CONDITIONAL**: hosted Windows Server 2025 only | no Windows 11 machine; fixes after `6cb1e87` not re-run on Windows |
 | 4 | Other advertised architectures independently verified | **NOT_RUN** | macOS Intel, Linux arm64/musl/baseline, Windows ARM64 (refused) |
 | 5 | Plain `bashwink` launches; correct workspace | **PARTIAL** | PTY 17/17 on the Mac; workspace resolution on 4 environments; no Linux/Windows screen |
-| 6 | Supported provider authentication; real-model coding task; actual test execution verified | **BLOCKED** | no key file; scripted-provider results only |
+| 6 | Supported provider authentication; real-model coding task; actual test execution verified | **PASS on macOS arm64** (updated 2026-11-25; was BLOCKED) | live 19/19, `release/standard/0.1.0-alpha.1-npm-rc2/live-macos-arm64/`; Windows and Linux live NOT_RUN |
 | 7 | Appropriate permission controls; explicit denials; readiness failures stop execution | **PASS** (scripted, advertised guarantees only) | `FINAL_ALPHA_QUALIFICATION_REPORT.md` section 6 |
 | 8 | Safe credential handling | **PASS with limits** | F-8 fixed; shell guard best-effort; Windows variant (F-11) not re-run on Windows |
 | 9 | Session persistence and recovery | **PARTIAL** | continuation and model switch PASS; crash recovery not run on the installed package |

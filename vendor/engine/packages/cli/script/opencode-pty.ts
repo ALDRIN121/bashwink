@@ -49,6 +49,17 @@ export async function resolveOpencodePty(target: Target): Promise<OpencodePtyAss
   const source = explicit ? path.resolve(explicit) : localArtifact(target)
   if (!source) return undefined
 
+  // A local artifact directory holds one platform's helper. Serving it for a different target
+  // would label an arm64 Mach-O binary as, say, linux-x64 — a build that looks successful and
+  // ships an unrunnable executable. The name is checked first, because the failure has to be
+  // legible; the format check would catch it too but with a much worse message.
+  if (!explicit && (target.platform !== process.platform || target.arch !== process.arch))
+    throw new Error(
+      `BASHWINK_PTY_DIR holds the ${process.platform}-${process.arch} helper, but this build targets ` +
+        `${target.platform}-${target.arch}. Cross-target builds need a helper built for that target; ` +
+        `an artifact directory for one platform must not be reused for another.`,
+    )
+
   let bytes: Buffer
   try {
     bytes = await readFile(source)

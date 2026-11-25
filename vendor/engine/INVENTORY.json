@@ -103,7 +103,11 @@
       "upstreamPath": "packages/cli/package.json",
       "sourceCommit": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
       "sourceDigest": "386a33688a2af5a736492d653bac7cf9821225cf0a51bbfd3982416929916cb7",
-      "bytes": 3176
+      "bytes": 3146,
+      "patch": true,
+      "patchedDigest": "4f5ed5ad2dd3575e5f4bd3887a869863ae0e96f0e86177258f27d77ee10e4366",
+      "patchedFrom": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
+      "note": "Removed the @opencode/pty dependency. The helper is now built from vendor/engine/packages/process-daemon and resolved through BASHWINK_PTY_DIR or OPENCODE_PTY_BIN."
     },
     "packages/cli/script/app-assets.ts": {
       "upstreamPath": "packages/cli/script/app-assets.ts",
@@ -145,11 +149,11 @@
       "upstreamPath": "packages/cli/script/opencode-pty.ts",
       "sourceCommit": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
       "sourceDigest": "cb7fab0bd76a79c838208cb058ca310a8c240cc725c6aad8f971dad8a47103fb",
-      "bytes": 3605,
+      "bytes": 4383,
       "patch": true,
-      "patchedDigest": "d678bad51d64dd256afd3e6418a80b5b37ee16a27a7ff9c30f78a307dcd491e7",
+      "patchedDigest": "c4c4ddc2f686263cbca420a7efe3725b32c0153b42c2d35cd938bedc968a0727",
       "patchedFrom": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
-      "note": "Removed both eager createRequire calls, which threw at module load when @opencode/pty was absent. Resolves OPENCODE_PTY_BIN or BASHWINK_PTY_DIR, derives the binary name from the target rather than the host, and keeps the existing restriction that an explicit override may only be embedded for its own platform and architecture."
+      "note": "Refuses a cross-target build. A local artifact directory holds one platform's helper, and returning it for a different target labelled an arm64 Mach-O binary as linux-x64 \u2014 a build that looks successful and ships an unrunnable executable. Found by probing resolveOpencodePty for linux-x64 while BASHWINK_PTY_DIR held the darwin-arm64 helper."
     },
     "packages/cli/script/pack.ts": {
       "upstreamPath": "packages/cli/script/pack.ts",
@@ -1757,7 +1761,11 @@
       "upstreamPath": "packages/server/package.json",
       "sourceCommit": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
       "sourceDigest": "7384570afe91a2bcb5618a29a744bbba0b9447c67a90671037a1a4e847d17400",
-      "bytes": 1283
+      "bytes": 1253,
+      "patch": true,
+      "patchedDigest": "08145dd430d85a9d74589171756086111b8365c6c8685173272eeb34a1c8de2a",
+      "patchedFrom": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
+      "note": "Removed the @opencode/pty devDependency: no test may resolve the registry PTY package, or a green suite would hide the dependency the migration removes."
     },
     "packages/server/script/build.ts": {
       "upstreamPath": "packages/server/script/build.ts",
@@ -5855,7 +5863,11 @@
       "upstreamPath": "packages/core/package.json",
       "sourceCommit": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
       "sourceDigest": "9396979687163957e58c80e37f21f0e500ae3723dc4ad615a07e353478489ee5",
-      "bytes": 5001
+      "bytes": 4971,
+      "patch": true,
+      "patchedDigest": "e5bf3c79c81be6cd0c5284e36d44c24f98f7c14e2183d0959dc50defabb52133",
+      "patchedFrom": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
+      "note": "Removed the @opencode/pty dependency. The core PTY binding imports ./local-pty.js instead."
     },
     "packages/core/perf/location.bench.ts": {
       "upstreamPath": "packages/core/perf/location.bench.ts",
@@ -32145,7 +32157,11 @@
       "upstreamPath": "bun.lock",
       "sourceCommit": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
       "sourceDigest": "e27743c54a4a773cecf0fe3bc9ffc6c1d043c08208cecc082d602aff73770edf",
-      "bytes": 596680
+      "bytes": 238398,
+      "patch": true,
+      "patchedDigest": "f02a933723803494cdb912ed2640d03f1ef2d9b45cb356bb0912107cc8f78f2f",
+      "patchedFrom": "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1",
+      "note": "Regenerated after removing @opencode/pty from three manifests: 18 packages removed (the package and its seven platform variants, plus one more). Verified no @opencode/* registry artifact remains."
     },
     "bunfig.toml": {
       "upstreamPath": "bunfig.toml",
@@ -32310,6 +32326,26 @@
   },
   "patches": [
     {
+      "path": "bun.lock",
+      "kind": "modified",
+      "reason": "Regenerated after removing @opencode/pty from three manifests: 18 packages removed (the package and its seven platform variants, plus one more). Verified no @opencode/* registry artifact remains."
+    },
+    {
+      "path": "packages/cli/package.json",
+      "kind": "modified",
+      "reason": "Removed the @opencode/pty dependency. The helper is now built from vendor/engine/packages/process-daemon and resolved through BASHWINK_PTY_DIR or OPENCODE_PTY_BIN."
+    },
+    {
+      "path": "packages/cli/script/opencode-pty.ts",
+      "kind": "modified",
+      "reason": "Refuses a cross-target build. A local artifact directory holds one platform's helper, and returning it for a different target labelled an arm64 Mach-O binary as linux-x64 \u2014 a build that looks successful and ships an unrunnable executable. Found by probing resolveOpencodePty for linux-x64 while BASHWINK_PTY_DIR held the darwin-arm64 helper."
+    },
+    {
+      "path": "packages/core/package.json",
+      "kind": "modified",
+      "reason": "Removed the @opencode/pty dependency. The core PTY binding imports ./local-pty.js instead."
+    },
+    {
       "path": "packages/core/src/persistent-pty/local-pty.ts",
       "kind": "added",
       "reason": "Replaces the @opencode/pty registry package. Supplied a local artifact path, version and SHA-256, and a binaryPath export, so the core PTY binding no longer requires a registry package. Fails loudly when no local helper exists rather than falling back to PATH or the registry."
@@ -32320,9 +32356,9 @@
       "reason": "Imports the local module instead of '@opencode/pty'. Not a re-export shim: a shim would reintroduce the dependency. The exported 'binding' shape is unchanged, so binary.bun.ts and its digest-validating install() are untouched."
     },
     {
-      "path": "packages/cli/script/opencode-pty.ts",
+      "path": "packages/server/package.json",
       "kind": "modified",
-      "reason": "Removed both eager createRequire calls, which threw at module load when @opencode/pty was absent. Resolves OPENCODE_PTY_BIN or BASHWINK_PTY_DIR, derives the binary name from the target rather than the host, and keeps the existing restriction that an explicit override may only be embedded for its own platform and architecture."
+      "reason": "Removed the @opencode/pty devDependency: no test may resolve the registry PTY package, or a green suite would hide the dependency the migration removes."
     }
   ]
 }

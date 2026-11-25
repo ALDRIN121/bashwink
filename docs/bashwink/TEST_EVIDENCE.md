@@ -1,5 +1,18 @@
 # Bashwink — Test Evidence Register
 
+## v0.2.0-alpha.1 Standalone Coding Alpha (2026-11-25)
+
+Target host: macOS Apple Silicon (`darwin-arm64`), tested on both Node `v22.13.0` (lowest advertised minimum) and Node `v22.23.2`, zero Bun/OpenCode/Hermes/Pi runtime dependencies (`ADR-015`). Cross-platform Linux, macOS Intel, and Windows targets remain `UNVERIFIED` until run on those hosts/runners.
+
+| Command or control | Exit | Result |
+| --- | ---: | --- |
+| `node --experimental-strip-types --test packages/bw-cli/test/standalone/*.test.ts` (`npm run test:standalone`, `v22.13.0` & `v22.23.2`) | 0 | 16 passed, 0 failed (incl. cost-cap overrun regression enforcing estimated input cost + remaining output allowance before every request and clamping request `max_tokens`) |
+| `./node_modules/.bin/tsc -p packages/bw-cli/tsconfig.standalone.json` | 0 | 0 type errors across standalone runtime, reused `paths`/`trust`/`test-changes`/`recorder`/`scope`, and tests |
+| `./node_modules/.bin/oxlint --deny-warnings packages/bw-cli/src/standalone packages/bw-cli/test/standalone` | 0 | 0 warnings, 0 errors across 13 files |
+| `npm run test:standalone:install` (`v22.13.0` & `v22.23.2`) | 0 | Built `build/standalone/bashwink-0.2.0-alpha.1.tgz`, verified `SHA256SUMS` and `nodeRequired: >=22.13.0`, installed with `npm_config_ignore_scripts=true` into a space prefix, checked `--version`, `doctor`, `--sandbox` (exit 3), removed legacy commands (exit 2), repeat upgrade preservation, corrupt tarball safety, auditor negative controls, `npm uninstall -g bashwink` |
+| `npm run test:standalone:e2e` (`v22.13.0` & `v22.23.2`) | 0 | Installed `bashwink` in real PTY (`TERM=xterm-256color`) with `NODE_OPTIONS` process-level `fetch` + `net.Socket.prototype.connect` egress probe (plus negative control catching `api.openai.com`): 0 outbound connections on cancel, setup+save before prompt, relaunch, or `setup` cancel; exact 1 request to selected target host on prompt; resize `24x80`; Git red->green fix + independent `node --test` rerun + `bashwink evidence verify`; declined edit unchanged; exit 9; `Ctrl+C` cancellation. Windows native ConPTY test (`scripts/standalone/test-windows-terminal.ps1`) added for `windows-latest` CI/manual runs |
+| `npm run test:standalone:independence` (`v22.13.0` & `v22.23.2`) | 0 | Clean repo copy with `vendor/`, `node_modules/`, `build/`, `.bun/`, `fixtures/` physically removed and `PATH` scrubbed of OpenCode/Hermes/Pi/Bun: `npm run install:local`, `--version`, `doctor`, `npm run test:standalone`, and installed red->green coding fixture all passed |
+
 ## v0.1.0-alpha.1 RC2 (2026-11-25)
 
 Candidate `20c8473b9a2b3bbff8f413a7e85acad5d7016007`, archive SHA-256
@@ -1789,3 +1802,10 @@ Executed on Apple Silicon (`Darwin 27.0.0 arm64`, `node v22.23.2`, `npm 10.9.8`,
 | `python3 fixtures/release/npm_qual.py <tarball>` (scripted provider) | PASS (exit 0) | 72 passed, 0 failed, 0 not run (coding fix diff & test pass, credentials, scope/command denials, cancel, limits, spaces/non-ASCII/symlink, reinstall & uninstall). |
 | Failed/tampered install (`--engine-dir` & missing Zig), repeat install, upgrade (`alpha.1` -> `alpha.2`), uninstall | PASS (exit 0) | Failures preserve prior install untouched; repeat install reuses verified local engine; upgrade & uninstall preserve `~/.config/bashwink` and `~/.local/share/bashwink`. |
 | Bash fixture suites (`runtime-health`, `tool-lifecycle`, `contract`, `idempotent-resume`) | PASS (exit 0) | All passed against the locally built engine (`tool-lifecycle` 19/19, `contract` 14/14, `idempotent-resume` 10/10, `runtime-health` 100%). |
+
+### Standalone Alpha — Milestone A Reproducer (2026-11-25, prior fork path)
+
+Reproduced pre-rewrite onboarding defect on `packages/bw-cli/src/bin.ts` (`2817dfc`) with an empty `HOME` and `OPENAI_API_KEY=sk-dummy-1234567890abcdef12345678`:
+
+- **Non-interactive stdout/stderr (exit 0):** printed legacy help forwarding (`"run the agent using a private local OpenCode server"`).
+- **Interactive PTY against `build/local-engine/darwin-arm64/dist/cli-darwin-arm64/bin/opencode`:** after trust confirmation, rendered OpenCode's TUI (`Ask anything...`) and silently selected `Build · GPT-6.1 Terra OpenAI` from `OPENAI_API_KEY` without Bashwink setup (exited `130` on SIGTERM).

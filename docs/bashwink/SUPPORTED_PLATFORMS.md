@@ -76,3 +76,16 @@ terminal, sessions, paths and uninstall. Do not disable SmartScreen or antivirus
 | Linux x64 glibc (`linux-x64`) | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | No Linux host available locally; run CI `npm package (ubuntu-latest)` or `python3 scripts/build_npm_package.py --install`. |
 | Linux ARM64 glibc (`linux-arm64`) | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | No Linux ARM64 host available locally; run `python3 scripts/build_npm_package.py --install`. |
 | Linux x64 / ARM64 musl (`linux-*-musl`) | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | Musl detection in `platform_arch()`, `engine-manifest.ts`, `bashwink.js`, and dual `gnu`+`musl` OpenTUI rebuild implemented; run on Alpine host/container to verify. |
+
+## Standalone alpha (`v0.2.0-alpha.1`) qualification status
+
+Pure Node `>=22.13.0` & npm distribution (zero Bun, zero OpenCode/Hermes/Pi binaries, zero third-party runtime dependencies). Verdicts below reflect only observed execution (`PASS`, `FAIL`, `UNVERIFIED`). A CI workflow definition alone does not establish platform support.
+
+| Target | Install / Uninstall | Bare `bashwink` PTY setup & zero-request proof | Coding task (controlled) + Red -> Green | Corrupt tarball / Upgrade | Independence (no `vendor/`, Bun, OpenCode, Hermes, Pi) | Host type / Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| macOS Apple Silicon (`darwin-arm64`) | **PASS** | **PASS** | **PASS** | **PASS** | **PASS** | Physical Apple Silicon host tested on both **Node `v22.13.0`** (lowest advertised minimum) and **`v22.23.2`**: `npm run test:standalone` (16/16), `test:standalone:install`, `test:standalone:e2e` (with process-level egress probe blocking any host before submission), `test:standalone:independence` all exit `0`. Live paid model requires authorization. |
+| macOS Intel (`darwin-x64`) | **UNVERIFIED** | **UNVERIFIED** | **UNVERIFIED** | **UNVERIFIED** | **UNVERIFIED** | No x64 macOS host available locally; run `npm run test:standalone && npm run test:standalone:install && npm run test:standalone:e2e && npm run test:standalone:independence`. |
+| Linux x64 glibc (`linux-x64`) | **UNVERIFIED** | **UNVERIFIED** | **UNVERIFIED** | **UNVERIFIED** | **UNVERIFIED** | Defined in `.github/workflows/verify.yml` (`standalone (ubuntu-latest, node [22.13.0, 22])`), not yet executed on a Linux host/runner. |
+| Linux ARM64 glibc (`linux-arm64`) | **UNVERIFIED** | **UNVERIFIED** | **UNVERIFIED** | **UNVERIFIED** | **UNVERIFIED** | No Linux ARM64 host/runner available locally. |
+| Linux musl (`linux-x64-musl` / `linux-arm64-musl`) | **UNVERIFIED** | **UNVERIFIED** | **UNVERIFIED** | **UNVERIFIED** | **UNVERIFIED** | Pure Node JS requires Node `>=22.13.0` only (zero native binaries); run all `test:standalone*` commands on Alpine container/host to verify. |
+| Windows 11 x64 (`win32-x64`) | **UNVERIFIED** | **UNVERIFIED** | **UNVERIFIED** | **UNVERIFIED** | **UNVERIFIED** | Native Windows ConPTY script (`scripts/standalone/test-windows-terminal.ps1`) is wired into `test:standalone:e2e` and `.github/workflows/verify.yml` (`windows-latest`, `node [22.13.0, 22]`), not yet executed on a live Windows host. |

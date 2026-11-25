@@ -1,36 +1,26 @@
 {
   "name": "bashwink",
-  "version": "0.1.0-alpha.1",
-  "description": "Bashwink: an evidence-first AI coding CLI built on a pinned OpenCode runtime. Private alpha.",
+  "version": "0.2.0-alpha.1",
+  "description": "Bashwink: standalone evidence-first AI coding agent alpha.",
   "license": "MIT",
-  "type": "commonjs",
+  "type": "module",
   "bin": {
     "bashwink": "bin/bashwink.js"
   },
   "files": [
     "bin/",
     "lib/",
-    "share/",
+    "docs/",
+    "licenses/",
     "README.md",
     "LICENSE",
-    "libexec/",
-    "engine-manifest.json"
+    "THIRD_PARTY_NOTICES.txt",
+    "STANDALONE_MANIFEST.json"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22.13.0"
   },
-  "os": [
-    "darwin",
-    "linux",
-    "win32"
-  ],
-  "cpu": [
-    "x64",
-    "arm64"
-  ],
-  "dependencies": {
-    "bun": "1.4.4"
-  },
+  "dependencies": {},
   "scripts": {
     "prepublishOnly": "node -e \"console.error('bashwink: this is a private alpha; publishing is not authorized'); process.exit(1)\""
   },

@@ -295,4 +295,10 @@ it does not make the multi-file apply atomic.
 
 - **Date / owner:** 2026-11-25, Bashwink maintainers.
 - **Decision:** Keep `build_local_engine.py` free of download helpers (`test_local_engine_build.py`), have `fetch_native_inputs.py --prepare` prepare clean-checkout native inputs (frozen `vendor/engine` JS deps, `opencode-pty` via Cargo + Zig `0.16.0` + pinned Ghostty, FFmpeg-free `libopentui` via Zig `0.17.0`), keep Bun `1.4.4` consent alive across `build_package()` in `build_npm_package.py`, map `win32-*` to `windows-*` and detect Linux musl in `engine-manifest.ts` (`docs/superpowers/plans/2026-11-25-local-engine-implementation.md` Task 4/5), refuse missing manifests in packaged `doctor`/`main`, and enforce `OPENCODE_DISABLE_FREE_MODELS=1` across all engine spawners with recorded vendor TUI patches (`vendor/engine/UPSTREAM.json` `localPatches` 8–9) so clean first launch never selects `opencode/big-pickle` or surfaces `OpenCode Console`/`OpenCode Go`.
-- **Status:** Accepted and implemented for `v0.1.0-alpha.1` on `darwin-arm64`; cross-platform CI/native runs for Windows 11 x64, macOS Intel, and Linux glibc/musl remain to be executed.
+- **Status:** Superseded for active standalone alpha by ADR-015 / ADR-018; preserved at `e4d675111fc93906803dd638af4d36eaf6ad91f0` as rollback baseline.
+
+## ADR-018 — Standalone Node 22+ coding alpha (`v0.2.0-alpha.1`)
+
+- **Date / owner:** 2026-11-25, Bashwink maintainers (plan `docs/superpowers/plans/2026-11-25-bashwink-standalone-alpha.md`).
+- **Decision:** Replace the wrapped OpenCode runtime with an original standalone Bashwink Node 22+ CLI (`packages/bw-cli/src/standalone/`), OpenAI-compatible chat-completions client, sequential 4-tool foreground loop (incorporating ported, tested `pendingCalls` and `stepMessages` from OpenCode `c0ad18b` MIT and Pi `b882d08` output-limit truncation handling), explicit provider-first setup before any outbound request, reused pure trust/scope/evidence/redaction modules, and decoupled chat/memory integration interfaces. Require zero Bun, Python, Rust, Zig, or upstream CLI packages to build or run.
+- **Status:** Accepted and under Milestone A–F implementation (Phase 2 gate remains open until verified).

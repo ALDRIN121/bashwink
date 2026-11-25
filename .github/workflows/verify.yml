@@ -429,6 +429,28 @@ jobs:
       - name: CLI suite (failures here are the Windows to-do list)
         run: bun run test:cli
 
+  standalone:
+    name: standalone (${{ matrix.os }}, node ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+        node: ["22.13.0", "22"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Standalone unit & loop tests (Node >=22.13.0)
+        run: npm run test:standalone
+      - name: Standalone tarball build, audit, install, upgrade & uninstall
+        run: npm run test:standalone:install
+      - name: Physical absence & independence check (no vendor/, Bun, OpenCode, Hermes, Pi)
+        run: npm run test:standalone:independence
+      - name: Interactive PTY / ConPTY end-to-end onboarding, coding, failure & cancellation
+        run: npm run test:standalone:e2e
+
   # Licence scope gate. Deliberately NOT a blanket "no GPL anywhere" rule: the shipped
   # artifact's obligations depend on which packages actually reach the distribution.
   # This job enforces what is checkable in-tree and fails loudly on anything with no

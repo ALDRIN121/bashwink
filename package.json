@@ -13,6 +13,12 @@
     ]
   },
   "scripts": {
+    "build:standalone": "node scripts/standalone/build.mjs",
+    "install:local": "node scripts/standalone/build.mjs --install",
+    "test:standalone": "node --experimental-strip-types --test packages/bw-cli/test/standalone/*.test.ts",
+    "test:standalone:install": "node scripts/standalone/test-install.mjs",
+    "test:standalone:e2e": "node scripts/standalone/test-e2e.mjs",
+    "test:standalone:independence": "node scripts/standalone/test-independence.mjs",
     "test": "bun test packages",
     "test:evidence": "bun test packages/bw-evidence",
     "test:cli": "bun test packages/bw-cli",
@@ -32,6 +38,6 @@
     "typescript": "6.0.2"
   },
   "engines": {
-    "bun": ">=1.4.4"
+    "node": ">=22.13.0"
   }
 }

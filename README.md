@@ -4,61 +4,51 @@ An evidence-first coding agent: it records what it actually did — commands, ex
 outputs, hash-chained and independently verifiable — instead of reporting what it claims to
 have done.
 
-**Status:** Phase 0 and Phase 1 are complete and gate-passed with hosted CI evidence. Phase 2
-is in progress with 3/16 tasks Done (BW-055, BW-059 and BW-091). The Phase 2 gate remains open.
-Supervised internal alpha is conditional. External distribution remains blocked.
-The local execution foundation is tracked in [BW-018](docs/bashwink/BW-018_IMPLEMENTATION_REPORT.md)
-and [BW-030](docs/bashwink/BW-030_EXECUTION_BACKEND_DESIGN.md). See `docs/bashwink/IMPLEMENTATION_STATUS.md` and
-`docs/bashwink/NEXT_STEPS.md`.
+**Status:** Standalone alpha **`v0.2.0-alpha.1`** ([ADR-015](docs/bashwink/ADR-015-STANDALONE-CODING-ALPHA.md)) runs purely on Node.js 22+ and npm without OpenCode, Hermes, Pi, or Bun. Phase 0 and Phase 1 are gate-passed for the historical OpenCode substrate; the Phase 2 gate remains open. See [implementation status](docs/bashwink/IMPLEMENTATION_STATUS.md), [supported platforms](docs/bashwink/SUPPORTED_PLATFORMS.md), and [next steps](docs/bashwink/NEXT_STEPS.md).
 
-## v0.1.0-alpha.1 quick start (build & run from checkout)
+## v0.2.0-alpha.1 quick start (standalone checkout install)
 
 ### 1. Prerequisites
 
-Install these tools once before building from a clean checkout (no external OpenCode install, sibling checkout, or prebuilt tarball is needed):
+Install only:
 
-- **Node.js >= 22** (with `npm`)
-- **Python >= 3.12** (`python3` on macOS/Linux, `python` on Windows)
-- **Git**
-- **Rust & Cargo >= 1.90.0** (`https://rustup.rs`; plus Xcode Command Line Tools on macOS or Visual Studio C++ Build Tools on Windows)
-- **Zig `0.16.0` and Zig `0.17.0`** unpacked under `build/toolchains/` (or `~/.local/share/zig/` or on `PATH`), from `https://ziglang.org/download/`
-- **Bun `1.4.4`**: optional — if absent, the installer prompts `[y/N]` to install a temporary build copy via npm
+- **Node.js >= 22.13.0** and **npm >= 10** (`https://nodejs.org/`)
+- **Git** (recommended for workspace repositories and diff inspection)
+
+No external OpenCode, Hermes, Pi, Bun, Python, Rust, or Zig installation is required.
 
 ### 2. Install
 
-From the repository root:
+From the repository root (same command on macOS, Linux, and Windows PowerShell):
 
-- **macOS / Linux:**
-  ```sh
-  python3 scripts/build_npm_package.py --install
-  ```
-- **Windows 11 x64 (PowerShell):**
-  ```powershell
-  python scripts/build_npm_package.py --install
-  ```
+```sh
+npm run install:local
+```
 
-This builds the local `opencode-pty` helper, FFmpeg-free `libopentui`, and vendored `opencode` engine, audits the npm tarball, and installs `bashwink` onto your npm global `PATH`. Verify with:
+This transpiles the zero-dependency standalone bundle using Node.js >=22.13.0, audits the tarball (verifying zero third-party or upstream runtime dependencies), builds `build/standalone/bashwink-0.2.0-alpha.1.tgz`, and installs `bashwink` globally via `npm install -g`.
+
+Verify the installation:
 
 ```sh
 bashwink --version
 bashwink doctor
 ```
 
-(Use `bashwink.cmd` in Windows PowerShell.)
+### 3. Configure and launch `bashwink`
 
-### 3. Launch `bashwink`
-
-Open a fresh terminal inside a Git project (or any ordinary folder) and run:
+Open a fresh terminal inside any project directory and type:
 
 ```sh
 bashwink
 ```
 
-Confirm the first-run project trust prompt (`y`) when asked (`[STANDARD - native, not a sandbox]`). Then connect a model provider inside the UI with `/connect` (for example Anthropic, OpenAI, or Google — or configure a custom/local endpoint beforehand with `bashwink auth add`).
+On a clean profile (`standalone.json` absent), Bashwink starts in first-time setup with no provider or model selected (ignoring `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `CMD_API_KEY`, or OpenCode/Hermes/Pi configs). Choose a hosted (`https://`) or local (`127.0.0.1` / `localhost` / `::1`) OpenAI-compatible endpoint, model ID, and credential mode (None, environment variable name, or key file path), then confirm saving.
+
+Zero outbound network requests are sent during install, startup, or setup. Cancelling setup writes no partial profile. Use `bashwink setup` later to update or switch providers.
 
 ### 4. Complete your first coding task
 
-Type a task in the prompt (for example, ask Bashwink to inspect a failing test and fix it). Review and approve file edits and commands when prompted. Bashwink runs the checks, records hash-chained evidence under your user profile, and prints request/token usage on exit.
+After accepting workspace trust (`y` to permit edits/commands; `N` for read-only mode), type a prompt such as `fix the failing test`. Bashwink exposes four built-in tools (`list_files`, `read_file`, `edit_file`, `run_command`), previews diffs before edits, asks before running commands (warning that approved commands run with host access, not an OS sandbox), records a hash-chained evidence log (`bashwink evidence verify`), and reports changed files and actual command exit codes.
 
 ### 5. Uninstall
 
@@ -66,32 +56,18 @@ Type a task in the prompt (for example, ask Bashwink to inspect a failing test a
 npm uninstall -g bashwink
 ```
 
-This removes the `bashwink` command and installed package while preserving your configuration, trust decisions, sessions, and evidence logs under `~/.config/bashwink` and `~/.local/share/bashwink`.
+This removes the `bashwink` command while preserving your configuration, trust decisions, run records, and evidence logs under `~/.config/bashwink` and `~/.local/share/bashwink` (or `%APPDATA%/bashwink` on Windows, unless overridden with `BASHWINK_HOME`).
 
----
+### Verification commands
 
-### Install from a prebuilt Windows archive
+```sh
+npm run test:standalone               # Unit and task-loop tests (Node 22+)
+npm run test:standalone:install       # Tarball install, space path, upgrade, corrupt-tarball, uninstall
+npm run test:standalone:e2e           # Installed PTY onboarding, zero-request check, red->green, decline, Ctrl+C (macOS/Linux)
+npm run test:standalone:independence  # Clean clone without vendor/, node_modules/, OpenCode, Hermes, Pi, or Bun
+```
 
-If a maintainer gave you `bashwink-0.1.0-alpha.1.tgz` and `SHA256SUMS`, open PowerShell in that directory (Node.js 22+ and Git required; Windows ARM64 is unsupported):
-
-1. Verify the tarball hash:
-
-   ```powershell
-   Get-FileHash -Algorithm SHA256 .\bashwink-0.1.0-alpha.1.tgz
-   Get-Content .\SHA256SUMS
-   ```
-
-2. Install and check:
-
-   ```powershell
-   npm.cmd install -g .\bashwink-0.1.0-alpha.1.tgz
-   bashwink.cmd --version
-   bashwink.cmd doctor
-   ```
-
-3. Run `bashwink.cmd` in a disposable Git project. Live coding checks use your own provider key with a spending limit. [Windows tester kit](release/tester-kit/README.md) · [Platform results](docs/bashwink/SUPPORTED_PLATFORMS.md) · [Qualification report](docs/bashwink/FINAL_ALPHA_QUALIFICATION_REPORT.md)
-
-The maintainer's earlier `npm-rc2` files are in `release/standard/0.1.0-alpha.1-npm-rc2/`. The optional VM is a separate Apple Silicon candidate in [macOS VM qualification report](docs/bashwink/releases/v0.1.0-alpha.1/rc2/RC2_REPORT.md).
+The earlier fork-based `0.1.0-alpha.1` build artifacts remain pinned as the rollback baseline in [ADR-015](docs/bashwink/ADR-015-STANDALONE-CODING-ALPHA.md).
 
 ## Layout
 

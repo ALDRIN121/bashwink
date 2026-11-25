@@ -1,25 +1,21 @@
-Bashwink 0.1.0-alpha.1 (standard npm package): third-party notices
+Bashwink 0.2.0-alpha.1 (standalone Node.js package): third-party notices
 
-STATUS: engineering notice, not a legal opinion. No licence sign-off has been given for redistribution of this
-package; it is a private alpha for invited testers and must not be redistributed.
+Bashwink itself is licensed under the MIT License (see LICENSE).
 
-This tarball contains Bashwink's own files (MIT; see LICENSE), the locally built Bashwink engine compiled from
-vendored OpenCode source, and, compiled into lib/bashwink.js, copies of the third-party packages listed under
-"BUNDLED CODE" at the end of this file, with their licence texts.
+This standalone alpha tarball ships zero third-party npm runtime dependencies,
+zero Bun binary, zero FFmpeg/OpenTUI native libraries, and zero OpenCode,
+Hermes, or Pi binaries or runtimes.
 
-Locally built engine (libexec/opencode or libexec/opencode.exe):
-  OpenCode v2.3.2 (c0ad18b402eb2827fc1ee71c171b1177b3fc02d1)   MIT   vendor/engine/LICENSE
-  process-daemon v0.6.0 (03d848f7b8d71d31d3e56f2abd8b337efbc1bc32) MIT
-  libghostty-vt (ab0b9da9e88fcb4b0533a1854e84628f663930af)      MIT
-  libopentui v0.8.4 (d4a2af24ba50636da5f222367f91746a1bf89644)  MIT   rebuilt without FFmpeg/video support
+Small ported logic units (rewritten in pure TypeScript/Node 22+ built-ins):
 
-The installed package also pulls in the following JavaScript runtime dependency from npm at install time,
-governed by its own licences:
+  1. OpenCode v2.3.2 (MIT, commit c0ad18b402eb2827fc1ee71c171b1177b3fc02d1)
+     Notice: licenses/opencode.LICENSE
+     Derived logic: `pendingCalls()` and `stepMessages()` helpers in
+     `packages/bw-cli/src/standalone/task-loop.ts` (originally informed by
+     `vendor/engine/packages/ai/src/loop.ts`).
 
-  bun 1.4.4 and @oven/bun-<platform>   MIT for Bun itself. Bun embeds JavaScriptCore (LGPL-2.0) and other
-                                        components. Neither package ships notice files inside npm tarballs.
-
-The engine binary embeds the Bun native runtime (including JavaScriptCore, LGPL-2.0). OpenTUI was rebuilt
-without FFmpeg, so FFmpeg libraries are not linked or shipped.
-
-To see the local engine manifest and bundled packages: `bashwink doctor`.
+  2. Pi coding agent (`@mariozechner/pi-coding-agent`, MIT, commit b882d08)
+     Notice: MIT License (same permissive terms as LICENSE).
+     Derived design patterns: early rejection of truncated `finishReason: "length"`
+     tool calls in `task-loop.ts` and CRLF preservation / diff preview helpers
+     in `packages/bw-cli/src/standalone/tools.ts`.

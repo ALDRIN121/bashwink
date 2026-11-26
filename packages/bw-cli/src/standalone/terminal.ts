@@ -32,16 +32,8 @@ import {
   renderContractSummary,
   reviseActiveContract,
 } from "./contract-store.ts"
-import {
-  exportProofBundle,
-  renderProofSummary,
-  verifyProofPack,
-} from "./proof.ts"
-import {
-  probeModels,
-  testProviderConnection,
-  type TestConnectionResult,
-} from "./provider.ts"
+import { exportProofBundle, renderProofSummary, verifyProofPack } from "./proof.ts"
+import { probeModels, testProviderConnection, type TestConnectionResult } from "./provider.ts"
 import {
   PERMISSION_MODES,
   canonicalWorkspace,
@@ -68,6 +60,7 @@ import {
   createSession,
   deleteSession,
   detectGitBranch,
+  finalizeTurnCheckpoints,
   forkSession,
   listSessions,
   loadPromptHistory,
@@ -144,7 +137,8 @@ export function sanitizeTerminalText(text: string): string {
       const next = text.charCodeAt(i + 1)
       if (next === 0x5b) {
         let j = i + 2
-        while (j < text.length && !(text.charCodeAt(j) >= 0x40 && text.charCodeAt(j) <= 0x7e)) j += 1
+        while (j < text.length && !(text.charCodeAt(j) >= 0x40 && text.charCodeAt(j) <= 0x7e))
+          j += 1
         i = j < text.length ? j + 1 : text.length
         continue
       }
@@ -298,7 +292,11 @@ class RawTerminalIO implements TerminalIO {
     return await this.askLine(prompt, true, signal)
   }
 
-  private async askLine(prompt: string, maskSecret: boolean, signal?: AbortSignal): Promise<string | null> {
+  private async askLine(
+    prompt: string,
+    maskSecret: boolean,
+    signal?: AbortSignal,
+  ): Promise<string | null> {
     let buffer = ""
     let cursor = 0
     let rendered = false
@@ -317,6 +315,7 @@ class RawTerminalIO implements TerminalIO {
 
     return await new Promise<string | null>((resolve) => {
       let done = false
+      let cleanup = () => {}
       const onAbort = () => finish(null)
       const finish = (val: string | null) => {
         if (done) return
@@ -397,7 +396,7 @@ class RawTerminalIO implements TerminalIO {
           }
         }
       }
-      const cleanup = this.raw.beginCapture(onKey, redraw)
+      cleanup = this.raw.beginCapture(onKey, redraw)
       redraw()
     })
   }
@@ -496,7 +495,11 @@ function isYes(answer: string | null): boolean {
   return clean === "y" || clean === "yes"
 }
 
-async function askYesNo(io: TerminalIO, prompt: string, signal?: AbortSignal): Promise<string | null> {
+async function askYesNo(
+  io: TerminalIO,
+  prompt: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
   if (io instanceof RawTerminalIO) {
     return await io.askConfirm(prompt, signal)
   }
@@ -566,7 +569,9 @@ function renderCliHeader(
     io.write(`Trust    ${truncatePlain(trustLine, maxVal)}\n`)
     io.write(`Model    ${truncatePlain(sanitizeTerminalText(modelLine), maxVal)}\n`)
     io.write(`${bar}\n`)
-    io.write(`${style.muted(truncatePlain("Commands: /sessions /timeline /transcript /model /help /exit", layout.cols))}\n`)
+    io.write(
+      `${style.muted(truncatePlain("Commands: /sessions /timeline /transcript /model /help /exit", layout.cols))}\n`,
+    )
     return
   }
 
@@ -601,7 +606,9 @@ function printConnectionTestResult(io: TerminalIO, res: TestConnectionResult, mo
     io.write(style.green(`  ✓ Connection verified in ${res.latencyMs} ms`) + "\n")
     io.write(`    Sample reply: ${sanitizeTerminalText(res.replySnippet ?? "OK")}\n`)
     if (res.discoveredModelsCount !== undefined) {
-      const listed = res.modelListedInCatalog ? "model listed" : `model '${model}' not returned by /models`
+      const listed = res.modelListedInCatalog
+        ? "model listed"
+        : `model '${model}' not returned by /models`
       io.write(`    Catalog:      ${res.discoveredModelsCount} model(s) visible (${listed})\n`)
     }
     if (res.usage?.totalTokens !== undefined) {
@@ -609,7 +616,10 @@ function printConnectionTestResult(io: TerminalIO, res: TestConnectionResult, mo
     }
     return
   }
-  io.writeError(style.red(`  ✗ Sample test failed (${res.latencyMs} ms): ${res.error ?? "unknown error"}`) + "\n")
+  io.writeError(
+    style.red(`  ✗ Sample test failed (${res.latencyMs} ms): ${res.error ?? "unknown error"}`) +
+      "\n",
+  )
   if (res.discoveredModelsCount !== undefined) {
     const listed = res.modelListedInCatalog
       ? `'${model}' was listed in /models`
@@ -624,7 +634,9 @@ export async function runInteractiveSetup(
   env: NodeJS.ProcessEnv,
   existing?: StandaloneConfig,
   opts: { readonly fetchImpl?: typeof fetch } = {},
-): Promise<{ readonly status: "saved"; readonly config: StandaloneConfig } | { readonly status: "cancelled" }> {
+): Promise<
+  { readonly status: "saved"; readonly config: StandaloneConfig } | { readonly status: "cancelled" }
+> {
   io.write(`\nConfigure model  (0 network requests made during setup)\n`)
   if (existing) {
     io.write(
@@ -636,15 +648,21 @@ export async function runInteractiveSetup(
   if (!existing) {
     const legacy = inspectLegacyOpenAiProviders(configDirectory)
     if (legacy.length > 0) {
-      io.write(`Found ${legacy.length} legacy provider entry(ies) in opencode.json (not loaded automatically):\n`)
+      io.write(
+        `Found ${legacy.length} legacy provider entry(ies) in opencode.json (not loaded automatically):\n`,
+      )
       for (const item of legacy) {
-        io.write(`  - ${sanitizeTerminalText(item.id)}: ${sanitizeTerminalText(item.model)} at ${sanitizeTerminalText(item.baseURL)}\n`)
+        io.write(
+          `  - ${sanitizeTerminalText(item.id)}: ${sanitizeTerminalText(item.model)} at ${sanitizeTerminalText(item.baseURL)}\n`,
+        )
       }
       const importAns = await askYesNo(io, "Import one of these references? [y/N] ")
       if (importAns === null) return { status: "cancelled" }
       if (isYes(importAns)) {
         const chosen = legacy[0]!
-        const isLoopback = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?\b/i.test(chosen.baseURL)
+        const isLoopback = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?\b/i.test(
+          chosen.baseURL,
+        )
         const endpointType: "local" | "hosted" = isLoopback ? "local" : "hosted"
         try {
           const normalizedURL = normalizeBaseURL(chosen.baseURL, endpointType)
@@ -667,7 +685,9 @@ export async function runInteractiveSetup(
           }
           if (confirm === null) return { status: "cancelled" }
         } catch (err) {
-          io.writeError(`  Could not import legacy entry: ${err instanceof Error ? err.message : String(err)}\n`)
+          io.writeError(
+            `  Could not import legacy entry: ${err instanceof Error ? err.message : String(err)}\n`,
+          )
         }
       }
     }
@@ -733,9 +753,20 @@ export async function runInteractiveSetup(
   // Hermes-style order: Provider -> Endpoint URL -> API Key / Auth -> Model (curated or /models fetch) -> Sample Test & Save
   let credential: CredentialConfig | undefined
   let pendingSecret: string | undefined
+  const endpointHostChanged =
+    existing !== undefined && formatDestination(existing.baseURL) !== formatDestination(baseURL)
+  if (endpointHostChanged && existing && existing.credential.kind !== "none") {
+    io.write(
+      `\n  Destination host changed (${formatDestination(existing.baseURL)} -> ${formatDestination(baseURL)}); existing credentials will not be reused automatically.\n`,
+    )
+  }
   const canKeepExisting =
-    existing !== undefined && (!existing.providerId || existing.providerId === preset.id)
-  const existingCredCheck = canKeepExisting ? resolveCredentialSecret(existing.credential, env) : undefined
+    existing !== undefined &&
+    (!existing.providerId || existing.providerId === preset.id) &&
+    !endpointHostChanged
+  const existingCredCheck = canKeepExisting
+    ? resolveCredentialSecret(existing.credential, env)
+    : undefined
 
   while (credential === undefined) {
     let mode: string | null
@@ -779,7 +810,8 @@ export async function runInteractiveSetup(
         : "Environment variable name (e.g. MY_API_KEY): "
       const varName = await io.ask(envPrompt)
       if (varName === null) return { status: "cancelled" }
-      const effectiveVar = varName.trim() === "" && preset.defaultEnvVar ? preset.defaultEnvVar : varName
+      const effectiveVar =
+        varName.trim() === "" && preset.defaultEnvVar ? preset.defaultEnvVar : varName
       try {
         credential = { kind: "env", variable: validateEnvVarName(effectiveVar) }
       } catch (err) {
@@ -806,7 +838,10 @@ export async function runInteractiveSetup(
       }
       pendingSecret = secretTrimmed
       const slug = preset.id.toLowerCase().replace(/[^a-z0-9._-]+/g, "_")
-      credential = { kind: "file", path: path.resolve(path.join(configDirectory, "keys", `${slug}.key`)) }
+      credential = {
+        kind: "file",
+        path: path.resolve(path.join(configDirectory, "keys", `${slug}.key`)),
+      }
     } else {
       io.write("  Please enter 1, 2, 3, or 4.\n")
     }
@@ -846,19 +881,30 @@ export async function runInteractiveSetup(
     const trimmed = rawModel.trim()
     if (trimmed.toLowerCase() === "cancel") return { status: "cancelled" }
     if (trimmed.toLowerCase() === "f" || trimmed.toLowerCase() === "fetch") {
-      io.write(`  Probing ${baseURL} /models...\n`)
-      const probe = await probeModels({
-        baseURL,
-        credential,
-        ...(preset.wireProtocol ? { wireProtocol: preset.wireProtocol } : {}),
-        ...(preset.defaultHeaders ? { headers: preset.defaultHeaders } : {}),
-        env,
-        ...(pendingSecret !== undefined ? { apiKeyOverride: pendingSecret } : {}),
-        ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
-      })
+      io.write(`  Probing ${baseURL} /models (Ctrl+C to cancel)...\n`)
+      const probeAbort = new AbortController()
+      const onSig = () => probeAbort.abort()
+      process.once("SIGINT", onSig)
+      let probe
+      try {
+        probe = await probeModels({
+          baseURL,
+          credential,
+          ...(preset.wireProtocol ? { wireProtocol: preset.wireProtocol } : {}),
+          ...(preset.defaultHeaders ? { headers: preset.defaultHeaders } : {}),
+          env,
+          ...(pendingSecret !== undefined ? { apiKeyOverride: pendingSecret } : {}),
+          ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+          signal: probeAbort.signal,
+        })
+      } finally {
+        process.removeListener("SIGINT", onSig)
+      }
       if (probe.ok && probe.models.length > 0) {
         if (probe.usedFallback && probe.resolvedBaseURL) {
-          io.write(`  Note: /models responded at ${probe.resolvedBaseURL}; updating endpoint URL.\n`)
+          io.write(
+            `  Note: /models responded at ${probe.resolvedBaseURL}; updating endpoint URL.\n`,
+          )
           baseURL = normalizeBaseURL(probe.resolvedBaseURL, endpointType)
         }
         const merged = [...probe.models]
@@ -868,7 +914,9 @@ export async function runInteractiveSetup(
         availableModels = merged
         io.write(`  ✓ Found ${probe.models.length} live model(s) from ${probe.probedURL}.\n`)
       } else {
-        io.writeError(`  ! Could not fetch /models (${probe.error ?? "no models listed"}). Enter a model ID directly.\n`)
+        io.writeError(
+          `  ! Could not fetch /models (${probe.error ?? "no models listed"}). Enter a model ID directly.\n`,
+        )
       }
       continue
     }
@@ -912,6 +960,9 @@ export async function runInteractiveSetup(
     updatedAt: new Date().toISOString(),
   }
 
+  let connectionStatus: StandaloneConfig["connectionStatus"] = "unverified"
+  let lastVerifiedAt: string | undefined
+
   while (true) {
     io.write("\nReview connection (0 requests sent until you test or submit):\n")
     io.write(`  Provider    ${preset.name} (${preset.id})\n`)
@@ -922,10 +973,14 @@ export async function runInteractiveSetup(
     io.write(`  Endpoint    ${baseURL}\n`)
     io.write(`  Model       ${model}\n`)
     io.write(`  Credentials ${credCheck.summary}\n`)
+    io.write(`  Status      ${connectionStatus}\n`)
     if (credCheck.warning) {
       io.write(`  Warning     ${credCheck.warning}\n`)
     }
-    const confirm = await askYesNo(io, "Save and use this model? [y/N] (or 't' to run sample test): ")
+    const confirm = await askYesNo(
+      io,
+      "Save and use this model? [y/N] (or 't' to run sample test): ",
+    )
     if (confirm === null) {
       io.write("Setup cancelled; profile unchanged.\n")
       return { status: "cancelled" }
@@ -933,12 +988,33 @@ export async function runInteractiveSetup(
     const ans = confirm.trim().toLowerCase()
     if (ans === "t" || ans === "test") {
       io.write(`  Running sample test against ${baseURL} (${model})...\n`)
-      const testRes = await testProviderConnection({
-        config: draftConfig,
-        env,
-        ...(pendingSecret !== undefined ? { apiKeyOverride: pendingSecret } : {}),
-        ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
-      })
+      const testAbort = new AbortController()
+      const onSig = () => testAbort.abort()
+      process.once("SIGINT", onSig)
+      let testRes
+      try {
+        testRes = await testProviderConnection({
+          config: draftConfig,
+          env,
+          ...(pendingSecret !== undefined ? { apiKeyOverride: pendingSecret } : {}),
+          ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+          signal: testAbort.signal,
+          onProgress: (stage) => {
+            if (stage === "tool_probe") {
+              io.write("  Verifying tool-call support...\n")
+            }
+          },
+        })
+      } finally {
+        process.removeListener("SIGINT", onSig)
+      }
+      if (testRes.ok) {
+        connectionStatus = "verified"
+        lastVerifiedAt = new Date().toISOString()
+      } else {
+        connectionStatus = "failed"
+        lastVerifiedAt = undefined
+      }
       printConnectionTestResult(io, testRes, model)
       continue
     }
@@ -957,10 +1033,14 @@ export async function runInteractiveSetup(
   const config: StandaloneConfig = {
     ...draftConfig,
     credential: finalCredential,
+    connectionStatus,
+    ...(lastVerifiedAt === undefined ? {} : { lastVerifiedAt }),
     updatedAt: new Date().toISOString(),
   }
   saveStandaloneConfig(configDirectory, config)
-  io.write(`Saved model configuration to ${standaloneConfigFile(configDirectory)}.\n`)
+  io.write(
+    `Saved model configuration to ${standaloneConfigFile(configDirectory)} (status: ${connectionStatus}).\n`,
+  )
   return { status: "saved", config }
 }
 
@@ -980,7 +1060,9 @@ function runDoctor(cwd: string, env: NodeJS.ProcessEnv, io: TerminalIO): number 
 
   const cfgState = loadStandaloneConfig(resolved.config)
   if (cfgState.status === "ok") {
-    io.write(`✓ Profile: ${cfgState.config.model} at ${cfgState.config.baseURL} (${standaloneConfigFile(resolved.config)})\n`)
+    io.write(
+      `✓ Profile: ${cfgState.config.model} at ${cfgState.config.baseURL} (${standaloneConfigFile(resolved.config)})\n`,
+    )
     const cred = resolveCredentialSecret(cfgState.config.credential, env)
     if (cred.ok) {
       io.write(`✓ Credentials: ${cred.summary}\n`)
@@ -1005,7 +1087,9 @@ function runDoctor(cwd: string, env: NodeJS.ProcessEnv, io: TerminalIO): number 
     io.write(`✓ Workspace trust: ${canonical} is trusted (edits and commands still confirm)\n`)
   } else {
     io.write(`! Workspace trust: ${canonical} is NOT trusted (read-only until trusted)\n`)
-    io.write(`    fix: run \`bashwink\` interactively or \`bashwink trust "${canonical}" --by "<you>"\`\n`)
+    io.write(
+      `    fix: run \`bashwink\` interactively or \`bashwink trust "${canonical}" --by "<you>"\`\n`,
+    )
   }
 
   const evFile = path.join(resolved.evidence, "evidence.jsonl")
@@ -1063,10 +1147,14 @@ function renderTaskOutcome(result: TaskResult, io: TerminalIO): void {
     })
     io.write(`  Changed   ${fileSummaries.join(", ")}\n`)
   } else {
-    io.write(`  Changed   ${result.changedFiles.length > 0 ? result.changedFiles.join(", ") : "none"}\n`)
+    io.write(
+      `  Changed   ${result.changedFiles.length > 0 ? result.changedFiles.join(", ") : "none"}\n`,
+    )
   }
   if (result.changedTests.length > 0) {
-    io.write(`  ${style.yellow("Tests")}     modified test files: ${result.changedTests.join(", ")} (verify independently)\n`)
+    io.write(
+      `  ${style.yellow("Tests")}     modified test files: ${result.changedTests.join(", ")} (verify independently)\n`,
+    )
   }
   if (result.commands.length === 0) {
     io.write(`  ${style.muted("Commands  none")}\n`)
@@ -1099,16 +1187,28 @@ function renderResumedSessionContext(io: TerminalIO, session: SessionRecord): vo
     io.write(style.muted(`\nResumed empty session: ${session.title} (${session.id})\n`))
     return
   }
-  io.write(style.accentBold(`\nResumed session: ${sanitizeTerminalText(session.title)} (${session.turns.length} turn(s))\n`))
+  io.write(
+    style.accentBold(
+      `\nResumed session: ${sanitizeTerminalText(session.title)} (${session.turns.length} turn(s))\n`,
+    ),
+  )
   const recent = session.turns.slice(-3)
   if (session.turns.length > recent.length) {
-    io.write(style.muted(`  … ${session.turns.length - recent.length} earlier turn(s) — press Ctrl+T for full transcript\n`))
+    io.write(
+      style.muted(
+        `  … ${session.turns.length - recent.length} earlier turn(s) — press Ctrl+T for full transcript\n`,
+      ),
+    )
   }
   const maxMsgW = Math.max(18, terminalCols(io) - 10)
   for (const turn of recent) {
-    io.write(`  ${style.bold("You:")} ${sanitizeTerminalText(truncatePlain(turn.userPrompt.replace(/\n/g, " "), maxMsgW))}\n`)
+    io.write(
+      `  ${style.bold("You:")} ${sanitizeTerminalText(truncatePlain(turn.userPrompt.replace(/\n/g, " "), maxMsgW))}\n`,
+    )
     if (turn.assistantText.trim() !== "") {
-      io.write(`  ${style.green("Asst:")} ${sanitizeTerminalText(truncatePlain(turn.assistantText.replace(/\n/g, " "), maxMsgW))}\n`)
+      io.write(
+        `  ${style.green("Asst:")} ${sanitizeTerminalText(truncatePlain(turn.assistantText.replace(/\n/g, " "), maxMsgW))}\n`,
+      )
     }
   }
 }
@@ -1160,12 +1260,18 @@ function buildComposerStatusFooter(
   session: SessionRecord,
 ): Omit<StatusFooterInput, "statusMessage"> {
   const home = env["HOME"] || ""
-  const shortDir = home !== "" && workspace.startsWith(home) ? `~${workspace.slice(home.length) || "/"}` : workspace
+  const shortDir =
+    home !== "" && workspace.startsWith(home)
+      ? `~${workspace.slice(home.length) || "/"}`
+      : workspace
   const branchTag = session.gitBranch ? ` (${session.gitBranch})` : ""
   const location = `${shortDir}${branchTag}`
   const tokens = session.usageTotals.totalTokens
   const tokensText = tokens > 0 ? formatCompactTokens(tokens) : undefined
-  const costText = session.usageTotals.costUsd !== undefined ? `$${session.usageTotals.costUsd.toFixed(4)}` : undefined
+  const costText =
+    session.usageTotals.costUsd !== undefined
+      ? `$${session.usageTotals.costUsd.toFixed(4)}`
+      : undefined
   return {
     location,
     turnsCount: session.turns.length,
@@ -1237,7 +1343,10 @@ function buildHelpModalLines(configDir: string, dataDir: string, style: TuiStyle
     .map((l) => (l === l.toUpperCase() && l.trim() !== "" ? style.accentBold(`  ${l}`) : `  ${l}`))
 }
 
-function parseCriterionSpec(raw: string, index: number): {
+function parseCriterionSpec(
+  raw: string,
+  index: number,
+): {
   readonly id: string
   readonly statement: string
   readonly command?: string
@@ -1281,7 +1390,13 @@ function handleContractCli(
   const hasFlag = (flag: string): boolean => subArgs.includes(flag)
 
   if (action === "show" || action === "status") {
-    const active = loadActiveContract(dataDir, canonical)
+    let active
+    try {
+      active = loadActiveContract(dataDir, canonical)
+    } catch (err) {
+      io.writeError(`${err instanceof Error ? err.message : String(err)}\n`)
+      return 1
+    }
     if (!active) {
       io.writeError(`No active contract for ${canonical}.\n`)
       return 1
@@ -1359,7 +1474,9 @@ function handleContractCli(
     }
     const allow = readFlagList("--allow")
     const forbid = readFlagList("--forbid")
-    const addCriteria = readFlagList("--add-criterion").map((raw, idx) => parseCriterionSpec(raw, idx))
+    const addCriteria = readFlagList("--add-criterion").map((raw, idx) =>
+      parseCriterionSpec(raw, idx),
+    )
     const dropCriteriaIds = readFlagList("--drop-criterion")
     const resolveAssumptionIds = readFlagList("--resolve-assumption")
     const resolveQuestionIds = readFlagList("--resolve-question")
@@ -1378,7 +1495,9 @@ function handleContractCli(
     return 0
   }
 
-  io.writeError(`Unknown contract subcommand '${action}'. Use: new, show, approve, reject, edit, revise, status.\n`)
+  io.writeError(
+    `Unknown contract subcommand '${action}'. Use: new, show, approve, reject, edit, revise, status.\n`,
+  )
   return 2
 }
 
@@ -1419,7 +1538,10 @@ function handleProofCli(
     let manifest: ProofPackManifest | undefined
     if (target && existsSync(path.resolve(cwd, target))) {
       try {
-        const parsed = JSON.parse(readFileSync(path.resolve(cwd, target), "utf8")) as Record<string, unknown>
+        const parsed = JSON.parse(readFileSync(path.resolve(cwd, target), "utf8")) as Record<
+          string,
+          unknown
+        >
         if (parsed["proofPack"] && typeof parsed["proofPack"] === "object") {
           manifest = parsed["proofPack"] as ProofPackManifest
         } else {
@@ -1458,13 +1580,26 @@ interface ParsedCliRunOptions {
   readonly positional: readonly string[]
 }
 
+function parsePositiveIntFlag(val: string, flag: string): number {
+  if (!/^\d+$/.test(val.trim())) {
+    throw new LimitConfigError(`${flag} must be a positive integer`)
+  }
+  const n = Number(val.trim())
+  if (!Number.isSafeInteger(n) || n <= 0) {
+    throw new LimitConfigError(`${flag} must be greater than 0`)
+  }
+  return n
+}
+
 function parseTopLevelRunOptions(
   argv: readonly string[],
   env: NodeJS.ProcessEnv,
 ): ParsedCliRunOptions {
   const positional: string[] = []
   let maxRequests: number | undefined
-  let maxTokens: number | undefined
+  let maxTotalTokens: number | undefined
+  let maxOutputTokens: number | undefined
+  let maxInputTokens: number | undefined
   let maxCostUsd: number | undefined
   let maxTimeMs: number | undefined
   let requireContract = false
@@ -1497,7 +1632,25 @@ function parseTopLevelRunOptions(
       const { val, step } = readVal(i, "--max-tokens")
       i += step
       envMap["BASHWINK_MAX_TOKENS"] = val
-      maxTokens = parseLimits(envMap).tokens
+      maxTotalTokens = parseLimits(envMap).tokens
+      continue
+    }
+    if (a === "--max-total-tokens" || a.startsWith("--max-total-tokens=")) {
+      const { val, step } = readVal(i, "--max-total-tokens")
+      i += step
+      maxTotalTokens = parsePositiveIntFlag(val, "--max-total-tokens")
+      continue
+    }
+    if (a === "--max-output-tokens" || a.startsWith("--max-output-tokens=")) {
+      const { val, step } = readVal(i, "--max-output-tokens")
+      i += step
+      maxOutputTokens = parsePositiveIntFlag(val, "--max-output-tokens")
+      continue
+    }
+    if (a === "--max-input-tokens" || a.startsWith("--max-input-tokens=")) {
+      const { val, step } = readVal(i, "--max-input-tokens")
+      i += step
+      maxInputTokens = parsePositiveIntFlag(val, "--max-input-tokens")
       continue
     }
     if (a === "--max-cost-usd" || a.startsWith("--max-cost-usd=")) {
@@ -1518,16 +1671,37 @@ function parseTopLevelRunOptions(
   }
 
   const envLimits = parseLimits(envMap)
+  const envOutTok = env["BASHWINK_MAX_OUTPUT_TOKENS"]
+    ? parsePositiveIntFlag(env["BASHWINK_MAX_OUTPUT_TOKENS"], "BASHWINK_MAX_OUTPUT_TOKENS")
+    : undefined
+  const envInTok = env["BASHWINK_MAX_INPUT_TOKENS"]
+    ? parsePositiveIntFlag(env["BASHWINK_MAX_INPUT_TOKENS"], "BASHWINK_MAX_INPUT_TOKENS")
+    : undefined
+  const envTotalTok = env["BASHWINK_MAX_TOTAL_TOKENS"]
+    ? parsePositiveIntFlag(env["BASHWINK_MAX_TOTAL_TOKENS"], "BASHWINK_MAX_TOTAL_TOKENS")
+    : env["BASHWINK_MAX_TOKENS"] && envLimits.tokens !== undefined
+      ? envLimits.tokens
+      : undefined
   const cliBudgets: Partial<TaskBudgets> = {
     ...(maxRequests !== undefined
       ? { maxRequests }
       : env["BASHWINK_MAX_REQUESTS"] && envLimits.requests !== undefined
         ? { maxRequests: envLimits.requests }
         : {}),
-    ...(maxTokens !== undefined
-      ? { maxOutputTokens: maxTokens }
-      : env["BASHWINK_MAX_TOKENS"] && envLimits.tokens !== undefined
-        ? { maxOutputTokens: envLimits.tokens }
+    ...(maxTotalTokens !== undefined
+      ? { maxTotalTokens }
+      : envTotalTok !== undefined
+        ? { maxTotalTokens: envTotalTok }
+        : {}),
+    ...(maxOutputTokens !== undefined
+      ? { maxOutputTokens }
+      : envOutTok !== undefined
+        ? { maxOutputTokens: envOutTok }
+        : {}),
+    ...(maxInputTokens !== undefined
+      ? { maxInputTokens }
+      : envInTok !== undefined
+        ? { maxInputTokens: envInTok }
         : {}),
     ...(maxCostUsd !== undefined
       ? { maxCostUsd }
@@ -1614,7 +1788,9 @@ export async function runStandalone(
     if (firstRaw === "evidence") {
       const sub = argv[1]
       if (sub === "verify") {
-        const file = argv[2] ? path.resolve(cwd, argv[2]) : path.join(resolved.evidence, "evidence.jsonl")
+        const file = argv[2]
+          ? path.resolve(cwd, argv[2])
+          : path.join(resolved.evidence, "evidence.jsonl")
         const res = verifyEvidenceFile(file)
         if (res.ok) {
           io.write(`Evidence OK: ${res.entries} entries (head ${res.head}).\n`)
@@ -1644,7 +1820,9 @@ export async function runStandalone(
         }
         const run = loadRunRecord(resolved.data, runIdArg)
         if (!run) {
-          io.writeError(runIdArg ? `Run '${runIdArg}' not found.\n` : "No recorded runs found to export.\n")
+          io.writeError(
+            runIdArg ? `Run '${runIdArg}' not found.\n` : "No recorded runs found to export.\n",
+          )
           return 1
         }
         const rendered = exportProofBundle(run, { format })
@@ -1692,7 +1870,11 @@ export async function runStandalone(
     const first = parsedRunOpts.positional[0]
     const secondPositional = parsedRunOpts.positional[1]
 
-    if (first === "setup" || first === "connect" || (first === "model" && parsedRunOpts.positional.length === 1)) {
+    if (
+      first === "setup" ||
+      first === "connect" ||
+      (first === "model" && parsedRunOpts.positional.length === 1)
+    ) {
       if (!io.isTTY) {
         io.writeError(
           `bashwink ${first} requires an interactive terminal to configure provider, model, and credential references.\n`,
@@ -1760,6 +1942,23 @@ export async function runStandalone(
     let permissionMode: PermissionMode = initialPerms.mode
     let savedRules: readonly SavedPermissionRule[] = initialPerms.rules
 
+    const confirmCrossWorkspaceSession = async (
+      candidate: SessionRecord,
+    ): Promise<SessionRecord | undefined> => {
+      if (path.resolve(candidate.workspace) === path.resolve(canonical)) return candidate
+      if (!io.isTTY) {
+        io.writeError(
+          `Refusing to resume session '${candidate.id}' from another workspace (${candidate.workspace}) in non-interactive mode.\n`,
+        )
+        return undefined
+      }
+      const allow = await askYesNo(
+        io,
+        `Session '${candidate.id}' belongs to ${candidate.workspace}. Resume its history into ${canonical}? [y/N] `,
+      )
+      return isYes(allow) ? candidate : undefined
+    }
+
     let activeSession: SessionRecord = createSession(canonical, gitBranch)
     if (continueFlag) {
       const existing = listSessions(resolved.data, { workspace: canonical })[0]
@@ -1769,7 +1968,8 @@ export async function runStandalone(
       const direct = loadSession(resolved.data, targetId)
       const matched = direct ?? listSessions(resolved.data).find((s) => s.id.startsWith(targetId))
       if (matched) {
-        activeSession = matched
+        const accepted = await confirmCrossWorkspaceSession(matched)
+        if (accepted) activeSession = accepted
       } else {
         io.writeError(`Session '${targetId}' not found; starting a new session.\n`)
       }
@@ -1825,8 +2025,9 @@ export async function runStandalone(
           })
           if (picked.action === "select") {
             const loaded = loadSession(resolved.data, picked.sessionId)
-            if (loaded) {
-              activeSession = loaded
+            const accepted = loaded ? await confirmCrossWorkspaceSession(loaded) : undefined
+            if (accepted) {
+              activeSession = accepted
               renderResumedSessionContext(io, activeSession)
             }
           }
@@ -1838,7 +2039,9 @@ export async function runStandalone(
           const list = listSessions(resolved.data, { workspace: canonical })
           io.write(`\nSessions in ${canonical}: ${list.length}\n`)
           for (const s of list.slice(0, 10)) {
-            io.write(`  ${s.id}  ${s.title} (${s.turns.length} turns, ${formatRelativeTime(s.updatedAt)})\n`)
+            io.write(
+              `  ${s.id}  ${s.title} (${s.turns.length} turns, ${formatRelativeTime(s.updatedAt)})\n`,
+            )
           }
           return
         }
@@ -1853,21 +2056,36 @@ export async function runStandalone(
           if (res.action === "new") {
             activeSession = createSession(canonical, detectGitBranch(canonical))
             io.write("\x1b[2J\x1b[H")
-            renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig, activeSession)
+            renderCliHeader(
+              io,
+              canonical,
+              isWorkspaceTrusted(resolved.config, canonical),
+              activeConfig,
+              activeSession,
+            )
             return
           }
           if (res.action === "select") {
             const loaded = loadSession(resolved.data, res.sessionId)
-            if (loaded) {
-              activeSession = loaded
+            const accepted = loaded ? await confirmCrossWorkspaceSession(loaded) : undefined
+            if (accepted) {
+              activeSession = accepted
               io.write("\x1b[2J\x1b[H")
-              renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig, activeSession)
+              renderCliHeader(
+                io,
+                canonical,
+                isWorkspaceTrusted(resolved.config, canonical),
+                activeConfig,
+                activeSession,
+              )
               renderResumedSessionContext(io, activeSession)
             }
             return
           }
           if (res.action === "rename") {
-            const target = loadSession(resolved.data, res.sessionId) ?? (res.sessionId === activeSession.id ? activeSession : undefined)
+            const target =
+              loadSession(resolved.data, res.sessionId) ??
+              (res.sessionId === activeSession.id ? activeSession : undefined)
             if (target) {
               const renamed: SessionRecord = {
                 ...target,
@@ -1881,13 +2099,21 @@ export async function runStandalone(
             continue
           }
           if (res.action === "fork") {
-            const target = loadSession(resolved.data, res.sessionId) ?? (res.sessionId === activeSession.id ? activeSession : undefined)
+            const target =
+              loadSession(resolved.data, res.sessionId) ??
+              (res.sessionId === activeSession.id ? activeSession : undefined)
             if (target) {
               const forked = forkSession(target)
               saveSession(resolved.data, forked)
               activeSession = forked
               io.write("\x1b[2J\x1b[H")
-              renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig, activeSession)
+              renderCliHeader(
+                io,
+                canonical,
+                isWorkspaceTrusted(resolved.config, canonical),
+                activeConfig,
+                activeSession,
+              )
               renderResumedSessionContext(io, activeSession)
             }
             return
@@ -1924,31 +2150,62 @@ export async function runStandalone(
           saveSession(resolved.data, forked)
           activeSession = forked
           io.write("\x1b[2J\x1b[H")
-          renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig, activeSession)
+          renderCliHeader(
+            io,
+            canonical,
+            isWorkspaceTrusted(resolved.config, canonical),
+            activeConfig,
+            activeSession,
+          )
           renderResumedSessionContext(io, activeSession)
           return
         }
         if (res.action === "rewind_conversation" || res.action === "rewind_all") {
-          const { updated, revertedTurns, promptToRestore } = rewindSessionToTurn(activeSession, res.turnIndex)
-          activeSession = updated
-          saveSession(resolved.data, activeSession)
-          draftBuffer = promptToRestore
+          const { updated, revertedTurns, promptToRestore } = rewindSessionToTurn(
+            activeSession,
+            res.turnIndex,
+          )
+          const activeSecret = activeConfig
+            ? resolveCredentialSecret(activeConfig.credential, env).secret
+            : undefined
           if (res.action === "rewind_all" && activeConfig) {
             const boundary = createBoundaryContext(canonical, resolved, activeConfig, env)
             const restored = restoreTurnCheckpoints(boundary, revertedTurns)
+            const hasRestoredWork = restored.restored.length > 0 || restored.removed.length > 0
+            if (restored.skipped.length > 0 && !hasRestoredWork) {
+              io.writeError(
+                `\nFile rewind blocked/skipped (${restored.skipped.map((s) => `${s.path}: ${s.reason}`).join("; ")}); session turns left unchanged.\n`,
+              )
+              return
+            }
+            activeSession = updated
+            saveSession(resolved.data, activeSession, activeSecret)
+            draftBuffer = promptToRestore
             io.write(
               `\nRewound ${revertedTurns.length} turn(s); restored ${restored.restored.length} file(s)` +
-                (restored.removed.length > 0 ? `, removed ${restored.removed.length} created file(s)` : "") +
-                (restored.skipped.length > 0 ? `, skipped ${restored.skipped.length}` : "") +
+                (restored.removed.length > 0
+                  ? `, removed ${restored.removed.length} created file(s)`
+                  : "") +
+                (restored.skipped.length > 0
+                  ? `, skipped ${restored.skipped.length} (${restored.skipped.map((s) => `${s.path}: ${s.reason}`).join("; ")})`
+                  : "") +
                 ".\n",
             )
           } else {
-            io.write(`\nRewound conversation ${revertedTurns.length} turn(s); prompt restored to composer.\n`)
+            activeSession = updated
+            saveSession(resolved.data, activeSession, activeSecret)
+            draftBuffer = promptToRestore
+            io.write(
+              `\nRewound conversation ${revertedTurns.length} turn(s); prompt restored to composer.\n`,
+            )
           }
         }
       }
 
-      const dispatchSlashCommand = async (cmdName: string, cmdArgs: string): Promise<"continue" | "exit"> => {
+      const dispatchSlashCommand = async (
+        cmdName: string,
+        cmdArgs: string,
+      ): Promise<"continue" | "exit"> => {
         if (cmdName === "exit" || cmdName === "quit" || cmdName === "q") {
           return "exit"
         }
@@ -2021,11 +2278,35 @@ export async function runStandalone(
           )
           return "continue"
         }
-        if (cmdName === "setup" || cmdName === "connect" || cmdName === "model" || cmdName === "models") {
+        if (
+          cmdName === "setup" ||
+          cmdName === "connect" ||
+          cmdName === "model" ||
+          cmdName === "models"
+        ) {
+          const prevDest = activeConfig
+            ? `${activeConfig.endpointType}:${formatDestination(activeConfig.baseURL)}`
+            : undefined
           const res = await runInteractiveSetup(io, resolved.config, env, activeConfig)
           if (res.status === "saved") {
+            const nextDest = `${res.config.endpointType}:${formatDestination(res.config.baseURL)}`
+            if (prevDest && prevDest !== nextDest && activeSession.turns.length > 0) {
+              const splitSession = await askYesNo(
+                io,
+                `Destination changed (${prevDest} -> ${nextDest}) with ${activeSession.turns.length} prior turn(s). Start a fresh session instead of sharing history? [y/N] `,
+              )
+              if (isYes(splitSession)) {
+                activeSession = createSession(canonical, detectGitBranch(canonical))
+              }
+            }
             activeConfig = res.config
-            renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig, activeSession)
+            renderCliHeader(
+              io,
+              canonical,
+              isWorkspaceTrusted(resolved.config, canonical),
+              activeConfig,
+              activeSession,
+            )
           }
           return "continue"
         }
@@ -2046,13 +2327,25 @@ export async function runStandalone(
         if (cmdName === "new") {
           activeSession = createSession(canonical, detectGitBranch(canonical))
           if (io instanceof RawTerminalIO) io.write("\x1b[2J\x1b[H")
-          renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig, activeSession)
+          renderCliHeader(
+            io,
+            canonical,
+            isWorkspaceTrusted(resolved.config, canonical),
+            activeConfig,
+            activeSession,
+          )
           return "continue"
         }
         if (cmdName === "clear") {
           activeSession = createSession(canonical, detectGitBranch(canonical))
           if (io instanceof RawTerminalIO) io.write("\x1b[2J\x1b[H")
-          renderCliHeader(io, canonical, isWorkspaceTrusted(resolved.config, canonical), activeConfig, activeSession)
+          renderCliHeader(
+            io,
+            canonical,
+            isWorkspaceTrusted(resolved.config, canonical),
+            activeConfig,
+            activeSession,
+          )
           return "continue"
         }
         if (cmdName === "fork") {
@@ -2063,7 +2356,8 @@ export async function runStandalone(
           return "continue"
         }
         if (cmdName === "rename") {
-          const newTitle = cmdArgs !== "" ? cmdArgs : (await io.ask("New session title: "))?.trim() ?? ""
+          const newTitle =
+            cmdArgs !== "" ? cmdArgs : ((await io.ask("New session title: "))?.trim() ?? "")
           if (newTitle !== "") {
             activeSession = {
               ...activeSession,
@@ -2076,7 +2370,12 @@ export async function runStandalone(
           }
           return "continue"
         }
-        if (cmdName === "timeline" || cmdName === "rewind" || cmdName === "checkpoint" || cmdName === "undo") {
+        if (
+          cmdName === "timeline" ||
+          cmdName === "rewind" ||
+          cmdName === "checkpoint" ||
+          cmdName === "undo"
+        ) {
           await handleTimelineRewind()
           return "continue"
         }
@@ -2119,9 +2418,13 @@ export async function runStandalone(
           const trustedNow = isWorkspaceTrusted(resolved.config, canonical)
           io.write("\n--- Status ---\n")
           io.write(`Session   ${activeSession.title} (${activeSession.id})\n`)
-          io.write(`Turns     ${activeSession.turns.length} (${activeSession.messages.length} context messages)\n`)
+          io.write(
+            `Turns     ${activeSession.turns.length} (${activeSession.messages.length} context messages)\n`,
+          )
           io.write(`Workspace ${canonical} (${trustedNow ? "trusted" : "read-only"})\n`)
-          io.write(`Mode      ${permissionMode} (${savedRules.length} saved Always-allow rule(s))\n`)
+          io.write(
+            `Mode      ${permissionMode} (${savedRules.length} saved Always-allow rule(s))\n`,
+          )
           io.write(
             `Model     ${activeConfig ? `${activeConfig.model} at ${formatDestination(activeConfig.baseURL)}` : "none"}\n`,
           )
@@ -2149,11 +2452,17 @@ export async function runStandalone(
           return "continue"
         }
         if (cmdName === "contract") {
-          const active = loadActiveContract(resolved.data, canonical)
-          if (!active) {
-            io.write(`No active IntentLock contract for ${canonical}. Create via \`bashwink contract new\`.\n`)
-          } else {
-            io.write(`\n${renderContractSummary(active)}\n`)
+          try {
+            const active = loadActiveContract(resolved.data, canonical)
+            if (!active) {
+              io.write(
+                `No active IntentLock contract for ${canonical}. Create via \`bashwink contract new\`.\n`,
+              )
+            } else {
+              io.write(`\n${renderContractSummary(active)}\n`)
+            }
+          } catch (err) {
+            io.writeError(`${err instanceof Error ? err.message : String(err)}\n`)
           }
           return "continue"
         }
@@ -2175,8 +2484,15 @@ export async function runStandalone(
             style: io.style,
             promptLabel,
             permissionMode,
-            statusSummary: buildStatusSummary(activeSession, trusted, activeConfig, io.raw.layout(), permissionMode),
-            getStatusSummary: (layout) => buildStatusSummary(activeSession, trusted, activeConfig, layout, permissionMode),
+            statusSummary: buildStatusSummary(
+              activeSession,
+              trusted,
+              activeConfig,
+              io.raw.layout(),
+              permissionMode,
+            ),
+            getStatusSummary: (layout) =>
+              buildStatusSummary(activeSession, trusted, activeConfig, layout, permissionMode),
             getMetadata: () => buildComposerMetadata(trusted, activeConfig, permissionMode),
             getStatusFooter: () => buildComposerStatusFooter(canonical, env, activeSession),
             workspace: canonical,
@@ -2295,7 +2611,9 @@ export async function runStandalone(
             trusted = true
             io.write(`Trusted ${canonical}.\n`)
           } else {
-            io.write("Continuing in read-only mode (edits and commands will be denied). Run /trust anytime to trust this folder.\n")
+            io.write(
+              "Continuing in read-only mode (edits and commands will be denied). Run /trust anytime to trust this folder.\n",
+            )
           }
         }
 
@@ -2304,7 +2622,10 @@ export async function runStandalone(
           io.writeError(
             `\nProvider at ${formatDestination(activeConfig.baseURL)} cannot authenticate (${cred.summary}).\n`,
           )
-          const repair = await askYesNo(io, "Open /model setup to repair provider credentials? [y/N] ")
+          const repair = await askYesNo(
+            io,
+            "Open /model setup to repair provider credentials? [y/N] ",
+          )
           if (isYes(repair)) {
             const res = await runInteractiveSetup(io, resolved.config, env, activeConfig)
             if (res.status === "saved") activeConfig = res.config
@@ -2312,9 +2633,10 @@ export async function runStandalone(
           continue
         }
 
-        promptHistory = appendPromptHistory(resolved.data, trimmed)
+        promptHistory = appendPromptHistory(resolved.data, trimmed, cred.secret)
         currentAbort = new AbortController()
         const turnCheckpoints: FileCheckpoint[] = []
+        const checkpointedPaths = new Set<string>()
 
         // Live spinner & raw Ctrl+C / Escape cancel listener while task runs
         let spinnerTimer: ReturnType<typeof setInterval> | undefined
@@ -2374,7 +2696,11 @@ export async function runStandalone(
         startSpinnerAndCancel()
 
         const shownDiffCallIds = new Set<string>()
-        const readBurst: Array<{ readonly tool: "read_file" | "list_files"; readonly target: string; readonly ok: boolean }> = []
+        const readBurst: Array<{
+          readonly tool: "read_file" | "list_files"
+          readonly target: string
+          readonly ok: boolean
+        }> = []
 
         const flushReadBurst = () => {
           if (readBurst.length === 0) return
@@ -2387,7 +2713,9 @@ export async function runStandalone(
                 io.write(`  ${icon} ${style.muted(`List ${target}`)}\n`)
               } else {
                 const icon = entry.ok ? style.muted("→") : style.yellow("✗")
-                io.write(`  ${icon} ${style.muted(entry.ok ? `Read ${target}` : `Read ${target} (not found)`)}\n`)
+                io.write(
+                  `  ${icon} ${style.muted(entry.ok ? `Read ${target}` : `Read ${target} (not found)`)}\n`,
+                )
               }
             }
           } else {
@@ -2395,17 +2723,37 @@ export async function runStandalone(
             const files = readBurst.filter((r) => r.tool === "read_file")
             const failed = readBurst.filter((r) => !r.ok).length
             const parts: string[] = []
-            if (dirs.length > 0) parts.push(`listed ${dirs.length} dir${dirs.length === 1 ? "" : "s"}`)
-            if (files.length > 0) parts.push(`read ${files.length} file${files.length === 1 ? "" : "s"}`)
-            const samples = [...new Set(readBurst.filter((r) => r.ok && r.target && r.target !== ".").map((r) => r.target))].slice(0, 3)
-            const sampleText = samples.length > 0 ? ` (${samples.join(", ")}${readBurst.length > 3 ? ", …" : ""})` : ""
+            if (dirs.length > 0)
+              parts.push(`listed ${dirs.length} dir${dirs.length === 1 ? "" : "s"}`)
+            if (files.length > 0)
+              parts.push(`read ${files.length} file${files.length === 1 ? "" : "s"}`)
+            const samples = [
+              ...new Set(
+                readBurst.filter((r) => r.ok && r.target && r.target !== ".").map((r) => r.target),
+              ),
+            ].slice(0, 3)
+            const sampleText =
+              samples.length > 0
+                ? ` (${samples.join(", ")}${readBurst.length > 3 ? ", …" : ""})`
+                : ""
             const errText = failed > 0 ? ` · ${failed} unreadable` : ""
-            io.write(`  ${style.green("✓")} ${style.muted(`Explored ${parts.join(", ")}${sampleText}${errText}`)}\n`)
+            io.write(
+              `  ${style.green("✓")} ${style.muted(`Explored ${parts.join(", ")}${sampleText}${errText}`)}\n`,
+            )
           }
           readBurst.length = 0
         }
 
-        const activeContract = loadActiveContract(resolved.data, canonical)
+        let activeContract
+        try {
+          activeContract = loadActiveContract(resolved.data, canonical)
+        } catch (err) {
+          io.writeError(
+            `${err instanceof Error ? err.message : String(err)}\nRepair or remove the corrupted contract before running tasks.\n`,
+          )
+          currentAbort = undefined
+          continue
+        }
         let result: TaskResult
         try {
           result = await runTask(
@@ -2430,10 +2778,16 @@ export async function runStandalone(
                 savedRules = saveAlwaysPermissionRule(resolved.config, canonical, rule).rules
               },
               onPermissionModeChange: (nextMode) => {
-                permissionMode = setWorkspacePermissionMode(resolved.config, canonical, nextMode).mode
+                permissionMode = setWorkspacePermissionMode(
+                  resolved.config,
+                  canonical,
+                  nextMode,
+                ).mode
                 clearSpinnerLine()
                 const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
-                io.write(`  ${style.cyan("↳")} switched permission mode to ${style.bold(permissionMode)}\n`)
+                io.write(
+                  `  ${style.cyan("↳")} switched permission mode to ${style.bold(permissionMode)}\n`,
+                )
               },
               requestWorkspaceTrust: async (req: ApprovalRequest): Promise<ApprovalDecision> => {
                 pauseSpinnerAndCancel()
@@ -2480,7 +2834,9 @@ export async function runStandalone(
                 if (event.type === "model_requested") {
                   spinnerText = `Waiting for ${event.model} at ${formatDestination(event.endpoint)}`
                   if (!(io instanceof RawTerminalIO) && event.step === 1) {
-                    io.write(`Waiting for ${event.model} at ${formatDestination(event.endpoint)}...\n`)
+                    io.write(
+                      `Waiting for ${event.model} at ${formatDestination(event.endpoint)}...\n`,
+                    )
                   }
                   startSpinnerAndCancel()
                 } else if (event.type === "guardian_review") {
@@ -2493,19 +2849,28 @@ export async function runStandalone(
                       : event.verdict === "DENY"
                         ? style.red("DENY")
                         : style.yellow("ESCALATE")
-                  const reasonSuffix = event.reason ? ` (${sanitizeTerminalText(event.reason)})` : ""
+                  const reasonSuffix = event.reason
+                    ? ` (${sanitizeTerminalText(event.reason)})`
+                    : ""
                   io.write(`  ${style.accent("◆")} Smart review [${tag}]${reasonSuffix}\n`)
                   startSpinnerAndCancel()
                 } else if (event.type === "tool_approved") {
-                  if (event.tool === "edit_file" && event.relativePath && event.resolvedPath) {
-                    const cp = captureFileCheckpoint(canonical, event.relativePath, event.resolvedPath)
+                  if (
+                    event.tool === "edit_file" &&
+                    event.relativePath &&
+                    event.resolvedPath &&
+                    !checkpointedPaths.has(event.relativePath)
+                  ) {
+                    checkpointedPaths.add(event.relativePath)
+                    const cp = captureFileCheckpoint(
+                      canonical,
+                      event.relativePath,
+                      event.resolvedPath,
+                      cred.secret,
+                    )
                     if (cp) turnCheckpoints.push(cp)
                   }
-                  if (
-                    event.source &&
-                    event.source !== "user" &&
-                    event.source !== "user-always"
-                  ) {
+                  if (event.source && event.source !== "user" && event.source !== "user-always") {
                     clearSpinnerLine()
                     flushReadBurst()
                     const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
@@ -2515,7 +2880,8 @@ export async function runStandalone(
                 } else if (event.type === "tool_completed") {
                   const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
                   if (event.result.tool === "list_files" || event.result.tool === "read_file") {
-                    const target = event.result.target ?? (event.result.tool === "list_files" ? "." : "")
+                    const target =
+                      event.result.target ?? (event.result.tool === "list_files" ? "." : "")
                     readBurst.push({
                       tool: event.result.tool,
                       target,
@@ -2524,8 +2890,10 @@ export async function runStandalone(
                     const readCount = readBurst.filter((r) => r.tool === "read_file").length
                     const dirCount = readBurst.filter((r) => r.tool === "list_files").length
                     const progressParts: string[] = []
-                    if (dirCount > 0) progressParts.push(`${dirCount} dir${dirCount === 1 ? "" : "s"}`)
-                    if (readCount > 0) progressParts.push(`${readCount} file${readCount === 1 ? "" : "s"}`)
+                    if (dirCount > 0)
+                      progressParts.push(`${dirCount} dir${dirCount === 1 ? "" : "s"}`)
+                    if (readCount > 0)
+                      progressParts.push(`${readCount} file${readCount === 1 ? "" : "s"}`)
                     spinnerText =
                       event.result.tool === "read_file"
                         ? `Reading ${sanitizeTerminalText(target)} (${progressParts.join(", ")})`
@@ -2563,8 +2931,12 @@ export async function runStandalone(
                         command: sanitizeTerminalText(event.result.target ?? "command"),
                         output: sanitizeTerminalText(event.result.output),
                         status: event.result.status,
-                        ...(event.result.exitCode !== undefined ? { exitCode: event.result.exitCode } : {}),
-                        ...(event.result.signal !== undefined ? { signal: event.result.signal } : {}),
+                        ...(event.result.exitCode !== undefined
+                          ? { exitCode: event.result.exitCode }
+                          : {}),
+                        ...(event.result.signal !== undefined
+                          ? { signal: event.result.signal }
+                          : {}),
                         maxWidth: terminalCols(io),
                       },
                       style,
@@ -2579,7 +2951,9 @@ export async function runStandalone(
                 try {
                   const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
                   if (req.kind === "edit_file") {
-                    const cleanPatch = sanitizeTerminalText(req.prepared.diffPreview)
+                    const cleanPatch = sanitizeTerminalText(
+                      sanitizeSecretText(req.prepared.diffPreview, cred.secret),
+                    )
                     const rendered = renderOpenCodeDiff(
                       cleanPatch,
                       {
@@ -2593,11 +2967,15 @@ export async function runStandalone(
                     shownDiffCallIds.add(req.callId)
                     io.write(`\n${rendered.join("\n")}\n`)
                     if (req.integrityWarning) {
-                      io.write(`${style.red("TestGuard Warning:")} ${sanitizeTerminalText(req.integrityWarning)}\n`)
+                      io.write(
+                        `${style.red("TestGuard Warning:")} ${sanitizeTerminalText(sanitizeSecretText(req.integrityWarning, cred.secret))}\n`,
+                      )
                     }
                     if (req.reason && req.reason !== req.integrityWarning) {
                       const prefix = req.smartDenied ? style.red("Blocked:") : style.yellow("Note:")
-                      io.write(`${prefix} ${sanitizeTerminalText(req.reason)}\n`)
+                      io.write(
+                        `${prefix} ${sanitizeTerminalText(sanitizeSecretText(req.reason, cred.secret))}\n`,
+                      )
                     }
                     return await askPermissionDecision(io, "Apply this change? [y/N]", {
                       allowAlways: req.allowAlways ?? true,
@@ -2608,14 +2986,23 @@ export async function runStandalone(
                     })
                   }
                   const cmdLine = sanitizeTerminalText(
-                    sanitizeSecretText([req.prepared.command, ...req.prepared.args].join(" "), cred.secret),
+                    sanitizeSecretText(
+                      [req.prepared.command, ...req.prepared.args].join(" "),
+                      cred.secret,
+                    ),
                   )
                   io.write(`\n  ${style.yellow("┃")} ${style.bold("$")} ${style.bold(cmdLine)}\n`)
-                  io.write(`  ${style.yellow("┃")} ${style.muted(`Dir      ${sanitizeTerminalText(req.prepared.cwd)}`)}\n`)
-                  io.write(`  ${style.yellow("┃")} ${style.muted(`Warning  ${req.hostAccessWarning}`)}\n`)
+                  io.write(
+                    `  ${style.yellow("┃")} ${style.muted(`Dir      ${sanitizeTerminalText(sanitizeSecretText(req.prepared.cwd, cred.secret))}`)}\n`,
+                  )
+                  io.write(
+                    `  ${style.yellow("┃")} ${style.muted(`Warning  ${req.hostAccessWarning}`)}\n`,
+                  )
                   if (req.reason) {
                     const prefix = req.smartDenied ? style.red("Blocked:") : style.yellow("Note:")
-                    io.write(`  ${style.yellow("┃")} ${prefix} ${sanitizeTerminalText(req.reason)}\n`)
+                    io.write(
+                      `  ${style.yellow("┃")} ${prefix} ${sanitizeTerminalText(sanitizeSecretText(req.reason, cred.secret))}\n`,
+                    )
                   }
                   io.write(`  ${style.dim("╹")}\n`)
                   return await askPermissionDecision(io, "Run this command? [y/N]", {
@@ -2648,11 +3035,15 @@ export async function runStandalone(
           )
         }
 
+        const finalizedCheckpoints = finalizeTurnCheckpoints(
+          createBoundaryContext(canonical, resolved, activeConfig, env, activeContract),
+          turnCheckpoints,
+        )
         activeSession = appendTurnToSession(activeSession, {
           userPrompt: trimmed,
           result,
           model: activeConfig.model,
-          checkpoints: turnCheckpoints,
+          checkpoints: finalizedCheckpoints,
         })
         saveSession(resolved.data, activeSession, cred.secret)
 
@@ -2661,10 +3052,28 @@ export async function runStandalone(
           result.stopReason &&
           /(401|403|rejected authentication|cannot authenticate)/i.test(result.stopReason)
         ) {
-          const repair = await askYesNo(io, "Provider rejected request. Run /setup to repair? [y/N] ")
+          const repair = await askYesNo(
+            io,
+            "Provider rejected request. Run /setup to repair? [y/N] ",
+          )
           if (isYes(repair)) {
+            const prevDest = activeConfig
+              ? `${activeConfig.endpointType}:${formatDestination(activeConfig.baseURL)}`
+              : undefined
             const res = await runInteractiveSetup(io, resolved.config, env, activeConfig)
-            if (res.status === "saved") activeConfig = res.config
+            if (res.status === "saved") {
+              const nextDest = `${res.config.endpointType}:${formatDestination(res.config.baseURL)}`
+              if (prevDest && prevDest !== nextDest && activeSession.turns.length > 0) {
+                const splitSession = await askYesNo(
+                  io,
+                  `Destination changed (${prevDest} -> ${nextDest}). Start a fresh session instead of sharing history? [y/N] `,
+                )
+                if (isYes(splitSession)) {
+                  activeSession = createSession(canonical, detectGitBranch(canonical))
+                }
+              }
+              activeConfig = res.config
+            }
           }
         }
       }

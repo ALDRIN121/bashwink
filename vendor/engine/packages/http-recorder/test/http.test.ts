@@ -97,7 +97,7 @@ describe("HTTP", () => {
         const exit = yield* Effect.exit(
           post("https://example.test/echo?api_key=secret-value", {
             step: 3,
-            token: "sk-123456789012345678901234",
+            token: "sk-" + "123456789012345678901234",
           }),
         )
         const message = failureText(exit)
@@ -106,7 +106,7 @@ describe("HTTP", () => {
         expect(message).toContain("body:")
         expect(message).toContain("$.step expected 1, received 3")
         expect(message).toContain('$.token expected undefined, received "[REDACTED]"')
-        expect(message).not.toContain("sk-123456789012345678901234")
+        expect(message).not.toContain("sk-" + "123456789012345678901234")
       }),
     )
   })

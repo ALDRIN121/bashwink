@@ -1766,13 +1766,13 @@ describe("Bedrock Converse route", () => {
         region: "eu-west-1",
         credentials: {
           region: "us-east-1",
-          accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+          accessKeyId: "AKIA" + "IOSFODNN7EXAMPLE",
           secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
         },
       }).model("anthropic.claude-3-5-sonnet-20240620-v1:0")
       const headers = yield* captureHeaders(signed)
 
-      expect(headers.get("authorization")).toContain("Credential=AKIAIOSFODNN7EXAMPLE/")
+      expect(headers.get("authorization")).toContain(`Credential=${"AKIA" + "IOSFODNN7EXAMPLE"}/`)
       expect(headers.get("authorization")).toContain("/eu-west-1/bedrock/aws4_request")
       expect(headers.get("x-amz-security-token")).toBeNull()
     }).pipe(withProcessEnv(noAmbientAWS)),

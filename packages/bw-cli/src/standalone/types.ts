@@ -1,4 +1,5 @@
 import type { TaskContract } from "../contract.ts"
+export type { TaskContract }
 
 /**
  * Core plain TypeScript data types for standalone Bashwink.
@@ -30,6 +31,8 @@ export interface StandaloneConfig {
   readonly headers?: Readonly<Record<string, string>>
   readonly updatedAt: string
   readonly price?: ModelPrice
+  readonly connectionStatus?: "unverified" | "verified" | "failed"
+  readonly lastVerifiedAt?: string
 }
 
 export interface SystemMessage {
@@ -77,6 +80,8 @@ export interface ModelUsage {
   readonly outputTokens?: number
   readonly totalTokens?: number
   readonly costUsd?: number
+  readonly usageInvalid?: boolean
+  readonly usageIncomplete?: boolean
 }
 
 export type FinishReason = "stop" | "tool_calls" | "length" | "content_filter" | "error" | "unknown"
@@ -108,15 +113,11 @@ export interface ToolDispatchResult {
   readonly changedFile?: string
 }
 
-export type UntrustedTrustZone = "workspace_doc" | "tool_output" | "context_provider" | "git_history"
+export type UntrustedTrustZone =
+  "workspace_doc" | "tool_output" | "context_provider" | "git_history"
 
 export type ClaimStatus =
-  | "verified"
-  | "done_unverified"
-  | "inconclusive"
-  | "failed"
-  | "cancelled"
-  | "budget_stopped"
+  "verified" | "done_unverified" | "inconclusive" | "failed" | "cancelled" | "budget_stopped"
 
 export type ProofCheckStatus = "passed" | "failed" | "not_run"
 
@@ -127,6 +128,9 @@ export interface WorkspaceBaseline {
   readonly dirtyFiles: readonly string[]
   readonly protectedTestHashes: Readonly<Record<string, string>>
   readonly mode: "git" | "filesystem"
+  readonly partial?: boolean
+  readonly partialReason?: string
+  readonly gitError?: string
 }
 
 export interface TestIntegrityFinding {
@@ -149,10 +153,13 @@ export interface ProofCheckRecord {
   readonly kind: "test" | "command" | "criterion"
   readonly status: ProofCheckStatus
   readonly command?: string
+  readonly cwd?: string
   readonly exitCode?: number | null
   readonly outputDigest?: string
   readonly evidenceSeq?: number
   readonly evidenceHash?: string
+  readonly superseded?: boolean
+  readonly stale?: boolean
 }
 
 export interface CriterionOutcomeRecord {
@@ -167,6 +174,7 @@ export interface CriterionOutcomeRecord {
 export interface ProofPackManifest {
   readonly version: 1
   readonly runId: string
+  readonly workspace?: string
   readonly baseline?: WorkspaceBaseline
   readonly checks: readonly ProofCheckRecord[]
   readonly criteria: readonly CriterionOutcomeRecord[]
@@ -174,6 +182,7 @@ export interface ProofPackManifest {
   readonly verified: boolean
   readonly claimStatus: ClaimStatus
   readonly unverifiedReasons: readonly string[]
+  readonly unobservableMutations?: boolean
   readonly evidenceFile: string
   readonly evidenceEntries: number
   readonly evidenceChainOk: boolean
@@ -221,6 +230,7 @@ export interface CommandOutcomeRecord {
   readonly outputDigest?: string
   readonly evidenceSeq?: number
   readonly evidenceHash?: string
+  readonly actionOrder?: number
 }
 
 export interface RunSummaryRecord {
@@ -272,10 +282,16 @@ export interface ContextProvider {
 
 export interface TaskBudgets {
   readonly maxRequests: number
+  readonly maxTotalTokens?: number
+  readonly maxInputTokens?: number
   readonly maxOutputTokens?: number
   readonly maxCostUsd?: number
   readonly maxElapsedMs?: number
   readonly maxGuardianRequests?: number
+  readonly maxToolCalls?: number
+  readonly maxToolCallsPerResponse?: number
+  readonly requestTimeoutMs?: number
+  readonly maxTransientRetries?: number
   readonly commandTimeoutMs: number
   readonly repeatedFailureLimit: number
 }
@@ -283,13 +299,61 @@ export interface TaskBudgets {
 export type TaskEvent =
   | { readonly type: "task_started"; readonly runId: string; readonly workspace: string }
   | { readonly type: "turn_started"; readonly step: number; readonly maxRequests: number }
-  | { readonly type: "model_requested"; readonly step: number; readonly model: string; readonly endpoint: string }
-  | { readonly type: "model_responded"; readonly step: number; readonly finishReason: FinishReason; readonly usage?: ModelUsage }
-  | { readonly type: "tool_proposed"; readonly callId: string; readonly tool: string; readonly summary: string; readonly preview?: string; readonly integrityWarning?: string }
-  | { readonly type: "guardian_review"; readonly callId: string; readonly tool: string; readonly verdict: "APPROVE" | "DENY" | "ESCALATE"; readonly reason?: string }
-  | { readonly type: "test_guard_triggered"; readonly callId: string; readonly path: string; readonly findings: readonly TestIntegrityFinding[] }
-  | { readonly type: "tool_approved"; readonly callId: string; readonly tool: string; readonly source?: string; readonly relativePath?: string; readonly resolvedPath?: string }
-  | { readonly type: "tool_denied"; readonly callId: string; readonly tool: string; readonly reason: string }
+  | {
+      readonly type: "model_requested"
+      readonly step: number
+      readonly model: string
+      readonly endpoint: string
+    }
+  | { readonly type: "model_delta"; readonly text: string }
+  | {
+      readonly type: "model_retrying"
+      readonly step: number
+      readonly attempt: number
+      readonly delayMs: number
+      readonly reason: string
+    }
+  | {
+      readonly type: "model_responded"
+      readonly step: number
+      readonly finishReason: FinishReason
+      readonly usage?: ModelUsage
+    }
+  | {
+      readonly type: "tool_proposed"
+      readonly callId: string
+      readonly tool: string
+      readonly summary: string
+      readonly preview?: string
+      readonly integrityWarning?: string
+    }
+  | {
+      readonly type: "guardian_review"
+      readonly callId: string
+      readonly tool: string
+      readonly verdict: "APPROVE" | "DENY" | "ESCALATE"
+      readonly reason?: string
+    }
+  | {
+      readonly type: "test_guard_triggered"
+      readonly callId: string
+      readonly path: string
+      readonly findings: readonly TestIntegrityFinding[]
+    }
+  | {
+      readonly type: "tool_approved"
+      readonly callId: string
+      readonly tool: string
+      readonly source?: string
+      readonly relativePath?: string
+      readonly resolvedPath?: string
+    }
+  | {
+      readonly type: "tool_denied"
+      readonly callId: string
+      readonly tool: string
+      readonly reason: string
+    }
   | { readonly type: "tool_completed"; readonly result: ToolDispatchResult }
   | { readonly type: "assistant_text"; readonly text: string }
   | { readonly type: "task_finished"; readonly result: TaskResult }

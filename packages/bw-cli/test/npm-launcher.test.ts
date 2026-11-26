@@ -1,92 +1,69 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
-// The launcher is CommonJS and ships in the package; load it exactly as npm would.
-const launcher = require("../../../release/npm/bin/bashwink.js") as {
-  resolvePlatform: (platform: string, arch: string, musl: boolean) => Record<string, string>
-  findBinary: (pkg: string, name: string, executable: string, start?: string) => string | undefined
-  SUPPORTED: Set<string>
-}
+const REPO = realpathSync(path.resolve(import.meta.dir, "../../.."))
+const LAUNCHER_SRC = path.join(REPO, "release/npm/bin/bashwink.js")
+const NPM_PKG_JSON = path.join(REPO, "release/npm/package.json")
 
-const root = realpathSync(mkdtempSync(path.join(tmpdir(), "bw-launcher-")))
+const root = realpathSync(mkdtempSync(path.join(tmpdir(), "bw-standalone-launcher-")))
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 
-describe("platform plan", () => {
-  test("Windows x64 maps to the Windows packages with .exe", () => {
-    expect(launcher.resolvePlatform("win32", "x64", false)).toEqual({
-      bun: "@oven/bun-windows-x64",
-      opencode: "@opencode/cli-windows-x64",
-      executable: ".exe",
-    })
+describe("standalone npm launcher contract (v0.2.0-alpha.2)", () => {
+  test("release/npm/package.json declares zero third-party or legacy platform dependencies", () => {
+    const pkg = JSON.parse(readFileSync(NPM_PKG_JSON, "utf8")) as {
+      dependencies?: Record<string, string>
+      optionalDependencies?: Record<string, string>
+      engines?: { node?: string }
+      bin?: Record<string, string>
+    }
+    expect(pkg.dependencies ?? {}).toEqual({})
+    expect(pkg.optionalDependencies ?? {}).toEqual({})
+    expect(pkg.engines?.node).toContain("22")
+    expect(pkg.bin?.["bashwink"]).toBe("bin/bashwink.js")
   })
-  test("macOS and Linux (glibc and musl) map to their own packages", () => {
-    expect(launcher.resolvePlatform("darwin", "arm64", false).bun).toBe("@oven/bun-darwin-aarch64")
-    expect(launcher.resolvePlatform("linux", "x64", false).opencode).toBe("@opencode/cli-linux-x64")
-    expect(launcher.resolvePlatform("linux", "x64", true).opencode).toBe(
-      "@opencode/cli-linux-x64-musl",
-    )
-  })
-  test("Windows ARM64 is refused explicitly, never mapped to an x64 binary", () => {
-    const plan = launcher.resolvePlatform("win32", "arm64", false)
-    expect(plan["unsupported"]).toContain("has not been qualified")
-    expect(plan["bun"]).toBeUndefined()
-    expect(plan["opencode"]).toBeUndefined()
-  })
-  test("other platforms are refused", () => {
-    for (const [platform, arch] of [
-      ["freebsd", "x64"],
-      ["win32", "ia32"],
-      ["linux", "ppc64"],
-    ])
-      expect(launcher.resolvePlatform(platform!, arch!, false)["unsupported"]).toBeDefined()
-  })
-})
 
-describe("binary lookup", () => {
-  function fakeInstall() {
-    const base = realpathSync(mkdtempSync(path.join(root, "pkg-")))
-    const packageRoot = path.join(base, "node_modules", "bashwink")
-    mkdirSync(packageRoot, { recursive: true })
-    return { base, packageRoot }
-  }
-  const put = (file: string) => {
-    mkdirSync(path.dirname(file), { recursive: true })
-    writeFileSync(file, "#!/bin/sh\n")
-    chmodSync(file, 0o755)
-  }
+  test("unbuilt checkout fails cleanly without raw ERR_MODULE_NOT_FOUND stack traces", () => {
+    const pkg = mkdtempSync(path.join(root, "unbuilt-"))
+    mkdirSync(path.join(pkg, "bin"), { recursive: true })
+    const launcher = path.join(pkg, "bin/bashwink.js")
+    cpSync(LAUNCHER_SRC, launcher)
 
-  test("finds a dependency installed beside or under the package, in either name", () => {
-    const { packageRoot } = fakeInstall()
-    put(path.join(packageRoot, "node_modules/@opencode/cli-linux-x64/bin/opencode"))
-    expect(launcher.findBinary("@opencode/cli-linux-x64", "opencode", "", packageRoot)).toContain(
-      "opencode",
-    )
-    put(path.join(packageRoot, "node_modules/@opencode/cli-windows-x64/bin/opencode.exe"))
-    expect(
-      launcher.findBinary("@opencode/cli-windows-x64", "opencode", ".exe", packageRoot),
-    ).toEndWith("opencode.exe")
-  })
-  test("finds Bun where npm's bun package moves it (bun/bin/bun.exe), and never searches PATH", () => {
-    const { base, packageRoot } = fakeInstall()
-    // The platform package is empty after install; the binary lives in the `bun` package.
-    mkdirSync(path.join(packageRoot, "node_modules/@oven/bun-darwin-aarch64/bin"), {
-      recursive: true,
+    const res = Bun.spawnSync({
+      cmd: ["node", launcher, "--version"],
+      env: { PATH: process.env["PATH"], HOME: process.env["HOME"] },
+      stdout: "pipe",
+      stderr: "pipe",
     })
-    put(path.join(packageRoot, "node_modules/bun/bin/bun.exe"))
-    expect(launcher.findBinary("@oven/bun-darwin-aarch64", "bun", "", packageRoot)).toBeUndefined()
-    expect(launcher.findBinary("bun", "bun", ".exe", packageRoot)).toEndWith(
-      path.join("bun", "bin", "bun.exe"),
-    )
-    // A hoisted install (dependency next to the package) is found too.
-    put(path.join(base, "node_modules/bun/bin/bun.exe"))
-    expect(launcher.findBinary("bun", "bun", ".exe", packageRoot)).toBeDefined()
+    expect(res.exitCode).toBe(1)
+    expect(res.stderr.toString()).toContain("standalone runtime bundle was not found")
+    expect(res.stderr.toString()).not.toContain("ERR_MODULE_NOT_FOUND")
   })
-  test("a missing dependency is reported as missing, not replaced by something else", () => {
-    const { packageRoot } = fakeInstall()
-    expect(
-      launcher.findBinary("@opencode/cli-linux-x64", "opencode", "", packageRoot),
-    ).toBeUndefined()
+
+  test("staged package boots ../lib/packages/bw-cli/src/standalone/bin.js cleanly", () => {
+    const pkg = mkdtempSync(path.join(root, "staged-"))
+    mkdirSync(path.join(pkg, "bin"), { recursive: true })
+    const stagedBin = path.join(pkg, "lib/packages/bw-cli/src/standalone/bin.js")
+    mkdirSync(path.dirname(stagedBin), { recursive: true })
+    cpSync(LAUNCHER_SRC, path.join(pkg, "bin/bashwink.js"))
+    writeFileSync(stagedBin, 'console.log("OK:" + process.argv.slice(2).join(","));\n')
+
+    const res = Bun.spawnSync({
+      cmd: ["node", path.join(pkg, "bin/bashwink.js"), "--help", "check"],
+      env: { PATH: process.env["PATH"], HOME: process.env["HOME"] },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    expect(res.exitCode).toBe(0)
+    expect(res.stdout.toString().trim()).toBe("OK:--help,check")
   })
 })

@@ -607,3 +607,55 @@ describe("literal secret redaction", () => {
     expect(redact("synthetic-canary-not-a-secret")).toBe("synthetic-canary-not-a-secret")
   })
 })
+
+describe("EX-27: shared evidence ledger serialization across instances and processes", () => {
+  test("two independent EvidenceRecorder instances sharing one file produce a valid contiguous chain", () => {
+    const r1 = new EvidenceRecorder({ directory: dir, now: fixed })
+    const r2 = new EvidenceRecorder({ directory: dir, now: fixed })
+
+    const e1 = r1.recordTool("before", { ...call, id: "c1" }, { input: { cmd: "a" } })
+    const e2 = r2.recordTool("before", { ...call, id: "c2" }, { input: { cmd: "b" } })
+    const e3 = r1.recordTool("after", { ...call, id: "c1" }, { status: "completed", exit: 0 })
+    const e4 = r2.recordTool("after", { ...call, id: "c2" }, { status: "completed", exit: 0 })
+
+    expect([e1.seq, e2.seq, e3.seq, e4.seq]).toEqual([1, 2, 3, 4])
+    expect(e2.prevHash).toBe(e1.hash)
+    expect(e3.prevHash).toBe(e2.hash)
+    expect(e4.prevHash).toBe(e3.hash)
+
+    const verified = verify(path.join(dir, "evidence.jsonl"))
+    expect(verified.ok).toBe(true)
+    if (verified.ok) expect(verified.entries).toBe(4)
+  })
+
+  test("two concurrent processes writing to the same evidence file do not collide or break the chain", async () => {
+    const { spawn } = await import("node:child_process")
+    const recorderPath = path.resolve(import.meta.dir, "../src/recorder.ts")
+    const script = [
+      `import { EvidenceRecorder } from ${JSON.stringify(recorderPath)};`,
+      `const dir = process.argv[1];`,
+      `const tag = process.argv[2];`,
+      `const rec = new EvidenceRecorder({ directory: dir });`,
+      `for (let i = 0; i < 15; i += 1) {`,
+      `  rec.recordTool("before", { id: tag + "_" + i, tool: "run_command", sessionID: "s_" + tag }, { input: { i } });`,
+      `}`,
+    ].join("\n")
+
+    const runWorker = (tag: string) =>
+      new Promise<number>((resolve, reject) => {
+        const child = spawn(process.execPath, ["-e", script, dir, tag], { stdio: "pipe" })
+        let stderr = ""
+        child.stderr?.on("data", (d) => (stderr += String(d)))
+        child.on("error", reject)
+        child.on("close", (code) => {
+          if (code !== 0) reject(new Error(`worker ${tag} exited ${code}: ${stderr}`))
+          else resolve(code)
+        })
+      })
+
+    await Promise.all([runWorker("p1"), runWorker("p2")])
+    const verified = verify(path.join(dir, "evidence.jsonl"))
+    expect(verified.ok).toBe(true)
+    if (verified.ok) expect(verified.entries).toBe(30)
+  })
+})

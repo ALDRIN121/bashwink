@@ -43,11 +43,13 @@ function sha256(file: string): string {
 
 function manifestFor(binary: string, overrides: Partial<EngineManifest> = {}): EngineManifest {
   const stat = require("node:fs").statSync(binary)
+  const hostArch = process.arch === "arm64" ? "arm64" : "x64"
+  const hostTarget = `${process.platform}-${hostArch}` as EngineManifest["target"]
   return {
     schemaVersion: 1,
-    target: "darwin-arm64",
-    opencodeTarget: "darwin-arm64",
-    platform: { os: "darwin", arch: "arm64" },
+    target: hostTarget,
+    opencodeTarget: hostTarget,
+    platform: { os: process.platform, arch: hostArch },
     sourcePins: { engine: "c0ad18b402eb2827fc1ee71c171b1177b3fc02d1", ptyHelper: "03d848f" },
     engine: {
       name: path.basename(binary),

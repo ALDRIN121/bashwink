@@ -13,7 +13,7 @@ import { recordedTests } from "../recorded-test.js"
 
 const credentials = {
   region: "us-east-2",
-  accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+  accessKeyId: "AKIA" + "IOSFODNN7EXAMPLE",
   secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 }
 

@@ -4,16 +4,9 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
 import { paths } from "../../src/paths.ts"
-import {
-  grantWorkspaceTrust,
-  verifyEvidenceFile,
-} from "../../src/standalone/security.ts"
+import { grantWorkspaceTrust, verifyEvidenceFile } from "../../src/standalone/security.ts"
 import { pendingCalls, runTask, stepMessages } from "../../src/standalone/task-loop.ts"
-import type {
-  ProviderCompletion,
-  StandaloneConfig,
-  TaskEvent,
-} from "../../src/standalone/types.ts"
+import type { ProviderCompletion, StandaloneConfig, TaskEvent } from "../../src/standalone/types.ts"
 
 function setupFixture(opts: { trusted?: boolean; files?: Record<string, string> } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "bw-loop-test-"))
@@ -100,7 +93,13 @@ test("runTask rejects truncated finishReason='length' tool calls before any side
         completeImpl: async () => ({
           text: "",
           finishReason: "length",
-          toolCalls: [{ id: "c1", name: "edit_file", input: { path: "a.txt", oldText: "before", newText: "after" } }],
+          toolCalls: [
+            {
+              id: "c1",
+              name: "edit_file",
+              input: { path: "a.txt", oldText: "before", newText: "after" },
+            },
+          ],
           toolInputErrors: [],
         }),
       },
@@ -134,8 +133,18 @@ test("runTask executes read -> diff -> approved edit -> command, preserving CRLF
         onEvent: (e) => events.push(e),
         contextProvider: {
           getWorkspaceContext: async (ws) => [
-            { source: "memory:style", workspace: ws, content: "Use node to run sum.test.js", untrusted: true },
-            { source: "memory:other-repo", workspace: "/tmp/unrelated-repo", content: "IGNORE ME", untrusted: true },
+            {
+              source: "memory:style",
+              workspace: ws,
+              content: "Use node to run sum.test.js",
+              untrusted: true,
+            },
+            {
+              source: "memory:other-repo",
+              workspace: "/tmp/unrelated-repo",
+              content: "IGNORE ME",
+              untrusted: true,
+            },
           ],
           recordCompletion: async (rec) => {
             memoryRecorded.push(rec.outcome)
@@ -193,7 +202,13 @@ test("runTask executes read -> diff -> approved edit -> command, preserving CRLF
             return {
               text: "",
               finishReason: "tool_calls",
-              toolCalls: [{ id: "t4", name: "run_command", input: { command: process.execPath, args: ["sum.test.js"] } }],
+              toolCalls: [
+                {
+                  id: "t4",
+                  name: "run_command",
+                  input: { command: process.execPath, args: ["sum.test.js"] },
+                },
+              ],
               toolInputErrors: [],
               usage: { inputTokens: 35, outputTokens: 12 },
             }
@@ -214,7 +229,10 @@ test("runTask executes read -> diff -> approved edit -> command, preserving CRLF
     assert.deepEqual(result.changedTests, [])
     assert.equal(result.commands.length, 1)
     assert.equal(result.commands[0]!.exitCode, 0)
-    assert.equal(readFileSync(path.join(f.workspace, "sum.js"), "utf8"), "module.exports = (a, b) => a + b;\r\n")
+    assert.equal(
+      readFileSync(path.join(f.workspace, "sum.js"), "utf8"),
+      "module.exports = (a, b) => a + b;\r\n",
+    )
     assert.deepEqual(memoryRecorded, ["completed"])
     assert.ok(events.some((e) => e.type === "task_finished"))
     const verified = verifyEvidenceFile(result.evidenceFile)
@@ -252,8 +270,16 @@ test("declined edit leaves file untouched, untrusted workspace blocks writes/com
               text: "",
               finishReason: "tool_calls",
               toolCalls: [
-                { id: "c1", name: "edit_file", input: { path: "a.txt", oldText: "original", newText: "pwned" } },
-                { id: "c2", name: "run_command", input: { command: process.execPath, args: ["-e", "1"] } },
+                {
+                  id: "c1",
+                  name: "edit_file",
+                  input: { path: "a.txt", oldText: "original", newText: "pwned" },
+                },
+                {
+                  id: "c2",
+                  name: "run_command",
+                  input: { command: process.execPath, args: ["-e", "1"] },
+                },
                 { id: "c3", name: "read_file", input: { path: "escape-link/secret.txt" } },
               ],
               toolInputErrors: [],
@@ -273,7 +299,11 @@ test("declined edit leaves file untouched, untrusted workspace blocks writes/com
       { workspace: f.workspace, prompt: "test boundaries", trusted: true, config: f.config },
       {
         paths: f.paths,
-        env: { ...process.env, TEST_PROVIDER_KEY: "secret-should-not-leak", OPENAI_API_KEY: "sk-leak-9999999999999999" },
+        env: {
+          ...process.env,
+          TEST_PROVIDER_KEY: "secret-should-not-leak",
+          OPENAI_API_KEY: "sk-leak-9999999999999999",
+        },
         confirmAction: async (req) => {
           if (req.kind === "edit_file") return false // decline edit!
           return true // approve command checking env
@@ -285,14 +315,25 @@ test("declined edit leaves file untouched, untrusted workspace blocks writes/com
               text: "",
               finishReason: "tool_calls",
               toolCalls: [
-                { id: "d1", name: "edit_file", input: { path: "a.txt", oldText: "original", newText: "changed" } },
-                { id: "d2", name: "edit_file", input: { path: ".git/HEAD", oldText: "main", newText: "evil" } },
+                {
+                  id: "d1",
+                  name: "edit_file",
+                  input: { path: "a.txt", oldText: "original", newText: "changed" },
+                },
+                {
+                  id: "d2",
+                  name: "edit_file",
+                  input: { path: ".git/HEAD", oldText: "main", newText: "evil" },
+                },
                 {
                   id: "d3",
                   name: "run_command",
                   input: {
                     command: process.execPath,
-                    args: ["-e", "console.log(JSON.stringify({t:process.env.TEST_PROVIDER_KEY||'',o:process.env.OPENAI_API_KEY||''})); process.exit(7)"],
+                    args: [
+                      "-e",
+                      "console.log(JSON.stringify({t:process.env.TEST_PROVIDER_KEY||'',o:process.env.OPENAI_API_KEY||''})); process.exit(7)",
+                    ],
                   },
                 },
               ],
@@ -303,13 +344,21 @@ test("declined edit leaves file untouched, untrusted workspace blocks writes/com
           assert.ok(cmdToolMsg && cmdToolMsg.role === "tool")
           assert.match(cmdToolMsg.content, /exitCode: 7/)
           assert.match(cmdToolMsg.content, /"t":"","o":""/)
-          return { text: "observed decline and exit 7", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+          return {
+            text: "observed decline and exit 7",
+            finishReason: "stop",
+            toolCalls: [],
+            toolInputErrors: [],
+          }
         },
       },
     )
     assert.equal(trustedRes.changedFiles.length, 0)
     assert.equal(readFileSync(path.join(f.workspace, "a.txt"), "utf8"), "original\n")
-    assert.equal(readFileSync(path.join(f.workspace, ".git/HEAD"), "utf8"), "ref: refs/heads/main\n")
+    assert.equal(
+      readFileSync(path.join(f.workspace, ".git/HEAD"), "utf8"),
+      "ref: refs/heads/main\n",
+    )
     assert.equal(trustedRes.commands[0]!.exitCode, 7)
   } finally {
     f.cleanup()
@@ -323,7 +372,13 @@ test("runTask enforces maxRequests, maxCostUsd (with and without price), and rep
     // 1. maxRequests stop
     let reqCalls = 0
     const reqStop = await runTask(
-      { workspace: f.workspace, prompt: "loop", trusted: true, config: f.config, budgets: { maxRequests: 2 } },
+      {
+        workspace: f.workspace,
+        prompt: "loop",
+        trusted: true,
+        config: f.config,
+        budgets: { maxRequests: 2 },
+      },
       {
         paths: f.paths,
         env: { ...process.env, TEST_PROVIDER_KEY: "k" },
@@ -348,7 +403,13 @@ test("runTask enforces maxRequests, maxCostUsd (with and without price), and rep
     void _droppedPrice
     let noPriceRequests = 0
     const noPriceStop = await runTask(
-      { workspace: f.workspace, prompt: "cost", trusted: true, config: noPriceConfig, budgets: { maxCostUsd: 0.01 } },
+      {
+        workspace: f.workspace,
+        prompt: "cost",
+        trusted: true,
+        config: noPriceConfig,
+        budgets: { maxCostUsd: 0.01 },
+      },
       {
         paths: f.paths,
         env: { ...process.env, TEST_PROVIDER_KEY: "k" },
@@ -366,7 +427,13 @@ test("runTask enforces maxRequests, maxCostUsd (with and without price), and rep
     // 3. maxCostUsd stops before next request when accumulated cost reaches budget
     let costCalls = 0
     const costStop = await runTask(
-      { workspace: f.workspace, prompt: "cost", trusted: true, config: f.config, budgets: { maxCostUsd: 0.005 } },
+      {
+        workspace: f.workspace,
+        prompt: "cost",
+        trusted: true,
+        config: f.config,
+        budgets: { maxCostUsd: 0.005 },
+      },
       {
         paths: f.paths,
         env: { ...process.env, TEST_PROVIDER_KEY: "k" },
@@ -406,7 +473,9 @@ test("runTask enforces maxRequests, maxCostUsd (with and without price), and rep
           return {
             text: "",
             finishReason: "tool_calls",
-            toolCalls: [{ id: `f-${failStep}`, name: "read_file", input: { path: "does-not-exist.txt" } }],
+            toolCalls: [
+              { id: `f-${failStep}`, name: "read_file", input: { path: "does-not-exist.txt" } },
+            ],
             toolInputErrors: [],
           }
         },
@@ -452,17 +521,14 @@ test("cost-cap regression: accounts for input cost and remaining output allowanc
     assert.equal(req1Calls, 0)
     assert.match(stopBeforeReq1.stopReason ?? "", /cost budget/i)
 
-    // Regression 2: Remaining output allowance (maxOutputTokens - totalOutput) shrinks step 2's maxOutputTokens
-    // and blocks step 2 when step 1 cost + step 2 input cost + remaining output allowance exceeds maxCostUsd.
+    // Regression 2 (EX-05): Remaining cost after step 1 + step 2 input cost fits a REDUCED output cap (< 80),
+    // so step 2 runs with the affordable cap rather than prematurely aborting; then stops when budget is too small for 1 token.
     const stepSeenMaxOutput: (number | undefined)[] = []
     let stepCalls = 0
     const multiStepConfig: StandaloneConfig = {
       ...f.config,
       price: { inputUsdPer1M: 2, outputUsdPer1M: 10 },
     }
-    // Step 1 est input (~900 tok = $0.0018) + 300 out ($0.003) = $0.0048 <= $0.0080 -> runs with maxOutputTokens=300.
-    // Suppose step 1 consumes 220 output tokens ($0.0055 recorded), leaving remaining allowance = 80 output tokens ($0.0008).
-    // Plus step 2 tool result grows messages (~1100 input tok = $0.0022): $0.0055 + $0.0022 + $0.0008 = $0.0085 > $0.0080 -> MUST stop before step 2!
     const multiStop = await runTask(
       {
         workspace: f.workspace,
@@ -478,18 +544,28 @@ test("cost-cap regression: accounts for input cost and remaining output allowanc
         completeImpl: async (req) => {
           stepCalls += 1
           stepSeenMaxOutput.push(req.maxOutputTokens)
+          if (stepCalls === 1) {
+            return {
+              text: "",
+              finishReason: "tool_calls",
+              toolCalls: [{ id: `s-${stepCalls}`, name: "list_files", input: {} }],
+              toolInputErrors: [],
+              usage: { inputTokens: 1650, outputTokens: 220, costUsd: 0.0055 },
+            }
+          }
           return {
             text: "",
             finishReason: "tool_calls",
             toolCalls: [{ id: `s-${stepCalls}`, name: "list_files", input: {} }],
             toolInputErrors: [],
-            usage: { inputTokens: 1650, outputTokens: 220, costUsd: 0.0055 },
+            usage: { inputTokens: 1650, outputTokens: 25, costUsd: 0.0025 },
           }
         },
       },
     )
-    assert.equal(stepCalls, 1)
-    assert.deepEqual(stepSeenMaxOutput, [300])
+    assert.equal(stepCalls, 2)
+    assert.equal(stepSeenMaxOutput[0], 300)
+    assert.ok((stepSeenMaxOutput[1] ?? 999) > 0 && (stepSeenMaxOutput[1] ?? 999) < 80)
     assert.equal(multiStop.outcome, "budget_stopped")
 
     // Regression 3: When step 2 DOES fit within maxCostUsd using REMAINING allowance (40 left out of 100),
@@ -607,7 +683,13 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
     let promptCount = 0
     let step = 0
     const alwaysRes = await runTask(
-      { workspace: f.workspace, prompt: "edit two files", trusted: true, config: f.config, permissionMode: "manual" },
+      {
+        workspace: f.workspace,
+        prompt: "edit two files",
+        trusted: true,
+        config: f.config,
+        permissionMode: "manual",
+      },
       {
         paths: f.paths,
         env: { ...process.env, TEST_PROVIDER_KEY: "k" },
@@ -623,8 +705,16 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
               text: "",
               finishReason: "tool_calls",
               toolCalls: [
-                { id: "e1", name: "edit_file", input: { path: "a.txt", oldText: "hello", newText: "hi" } },
-                { id: "e2", name: "edit_file", input: { path: "b.txt", oldText: "world", newText: "earth" } },
+                {
+                  id: "e1",
+                  name: "edit_file",
+                  input: { path: "a.txt", oldText: "hello", newText: "hi" },
+                },
+                {
+                  id: "e2",
+                  name: "edit_file",
+                  input: { path: "b.txt", oldText: "world", newText: "earth" },
+                },
               ],
               toolInputErrors: [],
             }
@@ -643,7 +733,13 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
     const promptedKinds: string[] = []
     let aeStep = 0
     const aeRes = await runTask(
-      { workspace: f.workspace, prompt: "accept-edits", trusted: true, config: f.config, permissionMode: "accept-edits" },
+      {
+        workspace: f.workspace,
+        prompt: "accept-edits",
+        trusted: true,
+        config: f.config,
+        permissionMode: "accept-edits",
+      },
       {
         paths: f.paths,
         env: { ...process.env, TEST_PROVIDER_KEY: "k" },
@@ -658,8 +754,16 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
               text: "",
               finishReason: "tool_calls",
               toolCalls: [
-                { id: "ae1", name: "edit_file", input: { path: "a.txt", oldText: "hi", newText: "yo" } },
-                { id: "ae2", name: "run_command", input: { command: "echo", args: ["hi"] } },
+                {
+                  id: "ae1",
+                  name: "edit_file",
+                  input: { path: "a.txt", oldText: "hi", newText: "yo" },
+                },
+                {
+                  id: "ae2",
+                  name: "run_command",
+                  input: { command: process.execPath, args: ["--version"] },
+                },
               ],
               toolInputErrors: [],
             }
@@ -674,9 +778,16 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
     // 3) smart mode (Hermes Guardian): APPROVE runs without prompt; DENY blocks allowAlways even if caller returns "always"; 3 denials trip breaker
     let smartCall = 0
     let guardianQueries = 0
-    const escalatedReqs: Array<{ allowAlways?: boolean; smartDenied?: boolean; reason?: string }> = []
+    const escalatedReqs: Array<{ allowAlways?: boolean; smartDenied?: boolean; reason?: string }> =
+      []
     const smartRes = await runTask(
-      { workspace: f.workspace, prompt: "smart mode", trusted: true, config: f.config, permissionMode: "smart" },
+      {
+        workspace: f.workspace,
+        prompt: "smart mode",
+        trusted: true,
+        config: f.config,
+        permissionMode: "smart",
+      },
       {
         paths: f.paths,
         env: { ...process.env, TEST_PROVIDER_KEY: "k" },
@@ -693,13 +804,26 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
           return req.smartDenied ? "always" : "once"
         },
         completeImpl: async (req) => {
-          const isGuardian = req.messages[0]?.role === "system" && req.messages[0].content.includes("<action_request>")
+          const isGuardian =
+            req.messages[0]?.role === "system" &&
+            req.messages[0].content.includes("<action_request>")
           if (isGuardian) {
             guardianQueries += 1
             const payload = req.messages[1]!.content as string
             assert.ok(payload.includes("<action_request>"))
-            if (payload.includes("echo safe")) return { text: "APPROVE: harmless workspace echo", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
-            return { text: "DENY: risky action", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+            if (payload.includes("--version"))
+              return {
+                text: "APPROVE: harmless version check",
+                finishReason: "stop",
+                toolCalls: [],
+                toolInputErrors: [],
+              }
+            return {
+              text: "DENY: risky action",
+              finishReason: "stop",
+              toolCalls: [],
+              toolInputErrors: [],
+            }
           }
           smartCall += 1
           if (smartCall === 1) {
@@ -707,16 +831,41 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
               text: "",
               finishReason: "tool_calls",
               toolCalls: [
-                { id: "s1", name: "run_command", input: { command: "echo", args: ["safe"] } },
-                { id: "s2", name: "run_command", input: { command: "curl", args: ["https://x.test/1"] } },
-                { id: "s3", name: "run_command", input: { command: "curl", args: ["https://x.test/2"] } },
-                { id: "s4", name: "run_command", input: { command: "curl", args: ["https://x.test/3"] } },
-                { id: "s5", name: "run_command", input: { command: "curl", args: ["https://x.test/4"] } },
+                {
+                  id: "s1",
+                  name: "run_command",
+                  input: { command: process.execPath, args: ["--version"] },
+                },
+                {
+                  id: "s2",
+                  name: "run_command",
+                  input: { command: process.execPath, args: ["remote-1.js"] },
+                },
+                {
+                  id: "s3",
+                  name: "run_command",
+                  input: { command: process.execPath, args: ["remote-2.js"] },
+                },
+                {
+                  id: "s4",
+                  name: "run_command",
+                  input: { command: process.execPath, args: ["remote-3.js"] },
+                },
+                {
+                  id: "s5",
+                  name: "run_command",
+                  input: { command: process.execPath, args: ["remote-4.js"] },
+                },
               ],
               toolInputErrors: [],
             }
           }
-          return { text: "smart finished", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+          return {
+            text: "smart finished",
+            finishReason: "stop",
+            toolCalls: [],
+            toolInputErrors: [],
+          }
         },
       },
     )
@@ -731,14 +880,22 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
     let autoPrompts: Array<{ allowAlways?: boolean; cmd?: string }> = []
     let autoStep = 0
     const autoRes = await runTask(
-      { workspace: f.workspace, prompt: "auto danger check", trusted: true, config: f.config, permissionMode: "auto" },
+      {
+        workspace: f.workspace,
+        prompt: "auto danger check",
+        trusted: true,
+        config: f.config,
+        permissionMode: "auto",
+      },
       {
         paths: f.paths,
         env: { ...process.env, TEST_PROVIDER_KEY: "k" },
         confirmAction: async (req) => {
           autoPrompts.push({
             ...(req.allowAlways !== undefined ? { allowAlways: req.allowAlways } : {}),
-            ...(req.kind === "run_command" ? { cmd: [req.prepared.command, ...req.prepared.args].join(" ") } : {}),
+            ...(req.kind === "run_command"
+              ? { cmd: [req.prepared.command, ...req.prepared.args].join(" ") }
+              : {}),
           })
           return false
         },
@@ -749,8 +906,12 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
               text: "",
               finishReason: "tool_calls",
               toolCalls: [
-                { id: "a1", name: "run_command", input: { command: "echo", args: ["safe-check"] } },
-                { id: "a2", name: "run_command", input: { command: "rm", args: ["-rf", "/"] } },
+                { id: "a1", name: "run_command", input: { command: "git", args: ["status"] } },
+                {
+                  id: "a2",
+                  name: "run_command",
+                  input: { command: process.execPath, args: ["-e", "process.exit(0)"] },
+                },
               ],
               toolInputErrors: [],
             }
@@ -761,7 +922,7 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
     )
     assert.equal(autoRes.outcome, "completed")
     assert.equal(autoPrompts.length, 1)
-    assert.equal(autoPrompts[0]!.cmd, "rm -rf /")
+    assert.equal(autoPrompts[0]!.cmd, `${process.execPath} -e process.exit(0)`)
     assert.equal(autoPrompts[0]!.allowAlways, false)
 
     // Untrusted workspace MUST deny edit_file and run_command even in auto mode!
@@ -770,7 +931,13 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
       writeFileSync(path.join(untrustedDir, "u.txt"), "hi\n", "utf8")
       let uStep = 0
       const uRes = await runTask(
-        { workspace: untrustedDir, prompt: "edit", trusted: false, config: f.config, permissionMode: "auto" },
+        {
+          workspace: untrustedDir,
+          prompt: "edit",
+          trusted: false,
+          config: f.config,
+          permissionMode: "auto",
+        },
         {
           paths: f.paths,
           env: { ...process.env, TEST_PROVIDER_KEY: "k" },
@@ -783,7 +950,13 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
               return {
                 text: "",
                 finishReason: "tool_calls",
-                toolCalls: [{ id: "u1", name: "edit_file", input: { path: "u.txt", oldText: "hi", newText: "x" } }],
+                toolCalls: [
+                  {
+                    id: "u1",
+                    name: "edit_file",
+                    input: { path: "u.txt", oldText: "hi", newText: "x" },
+                  },
+                ],
                 toolInputErrors: [],
               }
             }
@@ -824,18 +997,30 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
               text: "",
               finishReason: "tool_calls",
               toolCalls: [
-                { id: "ak1", name: "edit_file", input: { path: "a.txt", oldText: "yo", newText: "no" } },
+                {
+                  id: "ak1",
+                  name: "edit_file",
+                  input: { path: "a.txt", oldText: "yo", newText: "no" },
+                },
                 { id: "ak2", name: "run_command", input: { command: "ls", args: [] } },
               ],
               toolInputErrors: [],
             }
           }
-          return { text: "read-only answer", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+          return {
+            text: "read-only answer",
+            finishReason: "stop",
+            toolCalls: [],
+            toolInputErrors: [],
+          }
         },
       },
     )
     assert.equal(askRes.outcome, "completed")
-    assert.equal(askRes.actions?.every((a) => a.decision === "deny" && a.approvalSource === "ask"), true)
+    assert.equal(
+      askRes.actions?.every((a) => a.decision === "deny" && a.approvalSource === "ask"),
+      true,
+    )
 
     // 6) interactive trust unlock + accept-edits promotion
     const untrustedUnlockDir = mkdtempSync(path.join(tmpdir(), "bw-unlock-edits-"))
@@ -844,7 +1029,13 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
       const changedModes: string[] = []
       let uStep = 0
       const unlockRes = await runTask(
-        { workspace: untrustedUnlockDir, prompt: "write", trusted: false, config: f.config, permissionMode: "manual" },
+        {
+          workspace: untrustedUnlockDir,
+          prompt: "write",
+          trusted: false,
+          config: f.config,
+          permissionMode: "manual",
+        },
         {
           paths: f.paths,
           env: { ...process.env, TEST_PROVIDER_KEY: "k" },
@@ -860,8 +1051,16 @@ test("permission modes: always rule reuse, accept-edits, Hermes smart guardian +
                 text: "",
                 finishReason: "tool_calls",
                 toolCalls: [
-                  { id: "ul1", name: "edit_file", input: { path: "n.txt", oldText: "v1", newText: "v2" } },
-                  { id: "ul2", name: "edit_file", input: { path: "n.txt", oldText: "v2", newText: "v3" } },
+                  {
+                    id: "ul1",
+                    name: "edit_file",
+                    input: { path: "n.txt", oldText: "v1", newText: "v2" },
+                  },
+                  {
+                    id: "ul2",
+                    name: "edit_file",
+                    input: { path: "n.txt", oldText: "v2", newText: "v3" },
+                  },
                 ],
                 toolInputErrors: [],
               }

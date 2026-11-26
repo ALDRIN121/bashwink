@@ -53,31 +53,65 @@ function atomicWriteJson(filePath: string, value: unknown): void {
   renameSync(temp, filePath)
 }
 
+export class ContractStoreError extends Error {
+  readonly code = "contract_store_error"
+  constructor(message: string) {
+    super(message)
+    this.name = "ContractStoreError"
+  }
+}
+
 function readActiveIndex(dataDir: string): ActiveContractsIndex {
   const file = activeIndexFile(dataDir)
   if (!existsSync(file)) return { version: 1, workspaces: {} }
+  let raw: string
   try {
-    const parsed = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>
-    if (
-      parsed["version"] !== 1 ||
-      typeof parsed["workspaces"] !== "object" ||
-      parsed["workspaces"] === null ||
-      Array.isArray(parsed["workspaces"])
-    ) {
-      return { version: 1, workspaces: {} }
-    }
-    const clean: Record<string, { contractId: string; revision: number }> = {}
-    for (const [ws, ptr] of Object.entries(parsed["workspaces"] as Record<string, unknown>)) {
-      if (typeof ptr !== "object" || ptr === null) continue
-      const p = ptr as Record<string, unknown>
-      if (typeof p["contractId"] === "string" && Number.isInteger(p["revision"]) && Number(p["revision"]) >= 1) {
-        clean[ws] = { contractId: p["contractId"], revision: Number(p["revision"]) }
-      }
-    }
-    return { version: 1, workspaces: clean }
-  } catch {
-    return { version: 1, workspaces: {} }
+    raw = readFileSync(file, "utf8")
+  } catch (err) {
+    throw new ContractStoreError(
+      `Cannot read contract index '${file}': ${err instanceof Error ? err.message : String(err)}. Fix permissions or inspect/repair the index file before continuing.`,
+    )
   }
+  let parsed: Record<string, unknown>
+  try {
+    const val = JSON.parse(raw) as unknown
+    if (typeof val !== "object" || val === null || Array.isArray(val)) {
+      throw new Error("root value must be a JSON object")
+    }
+    parsed = val as Record<string, unknown>
+  } catch (err) {
+    throw new ContractStoreError(
+      `Corrupted contract index '${file}': ${err instanceof Error ? err.message : String(err)}. Repair or back up and remove '${file}' before proceeding.`,
+    )
+  }
+  if (
+    parsed["version"] !== 1 ||
+    typeof parsed["workspaces"] !== "object" ||
+    parsed["workspaces"] === null ||
+    Array.isArray(parsed["workspaces"])
+  ) {
+    throw new ContractStoreError(
+      `Invalid contract index schema in '${file}' (expected version=1 and workspaces object).`,
+    )
+  }
+  const clean: Record<string, { contractId: string; revision: number }> = {}
+  for (const [ws, ptr] of Object.entries(parsed["workspaces"] as Record<string, unknown>)) {
+    if (typeof ptr !== "object" || ptr === null || Array.isArray(ptr)) {
+      throw new ContractStoreError(
+        `Corrupted workspace pointer '${ws}' in contract index '${file}'.`,
+      )
+    }
+    const p = ptr as Record<string, unknown>
+    if (
+      typeof p["contractId"] !== "string" ||
+      !Number.isInteger(p["revision"]) ||
+      Number(p["revision"]) < 1
+    ) {
+      throw new ContractStoreError(`Invalid contract pointer for workspace '${ws}' in '${file}'.`)
+    }
+    clean[ws] = { contractId: p["contractId"], revision: Number(p["revision"]) }
+  }
+  return { version: 1, workspaces: clean }
 }
 
 function setActivePointer(dataDir: string, workspace: string, id: string, revision: number): void {
@@ -100,13 +134,16 @@ export function loadContractRevision(
 ): TaskContract | undefined {
   const file = contractRevisionFile(dataDir, id, revision)
   if (!existsSync(file)) return undefined
+  let parsed: unknown
   try {
-    const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown
-    assertContract(parsed)
-    return parsed
-  } catch {
-    return undefined
+    parsed = JSON.parse(readFileSync(file, "utf8")) as unknown
+  } catch (err) {
+    throw new ContractStoreError(
+      `Cannot read or parse contract revision '${file}': ${err instanceof Error ? err.message : String(err)}.`,
+    )
   }
+  assertContract(parsed)
+  return parsed
 }
 
 export function loadActiveContract(dataDir: string, workspace: string): TaskContract | undefined {
@@ -114,7 +151,13 @@ export function loadActiveContract(dataDir: string, workspace: string): TaskCont
   const index = readActiveIndex(dataDir)
   const ptr = index.workspaces[key]
   if (!ptr) return undefined
-  return loadContractRevision(dataDir, ptr.contractId, ptr.revision)
+  const loaded = loadContractRevision(dataDir, ptr.contractId, ptr.revision)
+  if (!loaded) {
+    throw new ContractStoreError(
+      `Contract index points to missing revision '${ptr.contractId}.r${ptr.revision}.json' for workspace '${key}'.`,
+    )
+  }
+  return loaded
 }
 
 export interface CreateStandaloneContractInput {
@@ -161,7 +204,9 @@ export function createStandaloneContract(
     negativeRequirements: [...(input.negativeRequirements ?? [])],
     criteria,
     constraints: input.constraints ?? {},
-    ...(input.assumptions && input.assumptions.length > 0 ? { assumptions: [...input.assumptions] } : {}),
+    ...(input.assumptions && input.assumptions.length > 0
+      ? { assumptions: [...input.assumptions] }
+      : {}),
     ...(input.openQuestions && input.openQuestions.length > 0
       ? { openQuestions: [...input.openQuestions] }
       : {}),
@@ -192,7 +237,9 @@ export function approveActiveContract(
     throw new ContractGateError(`No active contract for workspace '${workspace}'.`)
   }
   if (current.approval === "rejected") {
-    throw new ContractGateError("Rejected contracts cannot be approved without creating a new revision.")
+    throw new ContractGateError(
+      "Rejected contracts cannot be approved without creating a new revision.",
+    )
   }
   const unresolvedAssumptions = (current.assumptions ?? []).filter((a) => a.blocking && !a.resolved)
   const unresolvedQuestions = (current.openQuestions ?? []).filter((q) => q.blocking && !q.resolved)
@@ -362,7 +409,9 @@ export function evaluateContractGate(
   requireContract: boolean,
   _workspace: string,
   baseline: WorkspaceBaseline,
-): { readonly ok: true } | { readonly ok: false; readonly reason: string; readonly error: ContractGateError } {
+):
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: string; readonly error: ContractGateError } {
   if (!contract) {
     if (!requireContract) return { ok: true }
     const reason =
@@ -393,9 +442,27 @@ export function evaluateContractGate(
     return { ok: false, reason, error: new ContractGateError(reason) }
   }
 
-  if (contract.constraints.requireCleanBase && baseline.dirtyFiles.length > 0) {
-    const reason = `Contract '${contract.id}' requires a clean git base, but ${baseline.dirtyFiles.length} file(s) are dirty: ${baseline.dirtyFiles.slice(0, 5).join(", ")}.`
-    return { ok: false, reason, error: new ContractGateError(reason) }
+  if (contract.constraints.requireCleanBase) {
+    if (baseline.mode !== "git") {
+      const reason = `Contract '${contract.id}' requires a clean git base, but workspace is not a valid git worktree.`
+      return { ok: false, reason, error: new ContractGateError(reason) }
+    }
+    if (baseline.gitError || !baseline.gitHead) {
+      const reason = `Contract '${contract.id}' requires a clean git base, but git metadata could not be verified (${baseline.gitError ?? "missing HEAD"}).`
+      return { ok: false, reason, error: new ContractGateError(reason) }
+    }
+    if (contract.baseCommit && baseline.gitHead !== contract.baseCommit) {
+      const reason = `Contract '${contract.id}' requires base commit ${contract.baseCommit}, but HEAD is ${baseline.gitHead}.`
+      return { ok: false, reason, error: new ContractGateError(reason) }
+    }
+    if (baseline.partial) {
+      const reason = `Contract '${contract.id}' requires a clean git base, but baseline scan was partial (${baseline.partialReason ?? "bounded"}).`
+      return { ok: false, reason, error: new ContractGateError(reason) }
+    }
+    if (baseline.dirtyFiles.length > 0) {
+      const reason = `Contract '${contract.id}' requires a clean git base, but ${baseline.dirtyFiles.length} file(s) are dirty: ${baseline.dirtyFiles.slice(0, 5).join(", ")}.`
+      return { ok: false, reason, error: new ContractGateError(reason) }
+    }
   }
 
   return { ok: true }
@@ -426,10 +493,14 @@ export function renderContractSummary(contract: TaskContract): string {
     )
   }
   for (const a of contract.assumptions ?? []) {
-    lines.push(`  [${a.resolved ? "resolved" : a.blocking ? "BLOCKING" : "open"}] assumption ${a.id}: ${a.statement}`)
+    lines.push(
+      `  [${a.resolved ? "resolved" : a.blocking ? "BLOCKING" : "open"}] assumption ${a.id}: ${a.statement}`,
+    )
   }
   for (const q of contract.openQuestions ?? []) {
-    lines.push(`  [${q.resolved ? "resolved" : q.blocking ? "BLOCKING" : "open"}] question ${q.id}: ${q.question}`)
+    lines.push(
+      `  [${q.resolved ? "resolved" : q.blocking ? "BLOCKING" : "open"}] question ${q.id}: ${q.question}`,
+    )
   }
   return lines.join("\n")
 }

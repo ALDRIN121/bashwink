@@ -29,9 +29,11 @@ esac
 fail() { echo "install: $*" >&2; exit 1; }
 
 [ "$(id -u)" -ne 0 ] || fail "do not run the installer as root; it installs for the current user"
+if [ ! -f "$here/MANIFEST.sha256" ]; then
+    fail "MANIFEST.sha256 is missing; this legacy archive installer only supports extracted v0.1.0-alpha.1 macOS arm64 release tarballs. For standalone v0.2.0-alpha.2 from a source checkout, run 'npm run install:local' from the repository root."
+fi
 [ "$(uname -s)" = Darwin ] || fail "Bashwink v@VERSION@ supports macOS only (found $(uname -s))"
 [ "$(uname -m)" = arm64 ] || fail "Bashwink v@VERSION@ supports Apple Silicon only (found $(uname -m))"
-[ -f "$here/MANIFEST.sha256" ] || fail "MANIFEST.sha256 is missing; this is not an intact release directory"
 version=$(cat "$here/VERSION")
 os_version=$(sw_vers -productVersion)
 os_build=$(sysctl -n kern.osversion)

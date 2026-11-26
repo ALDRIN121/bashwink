@@ -5,14 +5,20 @@ import { mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
-import { complete, probeModels, ProviderRequestError, testProviderConnection } from "../../src/standalone/provider.ts"
+import {
+  complete,
+  probeModels,
+  ProviderRequestError,
+  testProviderConnection,
+} from "../../src/standalone/provider.ts"
 import { BUILTIN_TOOL_DEFINITIONS } from "../../src/standalone/tools.ts"
 import type { StandaloneConfig } from "../../src/standalone/types.ts"
 
 async function startFakeServer(
   handler: (req: IncomingMessage, body: string, res: ServerResponse) => void,
 ) {
-  const requests: { url: string | undefined; headers: IncomingMessage["headers"]; body: string }[] = []
+  const requests: { url: string | undefined; headers: IncomingMessage["headers"]; body: string }[] =
+    []
   const server = createServer((req, res) => {
     const chunks: Buffer[] = []
     req.on("data", (c) => chunks.push(Buffer.from(c)))
@@ -35,7 +41,10 @@ async function startFakeServer(
   }
 }
 
-function makeConfig(baseURL: string, cred: StandaloneConfig["credential"] = { kind: "none" }): StandaloneConfig {
+function makeConfig(
+  baseURL: string,
+  cred: StandaloneConfig["credential"] = { kind: "none" },
+): StandaloneConfig {
   return {
     version: 1,
     endpointType: "local",
@@ -69,7 +78,10 @@ test("provider sends exact chat-completions framing and tool schemas to configur
     assert.equal(srv.requests.length, 1)
     assert.equal(srv.requests[0]!.url, "/v1/chat/completions")
     assert.equal(srv.requests[0]!.headers["authorization"], "Bearer token-abc-123")
-    const parsed = JSON.parse(srv.requests[0]!.body) as { model: string; tools: { function: { name: string } }[] }
+    const parsed = JSON.parse(srv.requests[0]!.body) as {
+      model: string
+      tools: { function: { name: string } }[]
+    }
     assert.equal(parsed.model, "test-coder-1")
     assert.deepEqual(
       parsed.tools.map((t) => t.function.name),
@@ -169,7 +181,11 @@ test("provider handles 302 redirect, 429 rate limit, malformed JSON, timeout, ov
                 role: "assistant",
                 content: "",
                 tool_calls: [
-                  { id: "c1", type: "function", function: { name: "read_file", arguments: '{"path":"' } },
+                  {
+                    id: "c1",
+                    type: "function",
+                    function: { name: "read_file", arguments: '{"path":"' },
+                  },
                 ],
               },
               finish_reason: "tool_calls",

@@ -8,12 +8,26 @@
  * - `test-changes.ts` (`isTestPath`)
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
 import path from "node:path"
 import { homedir } from "node:os"
 import { randomBytes } from "node:crypto"
 import { EvidenceRecorder, redact } from "../../../bw-evidence/src/recorder.ts"
-import { canWrite, contains, physicalPath, type ScopePolicy } from "../../../bw-evidence/src/scope.ts"
+import {
+  canWrite,
+  contains,
+  physicalPath,
+  type ScopePolicy,
+} from "../../../bw-evidence/src/scope.ts"
 import type { TaskContract } from "../contract.ts"
 import type { Paths } from "../paths.ts"
 import { isTestPath } from "../test-changes.ts"
@@ -26,7 +40,11 @@ import type {
   StandaloneConfig,
 } from "./types.ts"
 
-export { EvidenceRecorder, redact, verify as verifyEvidenceFile } from "../../../bw-evidence/src/recorder.ts"
+export {
+  EvidenceRecorder,
+  redact,
+  verify as verifyEvidenceFile,
+} from "../../../bw-evidence/src/recorder.ts"
 export { canonicalWorkspace, isTrusted, readTrust, writeTrust, grantTrust } from "../trust.ts"
 export { physicalPath, contains, toolPath } from "../../../bw-evidence/src/scope.ts"
 export { isTestPath }
@@ -109,7 +127,12 @@ export function createBoundaryContext(
   const foreignCredentialRoots = rawCredentialRoots.map((p) => physicalPath(p))
 
   const gitDir = physicalPath(path.join(canonical, ".git"))
-  const forbiddenWriteRoots = [gitDir, ...protectedRoots, ...keyFileRoots, ...foreignCredentialRoots]
+  const forbiddenWriteRoots = [
+    gitDir,
+    ...protectedRoots,
+    ...keyFileRoots,
+    ...foreignCredentialRoots,
+  ]
   const scopePolicy = contract
     ? compileContractScopePolicy(contract, canonical, forbiddenWriteRoots)
     : undefined
@@ -121,7 +144,9 @@ export function createBoundaryContext(
     forbiddenReadRoots: [...protectedRoots, ...keyFileRoots, ...foreignCredentialRoots],
     forbiddenWriteRoots,
     ...(scopePolicy ? { scopePolicy } : {}),
-    ...(contract?.constraints.maxFiles !== undefined ? { maxFiles: contract.constraints.maxFiles } : {}),
+    ...(contract?.constraints.maxFiles !== undefined
+      ? { maxFiles: contract.constraints.maxFiles }
+      : {}),
     ...(contract?.constraints.allowedCommands !== undefined
       ? { allowedCommands: contract.constraints.allowedCommands }
       : {}),
@@ -287,7 +312,10 @@ export function createStandaloneRecorder(
   })
 }
 
-export function sanitizeRunSummary(record: RunSummaryRecord, activeSecret?: string): RunSummaryRecord {
+export function sanitizeRunSummary(
+  record: RunSummaryRecord,
+  activeSecret?: string,
+): RunSummaryRecord {
   const scrub = (text: string) => sanitizeSecretText(text, activeSecret)
   return {
     ...record,
@@ -361,7 +389,12 @@ export function purgeExpiredArtifacts(
   dataDir: string,
   ttlDays: number,
   nowMs = Date.now(),
-): { readonly deletedRuns: number; readonly deletedSessions: number } {
+  options: { readonly includePromptHistory?: boolean } = {},
+): {
+  readonly deletedRuns: number
+  readonly deletedSessions: number
+  readonly clearedPromptHistory: boolean
+} {
   if (!Number.isFinite(ttlDays) || ttlDays < 0) {
     throw new Error(`ttlDays must be a non-negative finite number (got ${ttlDays})`)
   }
@@ -385,9 +418,23 @@ export function purgeExpiredArtifacts(
     }
     return removed
   }
+  let clearedPromptHistory = false
+  const historyFile = path.join(dataDir, "prompt-history.json")
+  if (existsSync(historyFile)) {
+    try {
+      const st = statSync(historyFile)
+      if (options.includePromptHistory || ttlDays === 0 || st.mtimeMs < cutoffMs) {
+        unlinkSync(historyFile)
+        clearedPromptHistory = true
+      }
+    } catch {
+      // Ignore unreadable history file.
+    }
+  }
   return {
     deletedRuns: purgeDir("runs"),
     deletedSessions: purgeDir("sessions"),
+    clearedPromptHistory,
   }
 }
 
@@ -451,7 +498,11 @@ function readPermissionsStore(filePath: string): PermissionsStoreFile {
     const parsed = JSON.parse(readFileSync(filePath, "utf8")) as unknown
     if (typeof parsed !== "object" || parsed === null) return { version: 1, workspaces: {} }
     const obj = parsed as Record<string, unknown>
-    if (obj["version"] !== 1 || typeof obj["workspaces"] !== "object" || obj["workspaces"] === null) {
+    if (
+      obj["version"] !== 1 ||
+      typeof obj["workspaces"] !== "object" ||
+      obj["workspaces"] === null
+    ) {
       return { version: 1, workspaces: {} }
     }
     const clean: Record<string, WorkspacePermissionState> = {}
@@ -459,7 +510,9 @@ function readPermissionsStore(filePath: string): PermissionsStoreFile {
       if (typeof entry !== "object" || entry === null) continue
       const e = entry as Record<string, unknown>
       const mode =
-        typeof e["mode"] === "string" && isValidPermissionMode(e["mode"]) ? e["mode"] : "accept-edits"
+        typeof e["mode"] === "string" && isValidPermissionMode(e["mode"])
+          ? e["mode"]
+          : "accept-edits"
       const rules: SavedPermissionRule[] = []
       if (Array.isArray(e["rules"])) {
         for (const r of e["rules"]) {
@@ -540,7 +593,10 @@ export function saveAlwaysPermissionRule(
   const already = current.rules.some((r) => r.tool === rule.tool && r.pattern === rule.pattern)
   const nextRules = already
     ? current.rules
-    : [...current.rules, { tool: rule.tool, pattern: rule.pattern, grantedAt: new Date().toISOString() }]
+    : [
+        ...current.rules,
+        { tool: rule.tool, pattern: rule.pattern, grantedAt: new Date().toISOString() },
+      ]
   const updated: WorkspacePermissionState = {
     mode: current.mode,
     rules: nextRules,
@@ -603,12 +659,29 @@ export function globMatch(pattern: string, candidate: string): boolean {
   return pi === pattern.length
 }
 
+function normalizeRuleCommandCandidate(candidate: string): string {
+  const trimmed = candidate.trim()
+  const idx = trimmed.search(/\s/)
+  const head = idx === -1 ? trimmed : trimmed.slice(0, idx)
+  const rest = idx === -1 ? "" : trimmed.slice(idx)
+  const normHead = path
+    .basename(head)
+    .toLowerCase()
+    .replace(/\.(?:exe|cmd|bat)$/, "")
+  return `${normHead}${rest}`
+}
+
 export function matchesPermissionRule(
   rules: readonly SavedPermissionRule[],
   tool: "edit_file" | "run_command",
   candidate: string,
 ): boolean {
-  return rules.some((rule) => rule.tool === tool && globMatch(rule.pattern, candidate))
+  const normalized = tool === "run_command" ? normalizeRuleCommandCandidate(candidate) : candidate
+  return rules.some(
+    (rule) =>
+      rule.tool === tool &&
+      (globMatch(rule.pattern, candidate) || globMatch(rule.pattern, normalized)),
+  )
 }
 
 const PREFIX_SUBCOMMAND_RUNNERS = new Set([
@@ -673,7 +746,10 @@ export function suggestPermissionPattern(
       summary: "All edits inside this workspace (`edit_file:*`)",
     }
   }
-  const base = path.basename(targetOrCommand.trim()).toLowerCase()
+  const base = path
+    .basename(targetOrCommand.trim())
+    .toLowerCase()
+    .replace(/\.(?:exe|cmd|bat)$/, "")
   const full = [targetOrCommand, ...args].join(" ").trim()
   if (!base || EXACT_ONLY_COMMANDS.has(base)) {
     return {
@@ -690,10 +766,10 @@ export function suggestPermissionPattern(
       !["push", "reset", "clean", "rebase", "eval", "exec"].includes(firstArg.toLowerCase())
     ) {
       if (base === "npm" && firstArg === "run" && secondArg !== "" && !secondArg.startsWith("-")) {
-        const pat = `${targetOrCommand} run ${secondArg} *`
+        const pat = `${base} run ${secondArg} *`
         return { pattern: pat, summary: `Commands matching \`${pat}\`` }
       }
-      const pat = `${targetOrCommand} ${firstArg} *`
+      const pat = `${base} ${firstArg} *`
       return { pattern: pat, summary: `Commands matching \`${pat}\`` }
     }
   }
@@ -725,7 +801,7 @@ export function stripShellComments(command: string): string {
       }
       if (ch === "'" && !inDouble) {
         inSingle = !inSingle
-      } else if (ch === "\"" && !inSingle) {
+      } else if (ch === '"' && !inSingle) {
         inDouble = !inDouble
       } else if (ch === "#" && !inSingle && !inDouble) {
         if (i === 0 || /\s|;|[|&()]/.test(line[i - 1]!)) {
@@ -751,11 +827,13 @@ export interface ActionSafetyAssessment {
 
 const HARD_RISK_PATTERNS: ReadonlyArray<{ readonly pattern: RegExp; readonly reason: string }> = [
   {
-    pattern: /(?:^|\s)rm\s+[^\n]*(?:-[rRf]*r[^\n]*-[rRf]*f|-[rRf]*f[^\n]*-[rRf]*r|-rf|-fr)\s+(?:\/|~|\*|\.\.)/,
+    pattern:
+      /(?:^|\s)rm\s+[^\n]*(?:-[rRf]*r[^\n]*-[rRf]*f|-[rRf]*f[^\n]*-[rRf]*r|-rf|-fr)\s+(?:\/|~|\*|\.\.)/,
     reason: "Recursive destructive `rm` against root, home, parent, or wildcard target",
   },
   {
-    pattern: /(?:^|\s)(?:sudo|doas|su\s+-?|mkfs\b|fdisk\b|parted\b|shutdown\b|reboot\b|halt\b|dd\s+if=)/i,
+    pattern:
+      /(?:^|\s)(?:sudo|doas|su\s+-?|mkfs\b|fdisk\b|parted\b|shutdown\b|reboot\b|halt\b|dd\s+if=)/i,
     reason: "Privileged, disk-formatting, raw-device, or system power command",
   },
   {
@@ -763,7 +841,8 @@ const HARD_RISK_PATTERNS: ReadonlyArray<{ readonly pattern: RegExp; readonly rea
     reason: "Fork bomb signature",
   },
   {
-    pattern: /(?:curl|wget|fetch|nc|ncat|ssh|scp|rsync)\b[^\n]*(?:\|\s*(?:sh|bash|zsh|python|node)|\.ssh|\.aws|\.gnupg|API_KEY|SECRET|TOKEN)/i,
+    pattern:
+      /(?:curl|wget|fetch|nc|ncat|ssh|scp|rsync)\b[^\n]*(?:\|\s*(?:sh|bash|zsh|python|node)|\.ssh|\.aws|\.gnupg|API_KEY|SECRET|TOKEN)/i,
     reason: "Remote payload execution or credential/key-path network transfer",
   },
   {
@@ -792,7 +871,6 @@ const SAFE_READ_ONLY_EXECUTABLES = new Set([
 ])
 
 const SAFE_GIT_READ_SUBCOMMANDS = new Set(["status", "diff", "log", "branch", "show", "rev-parse"])
-const SAFE_NODE_TEST_SCRIPTS = new Set(["test", "lint", "check", "typecheck", "build", "verify"])
 
 function hasShellMetaChars(text: string): boolean {
   return /[|;&`<>]|\$\(/.test(text)
@@ -811,7 +889,11 @@ export function assessActionSafety(
     }
   }
 
-  const rawJoined = [targetOrCommand, ...args].join(" ")
+  const normalizedCmd = path
+    .basename(targetOrCommand.trim())
+    .toLowerCase()
+    .replace(/\.(?:exe|cmd|bat)$/, "")
+  const rawJoined = [normalizedCmd, ...args].join(" ")
   const stripped = stripShellComments(rawJoined)
   for (const rule of HARD_RISK_PATTERNS) {
     if (rule.pattern.test(stripped)) {
@@ -824,7 +906,10 @@ export function assessActionSafety(
     }
   }
 
-  const base = path.basename(targetOrCommand.trim()).toLowerCase()
+  const base = path
+    .basename(targetOrCommand.trim())
+    .toLowerCase()
+    .replace(/\.(?:exe|cmd|bat)$/, "")
   const argJoined = args.join(" ")
   const hasEvalOrCodeArg = args.some(
     (a) =>
@@ -852,7 +937,13 @@ export function assessActionSafety(
     base === "xargs" ||
     hasFindExec ||
     hasGitConfigOverride ||
-    ((base === "node" || base === "python" || base === "python3" || base === "perl" || base === "ruby") &&
+    ((base === "node" ||
+      base === "bun" ||
+      base === "deno" ||
+      base === "python" ||
+      base === "python3" ||
+      base === "perl" ||
+      base === "ruby") &&
       hasEvalOrCodeArg)
 
   if (inlineExecShell) {
@@ -888,26 +979,8 @@ export function assessActionSafety(
     }
   }
 
-  if (
-    (base === "npm" || base === "pnpm" || base === "yarn" || base === "bun") &&
-    ((args[0] === "test" && args.length <= 3) ||
-      (args[0] === "run" && args[1] !== undefined && SAFE_NODE_TEST_SCRIPTS.has(args[1])))
-  ) {
-    return {
-      hardBlockedFromAuto: false,
-      autoSafeReadOnly: true,
-      allowAlways: true,
-    }
-  }
-
-  if (base === "pytest" || (base === "go" && args[0] === "test") || (base === "cargo" && args[0] === "test")) {
-    return {
-      hardBlockedFromAuto: false,
-      autoSafeReadOnly: true,
-      allowAlways: true,
-    }
-  }
-
+  // Test/build runners (npm, pytest, go test, cargo test) execute project-defined code and scripts,
+  // so they are never classified as autoSafeReadOnly.
   return {
     hardBlockedFromAuto: false,
     autoSafeReadOnly: false,

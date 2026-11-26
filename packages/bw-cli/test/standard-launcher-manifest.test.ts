@@ -52,20 +52,6 @@ function buildStandardBundle(outfile: string) {
     throw new Error(`standard bundle build failed: ${result.stderr.toString().slice(0, 800)}`)
 }
 
-/** A launcher that prints the environment it would hand the runtime, then exits 0. */
-function stubRuntime(): string {
-  const file = path.join(pkg, "lib/bashwink.js")
-  writeFileSync(
-    file,
-    [
-      'console.log("BASHWINK_ENGINE_MANIFEST=" + (process.env.BASHWINK_ENGINE_MANIFEST || "(unset)"))',
-      'console.log("BASHWINK_OPENCODE_BIN=" + (process.env.BASHWINK_OPENCODE_BIN || "(unset)"))',
-      "process.exit(0)",
-    ].join("\n"),
-  )
-  return file
-}
-
 beforeAll(() => {
   pkg = mkdtempSync(path.join(tmpdir(), "bw-standard-"))
   mkdirSync(path.join(pkg, "bin"), { recursive: true })
@@ -143,21 +129,50 @@ function runLauncher(env: Record<string, string | undefined> = {}) {
   }
 }
 
+function runLegacyBundle(
+  args: string[] = ["--help"],
+  env: Record<string, string | undefined> = {},
+) {
+  const child = Bun.spawnSync({
+    cmd: [process.execPath, path.join(pkg, "lib/bashwink.js"), ...args],
+    env: {
+      PATH: process.env["PATH"],
+      HOME: process.env["HOME"],
+      BASHWINK_ENGINE_MANIFEST: manifestPath,
+      BASHWINK_OPENCODE_BIN: undefined,
+      ...env,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  return {
+    code: child.exitCode,
+    stdout: child.stdout.toString(),
+    stderr: child.stderr.toString(),
+  }
+}
+
 describe("standard build wiring", () => {
-  test("the launcher supplies the manifest and never sets BASHWINK_OPENCODE_BIN", () => {
-    stubRuntime()
-    const result = runLauncher()
-    expect(result.code).toBe(0)
-    // The launcher realpaths the manifest (macOS /var -> /private/var), which is correct; compare
-    // on the resolved path rather than the temporary-directory spelling.
-    expect(result.stdout).toContain("BASHWINK_ENGINE_MANIFEST=")
-    expect(result.stdout).toContain("engine-manifest.json")
-    expect(result.stdout).toContain("BASHWINK_OPENCODE_BIN=(unset)")
+  test("standalone launcher fails clearly when staged runtime is absent and boots staged standalone bin cleanly", () => {
+    const missing = runLauncher()
+    expect(missing.code).toBe(1)
+    expect(missing.stderr).toContain("standalone runtime bundle was not found")
+
+    const stagedEntry = path.join(pkg, "lib/packages/bw-cli/src/standalone/bin.js")
+    mkdirSync(path.dirname(stagedEntry), { recursive: true })
+    writeFileSync(
+      stagedEntry,
+      'console.log("STANDALONE_BOOT=1");\nconsole.log("BASHWINK_OPENCODE_BIN=" + (process.env.BASHWINK_OPENCODE_BIN || "(unset)"));\n',
+    )
+    const booted = runLauncher()
+    expect(booted.code).toBe(0)
+    expect(booted.stdout).toContain("STANDALONE_BOOT=1")
+    expect(booted.stdout).toContain("BASHWINK_OPENCODE_BIN=(unset)")
   })
 
   test("REGRESSION: a standard bundle with a manifest and no BASHWINK_OPENCODE_BIN does not exit 127", () => {
     buildStandardBundle(path.join(pkg, "lib/bashwink.js"))
-    const result = runLauncher()
+    const result = runLegacyBundle(["run", "--standalone", "say OK"])
     // 127 was the pre-Task-4 behaviour: "the pinned runtime was not provided".
     expect(result.code).not.toBe(127)
     expect(result.stderr).not.toContain("the pinned OpenCode runtime was not provided")
@@ -169,7 +184,7 @@ describe("a missing or tampered manifest stops before any model request", () => 
     buildStandardBundle(path.join(pkg, "lib/bashwink.js"))
     writeFileSync(enginePath, "#!/bin/sh\necho TAMPERED\n")
     chmodSync(enginePath, 0o755)
-    const result = runLauncher()
+    const result = runLegacyBundle(["run", "--standalone", "say OK"])
     expect(result.code).not.toBe(0)
     expect(result.stderr).toMatch(/digest|verif/i)
     // No provider call can have happened: the refusal is local and precedes resolution.
@@ -181,13 +196,15 @@ describe("a missing or tampered manifest stops before any model request", () => 
     writeFileSync(enginePath, "#!/bin/sh\necho engine\n")
     chmodSync(enginePath, 0o755)
     rmSync(manifestPath)
-    const result = runLauncher()
-    // With no manifest and no npm @opencode/cli-* package installed, the launcher must stop. It must
+    const result = runLegacyBundle(["run", "--standalone", "say OK"], {
+      BASHWINK_ENGINE_MANIFEST: manifestPath,
+    })
+    // With no manifest and no npm @opencode/cli-* package installed, the bundle must stop. It must
     // not search PATH, and it must not invent a manifest path.
     expect(result.code).not.toBe(0)
     expect(result.stdout).not.toContain("BASHWINK_ENGINE_MANIFEST=")
     expect(result.stderr).toMatch(
-      /required runtime package is missing|not found|no OpenCode runtime/i,
+      /no engine manifest|required runtime package is missing|not found|no OpenCode runtime/i,
     )
   })
 

@@ -7,7 +7,16 @@
  */
 
 import { createHash, randomBytes } from "node:crypto"
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
+import { homedir } from "node:os"
 import path from "node:path"
 import { paths, type Paths } from "../paths.ts"
 import type { CredentialConfig, StandaloneConfig } from "./types.ts"
@@ -35,10 +44,16 @@ export function isLoopbackHostname(hostname: string): boolean {
   return clean === "127.0.0.1" || clean === "localhost" || clean === "::1"
 }
 
-export function normalizeBaseURL(
-  raw: string,
-  endpointType: "local" | "hosted",
-): string {
+export function classifyEndpoint(baseURL: string): "loopback" | "remote" {
+  try {
+    const parsed = new URL(baseURL)
+    return isLoopbackHostname(parsed.hostname) ? "loopback" : "remote"
+  } catch {
+    return "remote"
+  }
+}
+
+export function normalizeBaseURL(raw: string, endpointType: "local" | "hosted"): string {
   const trimmed = raw.trim()
   if (trimmed === "") throw new StandaloneConfigError("Endpoint URL must not be empty.")
 
@@ -51,20 +66,21 @@ export function normalizeBaseURL(
   if (parsed.username !== "" || parsed.password !== "") {
     throw new StandaloneConfigError("Endpoint URL must not embed credentials.")
   }
+  if (parsed.hash !== "") {
+    throw new StandaloneConfigError("Endpoint URL must not contain a fragment (#...).")
+  }
   if (endpointType === "local") {
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       throw new StandaloneConfigError("Local endpoint URL must use http:// or https://.")
     }
-    if (parsed.protocol === "http:" && !isLoopbackHostname(parsed.hostname)) {
+    if (!isLoopbackHostname(parsed.hostname)) {
       throw new StandaloneConfigError(
-        `Plain http:// is restricted to loopback hosts (127.0.0.1, localhost, ::1); use https:// for '${parsed.hostname}'.`,
+        `Local endpoint must point to a loopback host (127.0.0.1, localhost, ::1); use a hosted provider for remote host '${parsed.hostname}'.`,
       )
     }
   } else {
     if (parsed.protocol !== "https:") {
-      throw new StandaloneConfigError(
-        `Hosted endpoint '${parsed.origin}' must use https://.`,
-      )
+      throw new StandaloneConfigError(`Hosted endpoint '${parsed.origin}' must use https://.`)
     }
   }
 
@@ -72,7 +88,7 @@ export function normalizeBaseURL(
   if (pathname.endsWith("/chat/completions")) {
     pathname = pathname.slice(0, -"/chat/completions".length)
   }
-  return `${parsed.origin}${pathname}`
+  return `${parsed.origin}${pathname}${parsed.search}`
 }
 
 export function validateModelID(model: string): string {
@@ -93,10 +109,32 @@ export function validateEnvVarName(variable: string): string {
   return trimmed
 }
 
-export function validateKeyFilePath(filePath: string): string {
+export function expandHomeCredentialPath(
+  filePath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const trimmed = filePath.trim()
-  if (trimmed === "") throw new StandaloneConfigError("Key file path must not be empty.")
+  if (trimmed === "" || /[\r\n\0]/.test(trimmed)) {
+    throw new StandaloneConfigError("Key file path must be a non-empty single-line path.")
+  }
+  if (/^~[^/\\]/.test(trimmed)) {
+    throw new StandaloneConfigError("Unsupported '~user' path; use '~/' or an absolute path.")
+  }
+  const home = env["HOME"] || env["USERPROFILE"] || homedir()
+  if (trimmed === "~") {
+    return path.resolve(home)
+  }
+  if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+    return path.resolve(home, trimmed.slice(2))
+  }
   return path.resolve(trimmed)
+}
+
+export function validateKeyFilePath(
+  filePath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return expandHomeCredentialPath(filePath, env)
 }
 
 export type ConfigLoadResult =
@@ -176,14 +214,20 @@ export function parseStandaloneConfig(raw: string): StandaloneConfig {
   let wireProtocol: StandaloneConfig["wireProtocol"]
   if (obj["wireProtocol"] !== undefined) {
     if (obj["wireProtocol"] !== "openai-chat" && obj["wireProtocol"] !== "anthropic-messages") {
-      throw new StandaloneConfigError("Config wireProtocol must be 'openai-chat' or 'anthropic-messages'.")
+      throw new StandaloneConfigError(
+        "Config wireProtocol must be 'openai-chat' or 'anthropic-messages'.",
+      )
     }
     wireProtocol = obj["wireProtocol"]
   }
 
   let headers: Record<string, string> | undefined
   if (obj["headers"] !== undefined) {
-    if (typeof obj["headers"] !== "object" || obj["headers"] === null || Array.isArray(obj["headers"])) {
+    if (
+      typeof obj["headers"] !== "object" ||
+      obj["headers"] === null ||
+      Array.isArray(obj["headers"])
+    ) {
       throw new StandaloneConfigError("Config headers must be an object.")
     }
     headers = {}
@@ -198,6 +242,24 @@ export function parseStandaloneConfig(raw: string): StandaloneConfig {
     }
   }
 
+  let connectionStatus: StandaloneConfig["connectionStatus"]
+  if (obj["connectionStatus"] !== undefined) {
+    if (
+      obj["connectionStatus"] !== "unverified" &&
+      obj["connectionStatus"] !== "verified" &&
+      obj["connectionStatus"] !== "failed"
+    ) {
+      throw new StandaloneConfigError(
+        "Config connectionStatus must be 'unverified', 'verified', or 'failed'.",
+      )
+    }
+    connectionStatus = obj["connectionStatus"]
+  }
+  const lastVerifiedAt =
+    typeof obj["lastVerifiedAt"] === "string" && obj["lastVerifiedAt"].trim() !== ""
+      ? obj["lastVerifiedAt"]
+      : undefined
+
   return {
     version: STANDALONE_CONFIG_VERSION,
     ...(providerId === undefined ? {} : { providerId }),
@@ -209,6 +271,8 @@ export function parseStandaloneConfig(raw: string): StandaloneConfig {
     ...(headers === undefined ? {} : { headers }),
     updatedAt: typeof obj["updatedAt"] === "string" ? obj["updatedAt"] : new Date(0).toISOString(),
     ...(price === undefined ? {} : { price }),
+    ...(connectionStatus === undefined ? {} : { connectionStatus }),
+    ...(lastVerifiedAt === undefined ? {} : { lastVerifiedAt }),
   }
 }
 
@@ -240,6 +304,8 @@ export function saveStandaloneConfig(configDirectory: string, config: Standalone
     ...(config.headers === undefined ? {} : { headers: config.headers }),
     updatedAt: config.updatedAt,
     ...(config.price === undefined ? {} : { price: config.price }),
+    ...(config.connectionStatus === undefined ? {} : { connectionStatus: config.connectionStatus }),
+    ...(config.lastVerifiedAt === undefined ? {} : { lastVerifiedAt: config.lastVerifiedAt }),
   }
   const file = standaloneConfigFile(configDirectory)
   const temp = path.join(
@@ -264,7 +330,11 @@ export function saveProviderKeyFile(
   if (secret === "" || /[\r\n\0]/.test(secret)) {
     throw new StandaloneConfigError("API key must be a non-empty single-line secret.")
   }
-  const slug = providerId.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "_") || "provider"
+  const slug =
+    providerId
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "_") || "provider"
   const keysDir = path.join(configDirectory, "keys")
   mkdirSync(keysDir, { recursive: true, mode: 0o700 })
   const target = path.resolve(path.join(keysDir, `${slug}.key`))
@@ -307,7 +377,15 @@ export function resolveCredentialSecret(
       summary: `env:${credential.variable} (present, ${trimmed.length} chars, sha256:${digest}…)`,
     }
   }
-  const file = path.resolve(credential.path)
+  let file: string
+  try {
+    file = expandHomeCredentialPath(credential.path, env)
+  } catch (err) {
+    return {
+      ok: false,
+      summary: `file:${credential.path} (${err instanceof Error ? err.message : String(err)})`,
+    }
+  }
   if (!existsSync(file)) {
     return { ok: false, summary: `file:${file} (missing)` }
   }
@@ -339,7 +417,7 @@ export function resolveCredentialSecret(
 export function formatDestination(baseURL: string): string {
   try {
     const u = new URL(baseURL)
-    return `${u.host}${u.pathname === "/" ? "" : u.pathname}`
+    return `${u.host}${u.pathname === "/" ? "" : u.pathname}${u.search}`
   } catch {
     return baseURL
   }
@@ -373,7 +451,9 @@ export function inspectLegacyOpenAiProviders(configDirectory: string): LegacyPro
       const modelsObj = p["models"] as Record<string, unknown> | undefined
       const modelID = modelsObj ? Object.keys(modelsObj)[0] : undefined
       if (!modelID) continue
-      const envArr = Array.isArray(p["env"]) ? p["env"].filter((v): v is string => typeof v === "string") : []
+      const envArr = Array.isArray(p["env"])
+        ? p["env"].filter((v): v is string => typeof v === "string")
+        : []
       const apiKeyRef = typeof settings?.["apiKey"] === "string" ? settings["apiKey"] : undefined
       let credential: CredentialConfig = { kind: "none" }
       const fileMatch = apiKeyRef ? /^\{file:([^}]+)\}$/.exec(apiKeyRef) : null

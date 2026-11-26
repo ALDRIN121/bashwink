@@ -4,9 +4,9 @@ An evidence-first coding agent: it records what it actually did — commands, ex
 outputs, hash-chained and independently verifiable — instead of reporting what it claims to
 have done.
 
-**Status:** Standalone alpha **`v0.2.0-alpha.1`** ([ADR-015](docs/bashwink/ADR-015-STANDALONE-CODING-ALPHA.md)) runs purely on Node.js 22+ and npm without OpenCode, Hermes, Pi, or Bun. Phase 0 and Phase 1 are gate-passed for the historical OpenCode substrate; the Phase 2 gate remains open. See [implementation status](docs/bashwink/IMPLEMENTATION_STATUS.md), [supported platforms](docs/bashwink/SUPPORTED_PLATFORMS.md), and [next steps](docs/bashwink/NEXT_STEPS.md).
+**Status:** Standalone alpha **`v0.2.0-alpha.2`** ([ADR-015](docs/bashwink/ADR-015-STANDALONE-CODING-ALPHA.md)) runs purely on Node.js 22+ and npm without OpenCode, Hermes, Pi, or Bun. Phase 0 and Phase 1 are gate-passed for the historical OpenCode substrate; the Phase 2 gate remains open. See [implementation status](docs/bashwink/IMPLEMENTATION_STATUS.md), [supported platforms](docs/bashwink/SUPPORTED_PLATFORMS.md), and [next steps](docs/bashwink/NEXT_STEPS.md).
 
-## v0.2.0-alpha.1 quick start (standalone checkout install)
+## v0.2.0-alpha.2 quick start (standalone checkout install)
 
 ### 1. Prerequisites
 
@@ -25,7 +25,7 @@ From the repository root (same command on macOS, Linux, and Windows PowerShell):
 npm run install:local
 ```
 
-This transpiles the zero-dependency standalone bundle using Node.js >=22.13.0, audits the tarball (verifying zero third-party or upstream runtime dependencies), builds `build/standalone/bashwink-0.2.0-alpha.1.tgz`, and installs `bashwink` globally via `npm install -g`.
+This transpiles the zero-dependency standalone bundle using Node.js >=22.13.0, audits the tarball (verifying zero third-party or upstream runtime dependencies), builds `build/standalone/bashwink-0.2.0-alpha.2.tgz`, and installs `bashwink` globally via `npm install -g`.
 
 Verify the installation:
 
@@ -78,13 +78,13 @@ bashwink/
                                    Reused workspace trust, XDG/`BASHWINK_HOME` path resolution, test-path detection
   packages/bw-evidence/src/        Hash-chained evidence recorder (`recorder.ts`) and physical path boundary (`scope.ts`)
   scripts/standalone/              Pure-Node build, audit, install, PTY/ConPTY E2E, and physical-absence checks
-  release/npm/                     Standalone npm package metadata, notices, and tester docs (`0.2.0-alpha.1`)
+  release/npm/                     Standalone npm package metadata, notices, and tester docs (`0.2.0-alpha.2`)
   docs/bashwink/                   ADRs, dependency inventory, phase plan, status and test registers
   .github/workflows/               CI (`verify.yml`, including `standalone` Node 22.13.0 / 22 matrix)
   vendor/engine/                   Historical v0.1.0-alpha.1 OpenCode fork tree (excluded from standalone builds)
 ```
 
-## Standalone CLI commands (`v0.2.0-alpha.1`)
+## Standalone CLI commands (`v0.2.0-alpha.2`)
 
 | Command | Purpose |
 | --- | --- |

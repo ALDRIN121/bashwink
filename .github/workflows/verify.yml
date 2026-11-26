@@ -297,13 +297,12 @@ jobs:
           fi
           echo "OK: no credential patterns in the tree (no path exclusions)"
 
-  # The standard (native) npm package, built from the vendored local engine and installed the way a
-  # tester installs it: from the tarball, into a throwaway prefix, with only `bun` resolved by npm
-  # (zero `@opencode/*` packages or hosted OpenCode services). Windows is included because the package
-  # is Windows-first. A skipped or cancelled leg is NOT a pass: branch protection must require each
-  # matrix leg by name. Nothing here publishes anything.
+  # Legacy v0.1.0-alpha.1 package build/verification (superseded by standalone v0.2.0-alpha.2).
+  # Preserved for manual rollback verification via `workflow_dispatch` instead of blocking standalone PRs
+  # after `release/npm/` switched to the pure-Node standalone entrypoint (BW-AUD-053 / ADR-015).
   npm-package:
-    name: npm package (${{ matrix.os }})
+    name: legacy npm package (${{ matrix.os }})
+    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -479,11 +478,14 @@ jobs:
         run: |
           cat <<'EOF'
           This workflow proves:
+            - standalone v0.2.0-alpha.2 product gates (`standalone`: Node >=22.13.0 unit/loop, tarball install lifecycle, physical independence, PTY E2E)
             - the docs bundle is internally consistent
-            - Bashwink's own evidence package passes its tests and typechecks
+            - Bashwink's evidence package & CLI workspace tests pass typecheck, lint, format, and unit checks
             - the QA fixtures reset deterministically on Linux and macOS
-            - the secret scanner works and finds nothing committed
+            - the secret scanner positive control fires and finds zero credential patterns in the tree
             - every copyleft dependency has a recorded licensing decision
+
+          Legacy v0.1.0-alpha.1 rollback packaging (`legacy npm package`) is isolated to manual `workflow_dispatch` runs (BW-AUD-053 / ADR-015).
 
           This workflow does NOT prove:
             - upstream OpenCode baseline parity (8,004 tests) — see NEXT_STEPS.md

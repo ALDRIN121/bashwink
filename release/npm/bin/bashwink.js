@@ -15,4 +15,21 @@ if (!Number.isFinite(major) || !Number.isFinite(minor) || major < 22 || (major =
   process.exit(1);
 }
 
-await import("../lib/packages/bw-cli/src/standalone/bin.js");
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const stagedEntry = path.resolve(here, "../lib/packages/bw-cli/src/standalone/bin.js");
+if (!existsSync(stagedEntry)) {
+  process.stderr.write(
+    "bashwink: standalone runtime bundle was not found at " +
+      stagedEntry +
+      ".\n" +
+      "  Build and install the standalone package first with `npm run install:local` (or `npm run build:standalone`),\n" +
+      "  or run directly from source with `node --experimental-strip-types packages/bw-cli/src/standalone/bin.ts`.\n",
+  );
+  process.exit(1);
+}
+
+await import(pathToFileURL(stagedEntry).href);

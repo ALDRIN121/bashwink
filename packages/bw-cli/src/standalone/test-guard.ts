@@ -1,27 +1,35 @@
 /**
  * TestGuard — structural test-integrity detection and post-command tamper auditing (BW-058).
  *
- * Prevents silent deletion, skipping (`.skip` / `.only`), assertion weakening, or `package.json`
- * test-script neutering through `edit_file` or unconstrained shell commands.
+ * Guarantees & limitations:
+ * - Guarantees: detects syntactic test deletion, `.skip`/`.todo`/`.only` modifiers, reduced
+ *   assertion counts, trivial always-true assertions (`expect(true).toBe(true)`, etc.),
+ *   `package.json` test-script neutering (no-op commands, `|| true`, `--passWithNoTests`),
+ *   and out-of-band shell modifications to protected test/`package.json` SHA-256 hashes.
+ * - Limitations: regex-based syntactic inspection does not execute semantic mutation testing
+ *   or follow arbitrary helper-function indirections; `ProofPack` still requires passing
+ *   verification command evidence on the final workspace state.
  */
 
 import path from "node:path"
-import { diffProtectedHashes, collectProtectedFileHashes } from "./baseline.ts"
+import { diffProtectedHashes, collectProtectedFileHashesBounded } from "./baseline.ts"
 import { isTestPath } from "./security.ts"
 import type { TestIntegrityFinding } from "./types.ts"
 
 const TEST_CASE_PATTERNS: readonly RegExp[] = [
-  /\b(?:it|test)\s*(?:\.(?:skip|only|todo|concurrent|each)\s*)?\(/g,
+  /\b(?:it|test)\s*(?:\.(?:skip|only|todo|concurrent|each|skipIf|runIf)\s*)?\(/g,
   /^\s*def\s+test_[A-Za-z0-9_]+\s*\(/gm,
   /^\s*func\s+Test[A-Za-z0-9_]+\s*\(/gm,
   /#\[test\]/g,
 ]
 
 const SKIP_MODIFIER_PATTERNS: readonly RegExp[] = [
-  /\b(?:it|test|describe)\.skip\b/g,
+  /\b(?:it|test|describe)\.(?:skip|todo)\b/g,
+  /\b(?:it|test|describe)\.(?:skipIf|runIf)\s*\(/g,
   /\b(?:xit|xtest|xdescribe)\s*\(/g,
-  /@pytest\.mark\.skip\b/g,
-  /\bt\.Skip\s*\(/g,
+  /@pytest\.mark\.(?:skip|skipif|xfail)\b/g,
+  /\bt\.(?:Skip|SkipNow)\s*\(/g,
+  /#\[ignore\b/g,
 ]
 
 const ONLY_MODIFIER_PATTERNS: readonly RegExp[] = [
@@ -32,21 +40,23 @@ const ONLY_MODIFIER_PATTERNS: readonly RegExp[] = [
 const ASSERTION_PATTERNS: readonly RegExp[] = [
   /\bexpect\s*\(/g,
   /\bassert(?:\.[A-Za-z0-9_]+)?\s*\(/g,
+  /^\s*assert\s+/gm,
   /\bt\.(?:Error|Errorf|Fatal|Fatalf|Fail|FailNow)\s*\(/g,
   /\bassert(?:_eq|_ne)?!\s*\(/g,
 ]
 
 const TRIVIAL_TRUE_ASSERTIONS: readonly RegExp[] = [
-  /\bexpect\s*\(\s*true\s*\)\s*\.toBe\s*\(\s*true\s*\)/g,
-  /\bexpect\s*\(\s*true\s*\)\s*\.toEqual\s*\(\s*true\s*\)/g,
-  /\bassert\.(?:strictEqual|equal)\s*\(\s*true\s*,\s*true\s*\)/g,
-  /\bassert(?:\.ok)?\s*\(\s*true\s*\)/g,
+  /\bexpect\s*\(\s*(?:true|1)\s*\)\s*\.to(?:Be|Equal|StrictEqual)\s*\(\s*(?:true|1)\s*\)/g,
+  /\bexpect\s*\(\s*false\s*\)\s*\.to(?:Be|Equal|StrictEqual)\s*\(\s*false\s*\)/g,
+  /\bassert\.(?:strictEqual|equal|deepEqual|deepStrictEqual)\s*\(\s*(?:true|1)\s*,\s*(?:true|1)\s*\)/g,
+  /\bassert(?:\.ok)?\s*\(\s*(?:true|1)\s*\)/g,
+  /^\s*assert\s+(?:True|1\s*==\s*1)\b/gm,
 ]
 
 function stripCommentLines(text: string): string {
   return text
     .split(/\r?\n/)
-    .filter((line) => !/^\s*(?:\/\/|#(?!!)|\*|\/\*)/.test(line))
+    .filter((line) => !/^\s*(?:\/\/|#(?!!|\[)|\*|\/\*)/.test(line))
     .join("\n")
 }
 
@@ -80,7 +90,10 @@ function isTrivialTestScript(command: string): boolean {
     trimmed === ":" ||
     trimmed === "exit 0" ||
     /^echo\b/.test(trimmed) ||
-    /^printf\b/.test(trimmed)
+    /^printf\b/.test(trimmed) ||
+    /(?:\|\||;|&&)\s*(?:true|exit\s+0|:)\s*$/.test(trimmed) ||
+    /--passwithnotests\b/.test(trimmed) ||
+    /\bnode\s+-e\s+["']process\.exit\(0\)["']/.test(trimmed)
   )
 }
 
@@ -213,7 +226,9 @@ export function inspectTestEdit(
         afterTrivial > beforeTrivial
           ? `Replaced meaningful assertions with trivial always-true assertions in '${normalizedRel}'.`
           : `Assertion count decreased from ${beforeAssertions} to ${afterAssertions} in '${normalizedRel}'.`,
-      ...(afterAssertions < beforeAssertions ? { removedCount: beforeAssertions - afterAssertions } : {}),
+      ...(afterAssertions < beforeAssertions
+        ? { removedCount: beforeAssertions - afterAssertions }
+        : {}),
       severity: "block_auto",
     })
   }
@@ -228,8 +243,11 @@ export function inspectShellProtectedFileDelta(
   readonly findings: readonly TestIntegrityFinding[]
   readonly afterHashes: Readonly<Record<string, string>>
   readonly changedProtectedFiles: readonly string[]
+  readonly partial: boolean
+  readonly partialReason?: string
 } {
-  const afterHashes = collectProtectedFileHashes(workspace)
+  const scan = collectProtectedFileHashesBounded(workspace)
+  const afterHashes = scan.hashes
   const delta = diffProtectedHashes(beforeHashes, afterHashes)
   const findings: TestIntegrityFinding[] = []
 
@@ -254,6 +272,8 @@ export function inspectShellProtectedFileDelta(
     findings,
     afterHashes,
     changedProtectedFiles: [...delta.modified, ...delta.deleted].sort(),
+    partial: scan.partial,
+    ...(scan.partialReason !== undefined ? { partialReason: scan.partialReason } : {}),
   }
 }
 

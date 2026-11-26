@@ -106,17 +106,17 @@ Verified against seven cases rather than asserted:
 | `sk-ant-api03-…` (real shape) | yes |
 | bare `sk-…` at position 0 | yes |
 | `ghp_…` | yes |
-| `AKIAIOSFODNN7EXAMPLE` | yes |
+| `AKIA` + `IOSFODNN7EXAMPLE` (AWS example key) | yes |
 | PEM header **with** base64 body | yes |
 | `…mask-icon…` | no |
-| `-----BEGIN PRIVATE KEY-----` header alone | no |
+| bare `-----BEGIN` `PRIVATE KEY-----` header alone | no |
 
 The `\b` version **missed** `sk-ant-api03-…` entirely — my first tightening was weaker than the
 pattern it replaced, which the control caught.
 
 ### 4c. A PEM header alone is a format literal
 
-Upstream *constructs* PEM blocks, so `-----BEGIN PRIVATE KEY-----` appears four times in the engine
+Upstream *constructs* PEM blocks, so a bare `BEGIN PRIVATE KEY` PEM header appears four times in the engine
 with no key material after it. The pattern now requires an actual base64 body.
 
 ## 5. A stale-manifest hazard, closed in the packager

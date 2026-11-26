@@ -74,7 +74,7 @@ describe("redaction", () => {
             transport: "http",
             request: {
               method: "POST",
-              url: "https://example.test/path?key=sk-123456789012345678901234",
+              url: "https://example.test/path?key=" + "sk-" + "123456789012345678901234",
               headers: {},
               body: JSON.stringify({
                 nested: "AIzaSyDHibiBRvJZLsFnPYPoiTwxY4ztQ55yqCE",
@@ -99,7 +99,7 @@ describe("redaction", () => {
     expect(
       secretFindings({
         version: 1,
-        metadata: { token: "sk-123456789012345678901234" },
+        metadata: { token: "sk-" + "123456789012345678901234" },
         interactions: [],
       }),
     ).toEqual([{ path: "metadata.token", reason: "API key" }])

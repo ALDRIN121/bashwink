@@ -187,7 +187,10 @@ export function validateContract(value: unknown, plan?: Plan): ContractValidatio
   if (plan !== undefined) {
     if (typeof value.planId !== "string" || value.planId.trim() === "")
       add("planId", "must reference a plan")
-  } else if (value.planId !== undefined && (typeof value.planId !== "string" || value.planId.trim() === "")) {
+  } else if (
+    value.planId !== undefined &&
+    (typeof value.planId !== "string" || value.planId.trim() === "")
+  ) {
     add("planId", "must be a non-empty string when provided")
   }
   if (typeof value.objective !== "string" || value.objective.trim() === "")
@@ -286,12 +289,21 @@ export function validateContract(value: unknown, plan?: Plan): ContractValidatio
         if (typeof raw["check"] !== "string" || raw["check"].trim() === "")
           add(`${at}.check`, "must name the declared check that produces the evidence")
       } else {
-        if (raw["task"] !== undefined && (typeof raw["task"] !== "string" || raw["task"].trim() === ""))
+        if (
+          raw["task"] !== undefined &&
+          (typeof raw["task"] !== "string" || raw["task"].trim() === "")
+        )
           add(`${at}.task`, "must be a non-empty string when provided")
-        if (raw["check"] !== undefined && (typeof raw["check"] !== "string" || raw["check"].trim() === ""))
+        if (
+          raw["check"] !== undefined &&
+          (typeof raw["check"] !== "string" || raw["check"].trim() === "")
+        )
           add(`${at}.check`, "must be a non-empty string when provided")
       }
-      if (raw["command"] !== undefined && (typeof raw["command"] !== "string" || raw["command"].trim() === ""))
+      if (
+        raw["command"] !== undefined &&
+        (typeof raw["command"] !== "string" || raw["command"].trim() === "")
+      )
         add(`${at}.command`, "must be a non-empty string when provided")
       if (raw["status"] !== undefined && !isCriterionStatus(raw["status"]))
         add(`${at}.status`, `must be one of ${STATUSES.join(", ")}`)

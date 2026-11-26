@@ -24,6 +24,7 @@ import {
   createKeyParserState,
   feedKeyParser,
   flushPendingEscape,
+  flushStuckPaste,
   formatPromptMetadata,
   formatStatusFooterLine,
   getTerminalLayout,
@@ -212,7 +213,11 @@ export function fuzzyScore(query: string, text: string): number {
   return qi === q.length ? score : -1
 }
 
-export function fuzzyFilter<T>(query: string, items: readonly T[], toSearchText: (item: T) => string): T[] {
+export function fuzzyFilter<T>(
+  query: string,
+  items: readonly T[],
+  toSearchText: (item: T) => string,
+): T[] {
   const clean = query.trim()
   if (clean === "") return [...items]
   const scored: { item: T; score: number }[] = []
@@ -255,6 +260,7 @@ export class RawTerminalSession {
   private keyListener: ((ev: ParsedKeyEvent) => void) | undefined
   private resizeListener: ((info: TerminalResizeInfo) => void) | undefined
   private escTimer: ReturnType<typeof setTimeout> | undefined
+  private pasteTimer: ReturnType<typeof setTimeout> | undefined
   private rawActive = false
   private attached = false
   private lastCols: number
@@ -273,8 +279,14 @@ export class RawTerminalSession {
   private readTerminalSize(): { cols: number; rows: number } {
     const rawCols = process.stdout.columns
     const rawRows = process.stdout.rows
-    const cols = typeof rawCols === "number" && Number.isFinite(rawCols) && rawCols > 0 ? Math.max(20, rawCols) : 100
-    const rows = typeof rawRows === "number" && Number.isFinite(rawRows) && rawRows > 0 ? Math.max(8, rawRows) : 30
+    const cols =
+      typeof rawCols === "number" && Number.isFinite(rawCols) && rawCols > 0
+        ? Math.max(20, rawCols)
+        : 100
+    const rows =
+      typeof rawRows === "number" && Number.isFinite(rawRows) && rawRows > 0
+        ? Math.max(8, rawRows)
+        : 30
     return { cols, rows }
   }
 
@@ -307,7 +319,8 @@ export class RawTerminalSession {
       const code = text.charCodeAt(i)
       if (code === 0x1b && text[i + 1] === "[") {
         let j = i + 2
-        while (j < text.length && !(text.charCodeAt(j) >= 0x40 && text.charCodeAt(j) <= 0x7e)) j += 1
+        while (j < text.length && !(text.charCodeAt(j) >= 0x40 && text.charCodeAt(j) <= 0x7e))
+          j += 1
         const final = text[j] ?? ""
         const params = text.slice(i + 2, j)
         if (params === "?1049" && final === "h") this.inAltScreen = true
@@ -321,7 +334,10 @@ export class RawTerminalSession {
             const r = Number.parseInt(parts[0] || "1", 10)
             const c = Number.parseInt(parts[1] || "1", 10)
             this.estRow = Math.min(rows, Math.max(1, Number.isFinite(r) ? r : 1))
-            this.estCol = Math.min(Math.max(0, cols - 1), Math.max(0, (Number.isFinite(c) ? c : 1) - 1))
+            this.estCol = Math.min(
+              Math.max(0, cols - 1),
+              Math.max(0, (Number.isFinite(c) ? c : 1) - 1),
+            )
           } else if (final === "A") {
             const n = Math.max(1, Number.parseInt(params || "1", 10) || 1)
             this.estRow = Math.max(1, this.estRow - n)
@@ -409,11 +425,23 @@ export class RawTerminalSession {
       clearTimeout(this.escTimer)
       this.escTimer = undefined
     }
+    if (this.pasteTimer) {
+      clearTimeout(this.pasteTimer)
+      this.pasteTimer = undefined
+    }
     const events = feedKeyParser(this.parserState, str)
     for (const ev of events) {
       this.keyListener?.(ev)
     }
-    if (this.parserState.pending === "\x1b") {
+    if (this.parserState.inPaste) {
+      this.pasteTimer = setTimeout(() => {
+        this.pasteTimer = undefined
+        const flushed = flushStuckPaste(this.parserState)
+        for (const ev of flushed) {
+          this.keyListener?.(ev)
+        }
+      }, 2000)
+    } else if (this.parserState.pending === "\x1b") {
       this.escTimer = setTimeout(() => {
         this.escTimer = undefined
         const flushed = flushPendingEscape(this.parserState)
@@ -451,11 +479,27 @@ export class RawTerminalSession {
         clearTimeout(this.escTimer)
         this.escTimer = undefined
       }
+      if (this.pasteTimer) {
+        clearTimeout(this.pasteTimer)
+        this.pasteTimer = undefined
+      }
       this.endCapture()
     }
   }
 
   endCapture(): void {
+    if (this.escTimer) {
+      clearTimeout(this.escTimer)
+      this.escTimer = undefined
+    }
+    if (this.pasteTimer) {
+      clearTimeout(this.pasteTimer)
+      this.pasteTimer = undefined
+    }
+    this.parserState.pending = ""
+    this.parserState.inPaste = false
+    this.parserState.pasteBuffer = ""
+    this.parserState.pasteTruncated = false
     if (this.isTTY && this.rawActive) {
       try {
         this.write(BRACKETED_PASTE_OFF)
@@ -468,6 +512,16 @@ export class RawTerminalSession {
   }
 
   dispose(): void {
+    const activeListener = this.keyListener
+    this.keyListener = undefined
+    this.resizeListener = undefined
+    if (activeListener) {
+      try {
+        activeListener({ kind: "ctrl", key: "c" })
+      } catch {
+        // Ignore listener unwind errors on shutdown
+      }
+    }
     this.endCapture()
     if (this.attached) {
       process.stdin.off("data", this.onData)
@@ -529,7 +583,10 @@ function splitLinesWithOffsets(text: string): { line: string; start: number; end
   return out
 }
 
-function cursorRowCol(text: string, cursor: number): { row: number; col: number; lines: { line: string; start: number; end: number }[] } {
+function cursorRowCol(
+  text: string,
+  cursor: number,
+): { row: number; col: number; lines: { line: string; start: number; end: number }[] } {
   const lines = splitLinesWithOffsets(text)
   for (let r = 0; r < lines.length; r += 1) {
     const info = lines[r]!
@@ -587,7 +644,9 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
   let prePinRow = Math.max(1, raw.cursorRow())
   let pinSpacerRows = 0
 
-  const getAutocomplete = (maxItems = 7): { mode: "slash" | "file"; tokenStart: number; items: AutocompleteItem[] } | undefined => {
+  const getAutocomplete = (
+    maxItems = 7,
+  ): { mode: "slash" | "file"; tokenStart: number; items: AutocompleteItem[] } | undefined => {
     if (searchingHistory) return undefined
     const beforeCursor = buffer.slice(0, cursor)
     if (autoDismissedFor === buffer) return undefined
@@ -595,7 +654,11 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
     // 1. Slash command menu at start of single-line input before first whitespace
     if (beforeCursor.startsWith("/") && !/\s/.test(beforeCursor) && !buffer.includes("\n")) {
       const needle = beforeCursor.slice(1)
-      const matched = fuzzyFilter(needle, SLASH_COMMANDS, (c) => `${c.name} ${c.aliases.join(" ")} ${c.description}`)
+      const matched = fuzzyFilter(
+        needle,
+        SLASH_COMMANDS,
+        (c) => `${c.name} ${c.aliases.join(" ")} ${c.description}`,
+      )
       if (matched.length === 0) return undefined
       return {
         mode: "slash",
@@ -745,14 +808,13 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
 
     if (auto) {
       if (autoIndex >= auto.items.length) autoIndex = Math.max(0, auto.items.length - 1)
-      const autoHint =
-        layout.isCompact
-          ? auto.mode === "slash"
-            ? "  Commands (Tab/Enter):"
-            : "  Files (Tab/Enter):"
-          : auto.mode === "slash"
-            ? "  Commands (Tab complete · Enter run · Esc dismiss):"
-            : "  Files (Tab/Enter insert · Esc dismiss):"
+      const autoHint = layout.isCompact
+        ? auto.mode === "slash"
+          ? "  Commands (Tab/Enter):"
+          : "  Files (Tab/Enter):"
+        : auto.mode === "slash"
+          ? "  Commands (Tab complete · Enter run · Esc dismiss):"
+          : "  Files (Tab/Enter insert · Esc dismiss):"
       outLines.push(style.dim(truncatePlain(autoHint, cols)))
       for (let i = 0; i < auto.items.length; i += 1) {
         const item = auto.items[i]!
@@ -760,23 +822,33 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
         const pointer = selected ? style.accentBold("❯ ") : "  "
         if (cols < 44) {
           const rowStr = `  ${pointer}${truncatePlain(item.label, Math.max(8, cols - 5))}`
-          outLines.push(selected ? style.selectedRow(padPlainRight(rowStr, cols)) : style.muted(rowStr))
+          outLines.push(
+            selected ? style.selectedRow(padPlainRight(rowStr, cols)) : style.muted(rowStr),
+          )
         } else {
           const leftW = Math.min(26, Math.floor(cols * 0.35))
           const left = padPlainRight(item.label, leftW)
           const rightMax = Math.max(8, cols - visibleWidth(left) - 6)
           const rowStr = `  ${pointer}${left}  ${truncatePlain(item.detail, rightMax)}`
-          outLines.push(selected ? style.selectedRow(padPlainRight(rowStr, cols)) : style.muted(rowStr))
+          outLines.push(
+            selected ? style.selectedRow(padPlainRight(rowStr, cols)) : style.muted(rowStr),
+          )
         }
       }
     } else if (searchingHistory) {
       const { match, total } = findHistoryMatch()
       const matchDisplay = match
-        ? truncatePlain(match.replace(/\n/g, " ↵ "), Math.max(12, cols - (layout.isCompact ? 22 : 38)))
+        ? truncatePlain(
+            match.replace(/\n/g, " ↵ "),
+            Math.max(12, cols - (layout.isCompact ? 22 : 38)),
+          )
         : style.red("no match")
       const label = layout.isCompact ? "(search)" : "(reverse-i-search)"
-      const countTag = total > 1 && !layout.isCompact ? style.dim(`  (${total} matches · ctrl+r next)`) : ""
-      outLines.push(truncatePlain(`${style.cyan(label)} '${searchQuery}': ${matchDisplay}${countTag}`, cols))
+      const countTag =
+        total > 1 && !layout.isCompact ? style.dim(`  (${total} matches · ctrl+r next)`) : ""
+      outLines.push(
+        truncatePlain(`${style.cyan(label)} '${searchQuery}': ${matchDisplay}${countTag}`, cols),
+      )
     }
 
     if (opts.getStatusFooter) {
@@ -850,7 +922,9 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
     clearRenderedBlock(true)
     const preview = submittedText
       .split("\n")
-      .map((l, idx) => `${railColorForMode("┃ ")}${idx === 0 ? `${opts.promptLabel}${l}` : `  ${l}`}`)
+      .map(
+        (l, idx) => `${railColorForMode("┃ ")}${idx === 0 ? `${opts.promptLabel}${l}` : `  ${l}`}`,
+      )
       .join("\n")
     raw.write(`${preview}\n`)
   }
@@ -895,11 +969,19 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
       resolve(action)
     }
 
-    const applyAutocomplete = (item: AutocompleteItem, mode: "slash" | "file", tokenStart: number, runIfSlash: boolean) => {
+    const applyAutocomplete = (
+      item: AutocompleteItem,
+      mode: "slash" | "file",
+      tokenStart: number,
+      runIfSlash: boolean,
+    ) => {
       if (mode === "slash") {
         if (runIfSlash) {
           const cmdName = item.insertText.slice(1)
-          finish({ kind: "command", name: cmdName, args: "", raw: item.insertText }, item.insertText)
+          finish(
+            { kind: "command", name: cmdName, args: "", raw: item.insertText },
+            item.insertText,
+          )
           return
         }
         buffer = `${item.insertText} `
@@ -922,7 +1004,9 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
       if (trimmed.startsWith("/")) {
         const withoutSlash = trimmed.slice(1)
         const spaceIdx = withoutSlash.search(/\s/)
-        const cmdName = (spaceIdx === -1 ? withoutSlash : withoutSlash.slice(0, spaceIdx)).toLowerCase()
+        const cmdName = (
+          spaceIdx === -1 ? withoutSlash : withoutSlash.slice(0, spaceIdx)
+        ).toLowerCase()
         const cmdArgs = spaceIdx === -1 ? "" : withoutSlash.slice(spaceIdx + 1).trim()
         const matched = findSlashCommand(cmdName)
         if (matched) {
@@ -1328,7 +1412,10 @@ export async function askHybridChoice(
     if (!first && renderedRows > 0) {
       const prevRows =
         reflowFromCols !== undefined && cols < lastCols
-          ? Math.max(renderedRows - 1, Math.ceil((renderedRows - 1) * (lastCols / Math.max(1, cols))))
+          ? Math.max(
+              renderedRows - 1,
+              Math.ceil((renderedRows - 1) * (lastCols / Math.max(1, cols))),
+            )
           : renderedRows - 1
       frame += "\r"
       if (prevRows > 0) frame += `\x1b[${prevRows}A`
@@ -1422,10 +1509,17 @@ export async function askHybridConfirm(
 
   const render = () => {
     const layout = raw.layout()
-    const yesTag = highlighted === "yes" && typed === "" ? style.selectedRow(" ▸ Yes (y) ") : style.green("Yes (y)")
-    const noTag = highlighted === "no" && typed === "" ? style.selectedRow(" ▸ No (n) ") : style.muted("No (n)")
+    const yesTag =
+      highlighted === "yes" && typed === ""
+        ? style.selectedRow(" ▸ Yes (y) ")
+        : style.green("Yes (y)")
+    const noTag =
+      highlighted === "no" && typed === "" ? style.selectedRow(" ▸ No (n) ") : style.muted("No (n)")
     const hint = `${style.dim("  [")}${yesTag}${style.dim(" / ")}${noTag}${style.dim("]")} `
-    const safePrompt = truncatePlain(promptText, Math.max(12, layout.cols - (typed === "" ? 27 : typed.length + 2)))
+    const safePrompt = truncatePlain(
+      promptText,
+      Math.max(12, layout.cols - (typed === "" ? 27 : typed.length + 2)),
+    )
     const line = `${safePrompt}${typed === "" ? hint : ` ${typed}`}`
     raw.write(`${SYNC_START}${rendered ? "\r\x1b[2K" : ""}${line}${CURSOR_SHOW}${SYNC_END}`)
     rendered = true
@@ -1524,7 +1618,13 @@ export async function askHybridPermission(
   const resolveTypedDecision = (text: string): ApprovalDecision => {
     const clean = text.trim().toLowerCase()
     if (opts.yesMeansAcceptEdits) {
-      if (clean === "y" || clean === "yes" || clean === "e" || clean === "accept-edits" || clean === "edits") {
+      if (
+        clean === "y" ||
+        clean === "yes" ||
+        clean === "e" ||
+        clean === "accept-edits" ||
+        clean === "edits"
+      ) {
         return "accept-edits"
       }
       if (clean === "o" || clean === "once") return "once"
@@ -1555,7 +1655,8 @@ export async function askHybridPermission(
             : "Reject (n)"
     if (active) return style.selectedRow(` ▸ ${base} `)
     if (dec === "once") return opts.yesMeansAcceptEdits ? style.cyan(base) : style.green(base)
-    if (dec === "accept-edits") return opts.yesMeansAcceptEdits ? style.green(base) : style.yellow(base)
+    if (dec === "accept-edits")
+      return opts.yesMeansAcceptEdits ? style.green(base) : style.yellow(base)
     if (dec === "always") return style.cyan(base)
     return style.muted(base)
   }
@@ -1569,7 +1670,8 @@ export async function askHybridPermission(
     const active = choices[selectedIdx] ?? "reject"
     const bar = choices.map((c) => pill(c, typed === "" && c === active)).join(style.dim(" · "))
     const pillBarPlainW = choices.length * 18 + 6
-    const wideInline = layout.cols >= promptText.length + (typed === "" ? pillBarPlainW : typed.length + 4)
+    const wideInline =
+      layout.cols >= promptText.length + (typed === "" ? pillBarPlainW : typed.length + 4)
     const lines: string[] = []
     if (opts.integrityWarning) {
       for (const warnLine of opts.integrityWarning.split(/\r?\n/).slice(0, 4)) {
@@ -1584,9 +1686,20 @@ export async function askHybridPermission(
       lines.push(`  ${typed === "" ? `[${bar}]` : typed}`)
     }
     if (typed === "" && active === "always" && opts.alwaysSummary) {
-      lines.push(style.dim(truncatePlain(`  ↳ Will remember for this workspace: ${opts.alwaysSummary}`, layout.cols)))
+      lines.push(
+        style.dim(
+          truncatePlain(`  ↳ Will remember for this workspace: ${opts.alwaysSummary}`, layout.cols),
+        ),
+      )
     } else if (typed === "" && active === "accept-edits") {
-      lines.push(style.dim(truncatePlain("  ↳ Applies edit & switches workspace mode to accept-edits (Shift+Tab anytime)", layout.cols)))
+      lines.push(
+        style.dim(
+          truncatePlain(
+            "  ↳ Applies edit & switches workspace mode to accept-edits (Shift+Tab anytime)",
+            layout.cols,
+          ),
+        ),
+      )
     }
     frame += `${lines.join("\n")}${CURSOR_SHOW}${SYNC_END}`
     raw.write(frame)
@@ -1688,11 +1801,14 @@ export async function openCommandPalette(
     const lines: string[] = []
     lines.push(
       truncatePlain(
-        style.accentBold("  Commands") + (layout.isCompact ? "" : style.muted("  (Bashwink Command Palette)")),
+        style.accentBold("  Commands") +
+          (layout.isCompact ? "" : style.muted("  (Bashwink Command Palette)")),
         cols,
       ),
     )
-    lines.push(`  ${style.accent(">")} ${truncatePlain(query, Math.max(8, cols - 6))}${style.inverse(" ")}`)
+    lines.push(
+      `  ${style.accent(">")} ${truncatePlain(query, Math.max(8, cols - 6))}${style.inverse(" ")}`,
+    )
     lines.push(style.dim("  " + "─".repeat(Math.max(10, cols - 4))))
 
     if (filtered.length === 0) {
@@ -1708,7 +1824,10 @@ export async function openCommandPalette(
         let rowStr: string
         if (layout.isCompact) {
           const title = padPlainRight(item.title, Math.min(18, Math.floor(cols * 0.4)))
-          const descSpace = Math.max(6, cols - visibleWidth(title) - (showBadge ? badge.length + 7 : 6))
+          const descSpace = Math.max(
+            6,
+            cols - visibleWidth(title) - (showBadge ? badge.length + 7 : 6),
+          )
           rowStr = `  ${active ? "❯" : " "} ${title} ${truncatePlain(item.description, descSpace)}`
         } else {
           const cat = padPlainRight(item.category, 11)
@@ -1717,7 +1836,9 @@ export async function openCommandPalette(
           rowStr = `  ${active ? "❯" : " "} ${cat} ${title} ${truncatePlain(item.description, descSpace)}`
         }
         const rightPad = badge ? Math.max(1, cols - visibleWidth(rowStr) - badge.length - 2) : 0
-        const full = badge ? `${rowStr}${" ".repeat(rightPad)}${badge}` : truncatePlain(rowStr, cols)
+        const full = badge
+          ? `${rowStr}${" ".repeat(rightPad)}${badge}`
+          : truncatePlain(rowStr, cols)
         lines.push(active ? style.selectedRow(padPlainRight(full, cols)) : full)
       }
     }
@@ -1869,13 +1990,17 @@ export async function openSessionBrowser(
     if (selected >= list.length) selected = Math.max(0, list.length - 1)
     const activeItem = list[selected]
     const showPreviewHere = showPreview && activeItem !== undefined && rows >= 18 && cols >= 52
-    const previewLinesCount = showPreviewHere ? Math.min(9, Math.max(5, Math.floor(rows * 0.35))) : 0
+    const previewLinesCount = showPreviewHere
+      ? Math.min(9, Math.max(5, Math.floor(rows * 0.35)))
+      : 0
     const listHeight = Math.max(2, Math.floor((rows - 6 - previewLinesCount) / 2))
     if (selected < scrollTop) scrollTop = selected
     if (selected >= scrollTop + listHeight) scrollTop = selected - listHeight + 1
 
     const lines: string[] = []
-    const scopeLabel = allProjects ? "All projects" : `Workspace: ${path.basename(opts.currentWorkspace)}`
+    const scopeLabel = allProjects
+      ? "All projects"
+      : `Workspace: ${path.basename(opts.currentWorkspace)}`
     lines.push(
       truncatePlain(
         style.accentBold("  Sessions") + style.muted(`  · ${scopeLabel} (${list.length})`),
@@ -1883,9 +2008,17 @@ export async function openSessionBrowser(
       ),
     )
     if (renamingId) {
-      lines.push(truncatePlain(`  ${style.yellow("Rename:")} ${renameDraft}`, Math.max(12, cols - 2)) + style.inverse(" "))
+      lines.push(
+        truncatePlain(`  ${style.yellow("Rename:")} ${renameDraft}`, Math.max(12, cols - 2)) +
+          style.inverse(" "),
+      )
     } else {
-      lines.push(truncatePlain(`  ${style.accent("/")} ${query || style.muted("Type to search sessions…")}`, cols))
+      lines.push(
+        truncatePlain(
+          `  ${style.accent("/")} ${query || style.muted("Type to search sessions…")}`,
+          cols,
+        ),
+      )
     }
     lines.push(style.dim("  " + "─".repeat(Math.max(10, cols - 4))))
 
@@ -1932,17 +2065,22 @@ export async function openSessionBrowser(
 
     if (showPreviewHere && activeItem) {
       lines.push(style.dim("  " + "─".repeat(Math.max(10, cols - 4))))
-      lines.push(style.cyan(`  Preview: ${truncatePlain(activeItem.title, Math.max(12, cols - 14))}`))
+      lines.push(
+        style.cyan(`  Preview: ${truncatePlain(activeItem.title, Math.max(12, cols - 14))}`),
+      )
       const previewLines: string[] = []
       for (const turn of activeItem.turns.slice(-3)) {
         previewLines.push(
           `  ${style.bold("User:")} ${truncatePlain(turn.userPrompt.replace(/\n/g, " "), Math.max(12, cols - 10))}`,
         )
         if (turn.assistantText) {
-          previewLines.push(`  ${style.muted("Asst:")} ${truncatePlain(turn.assistantText.replace(/\n/g, " "), cols - 10)}`)
+          previewLines.push(
+            `  ${style.muted("Asst:")} ${truncatePlain(turn.assistantText.replace(/\n/g, " "), cols - 10)}`,
+          )
         }
       }
-      if (previewLines.length === 0) previewLines.push(style.muted("  (empty session — no turns yet)"))
+      if (previewLines.length === 0)
+        previewLines.push(style.muted("  (empty session — no turns yet)"))
       lines.push(...previewLines.slice(0, previewLinesCount - 2))
     }
 
@@ -2141,7 +2279,9 @@ export async function openTimelineRewind(
     lines.push(
       truncatePlain(
         style.accentBold("  Timeline & Rewind") +
-          style.muted(`  · ${truncatePlain(session.title, Math.max(12, cols - 28))} (${turns.length} turns)`),
+          style.muted(
+            `  · ${truncatePlain(session.title, Math.max(12, cols - 28))} (${turns.length} turns)`,
+          ),
         cols,
       ),
     )
@@ -2156,7 +2296,8 @@ export async function openTimelineRewind(
         const turn: SessionTurn = visible[i]!
         const isSel = idx === selected
         const tag = `[${idx + 1}]`
-        const cpTag = turn.checkpoints.length > 0 ? ` · ${turn.checkpoints.length} file checkpoint(s)` : ""
+        const cpTag =
+          turn.checkpoints.length > 0 ? ` · ${turn.checkpoints.length} file checkpoint(s)` : ""
         const title = `  ${isSel ? "❯" : " "} ${tag} ${truncatePlain(turn.userPrompt.replace(/\n/g, " "), Math.max(14, cols - 14))}`
         const sub = `      ${turn.outcome} · ${formatRelativeTime(turn.createdAt)} · ${turn.changedFiles.length} edited · ${turn.commands.length} cmd(s)${cpTag}`
         if (isSel) {
@@ -2171,10 +2312,18 @@ export async function openTimelineRewind(
       const activeTurn = turns[selected]
       if (showDetail && activeTurn) {
         lines.push(style.dim("  " + "─".repeat(Math.max(10, cols - 4))))
-        lines.push(style.cyan(truncatePlain(`  Turn ${selected + 1} Snapshot (${activeTurn.runId})`, cols)))
-        lines.push(`  Prompt:    ${truncatePlain(activeTurn.userPrompt.replace(/\n/g, " "), Math.max(12, cols - 14))}`)
-        lines.push(`  Response:  ${truncatePlain((activeTurn.assistantText || "(no text)").replace(/\n/g, " "), Math.max(12, cols - 14))}`)
-        lines.push(`  Changed:   ${truncatePlain(activeTurn.changedFiles.length > 0 ? activeTurn.changedFiles.join(", ") : "none", Math.max(12, cols - 14))}`)
+        lines.push(
+          style.cyan(truncatePlain(`  Turn ${selected + 1} Snapshot (${activeTurn.runId})`, cols)),
+        )
+        lines.push(
+          `  Prompt:    ${truncatePlain(activeTurn.userPrompt.replace(/\n/g, " "), Math.max(12, cols - 14))}`,
+        )
+        lines.push(
+          `  Response:  ${truncatePlain((activeTurn.assistantText || "(no text)").replace(/\n/g, " "), Math.max(12, cols - 14))}`,
+        )
+        lines.push(
+          `  Changed:   ${truncatePlain(activeTurn.changedFiles.length > 0 ? activeTurn.changedFiles.join(", ") : "none", Math.max(12, cols - 14))}`,
+        )
         lines.push(
           truncatePlain(
             `  Restore:   ${activeTurn.checkpoints.length > 0 ? `${activeTurn.checkpoints.length} pre-edit file snapshot(s) ready` : "conversation only (no file edits in this turn)"}`,
@@ -2305,17 +2454,27 @@ export async function openTranscriptViewer(
       const turn = session.turns[i]!
       turnAnchors.push(out.length)
       out.push(
-        style.accentBold(`  ── Turn ${i + 1} · ${turn.outcome} · ${formatRelativeTime(turn.createdAt)} · ${turn.model} ──`),
+        style.accentBold(
+          `  ── Turn ${i + 1} · ${turn.outcome} · ${formatRelativeTime(turn.createdAt)} · ${turn.model} ──`,
+        ),
       )
       out.push(style.bold("  User:"))
       for (const l of wrapPlainText(turn.userPrompt, contentWidth)) {
         out.push(`    ${l}`)
       }
-      if (expandDetails && (turn.actions.length > 0 || turn.commands.length > 0 || turn.changedFiles.length > 0)) {
+      if (
+        expandDetails &&
+        (turn.actions.length > 0 || turn.commands.length > 0 || turn.changedFiles.length > 0)
+      ) {
         out.push(style.cyan("  Actions:"))
         for (const a of turn.actions) {
-          const exitInfo = a.exitCode !== undefined && a.exitCode !== null ? ` (exit ${a.exitCode})` : ""
-          out.push(style.muted(`    [${a.decision}] ${a.tool}: ${truncatePlain(a.summary, contentWidth - 20)}${exitInfo}`))
+          const exitInfo =
+            a.exitCode !== undefined && a.exitCode !== null ? ` (exit ${a.exitCode})` : ""
+          out.push(
+            style.muted(
+              `    [${a.decision}] ${a.tool}: ${truncatePlain(a.summary, contentWidth - 20)}${exitInfo}`,
+            ),
+          )
         }
       }
       if (turn.assistantText.trim() !== "") {
@@ -2366,7 +2525,9 @@ export async function openTranscriptViewer(
     if (searchMode) {
       lines.push(
         truncatePlain(
-          style.cyan("  Search: ") + `${searchQuery}${style.inverse(" ")}` + style.muted("  (Enter jump · Esc cancel)"),
+          style.cyan("  Search: ") +
+            `${searchQuery}${style.inverse(" ")}` +
+            style.muted("  (Enter jump · Esc cancel)"),
           cols,
         ),
       )
@@ -2421,8 +2582,11 @@ export async function openTranscriptViewer(
           if (ev.name === "enter") {
             const q = searchQuery.trim().toLowerCase()
             if (q) {
-              const found = body.findIndex((l, idx) => idx > scrollTop && l.toLowerCase().includes(q))
-              const wrapFound = found !== -1 ? found : body.findIndex((l) => l.toLowerCase().includes(q))
+              const found = body.findIndex(
+                (l, idx) => idx > scrollTop && l.toLowerCase().includes(q),
+              )
+              const wrapFound =
+                found !== -1 ? found : body.findIndex((l) => l.toLowerCase().includes(q))
               if (wrapFound !== -1) scrollTop = Math.min(maxScroll, wrapFound)
             }
             searchMode = false
@@ -2560,7 +2724,8 @@ export async function openScrollableModal(
   bodyLines: readonly string[],
 ): Promise<void> {
   let scrollTop = 0
-  const getWrappedLines = (cols: number) => bodyLines.flatMap((l) => wrapStyledLine(l, Math.max(16, cols - 2)))
+  const getWrappedLines = (cols: number) =>
+    bodyLines.flatMap((l) => wrapStyledLine(l, Math.max(16, cols - 2)))
   const render = () => {
     const layout = raw.layout()
     const cols = layout.cols

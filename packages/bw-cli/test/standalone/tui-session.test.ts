@@ -7,10 +7,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
 import { paths } from "../../src/paths.ts"
-import {
-  createBoundaryContext,
-  grantWorkspaceTrust,
-} from "../../src/standalone/security.ts"
+import { createBoundaryContext, grantWorkspaceTrust } from "../../src/standalone/security.ts"
 import {
   appendPromptHistory,
   appendTurnToSession,
@@ -181,7 +178,11 @@ test("session persistence, secret redaction, fork, rewind with checkpoints, comp
     })
 
     const savedFile = saveSession(resolved.data, ses, secret)
-    assert.equal(readFileSync(savedFile, "utf8").includes(secret), false, "Secret must be scrubbed from saved session")
+    assert.equal(
+      readFileSync(savedFile, "utf8").includes(secret),
+      false,
+      "Secret must be scrubbed from saved session",
+    )
 
     const loaded = loadSession(resolved.data, ses.id)
     assert.ok(loaded)
@@ -256,6 +257,7 @@ async function runPtyDriver(
   rows: number,
   cols: number,
   steps: readonly PtyStep[],
+  envOverrides: Record<string, string | undefined> = {},
 ): Promise<{ exitCode: number; output: string }> {
   const binPath = path.resolve("packages/bw-cli/src/standalone/bin.ts")
   const driver = `
@@ -310,31 +312,48 @@ while time.monotonic() < end:
 os.close(m)
 sys.stdout.write(json.dumps({"exitCode": code, "output": buf.decode("utf-8", "replace")}))
 `
-  const res = await new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn("python3", ["-c", driver], { stdio: ["pipe", "pipe", "pipe"] })
-    const outChunks: Buffer[] = []
-    const errChunks: Buffer[] = []
-    child.stdout.on("data", (d: Buffer) => outChunks.push(d))
-    child.stderr.on("data", (d: Buffer) => errChunks.push(d))
-    child.on("error", reject)
-    child.on("close", (code) => {
-      resolve({
-        status: code,
-        stdout: Buffer.concat(outChunks).toString("utf8"),
-        stderr: Buffer.concat(errChunks).toString("utf8"),
+  const res = await new Promise<{ status: number | null; stdout: string; stderr: string }>(
+    (resolve, reject) => {
+      const child = spawn("python3", ["-c", driver], { stdio: ["pipe", "pipe", "pipe"] })
+      const outChunks: Buffer[] = []
+      const errChunks: Buffer[] = []
+      child.stdout.on("data", (d: Buffer) => outChunks.push(d))
+      child.stderr.on("data", (d: Buffer) => errChunks.push(d))
+      child.on("error", reject)
+      child.on("close", (code) => {
+        resolve({
+          status: code,
+          stdout: Buffer.concat(outChunks).toString("utf8"),
+          stderr: Buffer.concat(errChunks).toString("utf8"),
+        })
       })
-    })
-    child.stdin.end(
-      JSON.stringify({
-        argv: [process.execPath, "--disable-warning=ExperimentalWarning", "--experimental-strip-types", binPath],
-        cwd: ws,
-        rows,
-        cols,
-        env: { ...process.env, BASHWINK_HOME: home, TERM: "xterm-256color" },
-        steps,
-      }),
-    )
-  })
+      const baseEnv: Record<string, string> = {}
+      for (const [k, v] of Object.entries(process.env)) {
+        if (v !== undefined && k !== "NO_COLOR" && k !== "FORCE_COLOR") baseEnv[k] = v
+      }
+      for (const [k, v] of Object.entries(envOverrides)) {
+        if (v === undefined) delete baseEnv[k]
+        else baseEnv[k] = v
+      }
+      baseEnv["BASHWINK_HOME"] = home
+      baseEnv["TERM"] = envOverrides["TERM"] ?? "xterm-256color"
+      child.stdin.end(
+        JSON.stringify({
+          argv: [
+            process.execPath,
+            "--disable-warning=ExperimentalWarning",
+            "--experimental-strip-types",
+            binPath,
+          ],
+          cwd: ws,
+          rows,
+          cols,
+          env: baseEnv,
+          steps,
+        }),
+      )
+    },
+  )
   assert.equal(res.status, 0, res.stderr)
   return JSON.parse(res.stdout) as { exitCode: number; output: string }
 }
@@ -378,7 +397,11 @@ test("real PTY interactive TUI supports multi-turn history, Ctrl+P palette, Ctrl
                       type: "function",
                       function: {
                         name: "edit_file",
-                        arguments: JSON.stringify({ path: "note.txt", oldText: "initial", newText: "updated" }),
+                        arguments: JSON.stringify({
+                          path: "note.txt",
+                          oldText: "initial",
+                          newText: "updated",
+                        }),
                       },
                     },
                   ],
@@ -393,7 +416,9 @@ test("real PTY interactive TUI supports multi-turn history, Ctrl+P palette, Ctrl
       if (reqNum === 2) {
         res.end(
           JSON.stringify({
-            choices: [{ finish_reason: "stop", message: { role: "assistant", content: "TURN_ONE_DONE" } }],
+            choices: [
+              { finish_reason: "stop", message: { role: "assistant", content: "TURN_ONE_DONE" } },
+            ],
             usage: { prompt_tokens: 15, completion_tokens: 4, total_tokens: 19 },
           }),
         )
@@ -401,7 +426,9 @@ test("real PTY interactive TUI supports multi-turn history, Ctrl+P palette, Ctrl
       }
       res.end(
         JSON.stringify({
-          choices: [{ finish_reason: "stop", message: { role: "assistant", content: "TURN_TWO_DONE" } }],
+          choices: [
+            { finish_reason: "stop", message: { role: "assistant", content: "TURN_TWO_DONE" } },
+          ],
           usage: { prompt_tokens: 20, completion_tokens: 4, total_tokens: 24 },
         }),
       )
@@ -464,7 +491,10 @@ test("real PTY interactive TUI supports multi-turn history, Ctrl+P palette, Ctrl
     const parsed = await runPtyDriver(ws, home, 30, 100, steps)
     assert.equal(parsed.exitCode, 0, parsed.output)
     // Verify multi-turn conversation history was carried into Turn 2 request!
-    assert.ok(seenMessages[2]!.length > seenMessages[0]!.length, "Expected Turn 2 to include Turn 1 history")
+    assert.ok(
+      seenMessages[2]!.length > seenMessages[0]!.length,
+      "Expected Turn 2 to include Turn 1 history",
+    )
     // Verify rewind restored note.txt back to "initial\n"!
     assert.equal(readFileSync(path.join(ws, "note.txt"), "utf8"), "initial\n")
   } finally {
@@ -518,14 +548,25 @@ test("responsive layout tiers, middle path truncation, styled wrapping, and comp
 
   const plainStyle = createStyle(false)
   const wideMeta = formatPromptMetadata(
-    { agent: "build", model: "claude-sonnet-4-6", provider: "anthropic", trustLabel: "trusted", trusted: true },
+    {
+      agent: "build",
+      model: "claude-sonnet-4-6",
+      provider: "anthropic",
+      trustLabel: "trusted",
+      trusted: true,
+    },
     80,
     plainStyle,
   )
   assert.equal(wideMeta, "build · claude-sonnet-4-6 · anthropic · trusted")
 
   const narrowMeta = formatPromptMetadata(
-    { agent: "build", model: "very-long-model-name-identifier", provider: "openrouter", trustLabel: "trusted" },
+    {
+      agent: "build",
+      model: "very-long-model-name-identifier",
+      provider: "openrouter",
+      trustLabel: "trusted",
+    },
     26,
     plainStyle,
   )
@@ -574,14 +615,22 @@ test("responsive layout tiers, middle path truncation, styled wrapping, and comp
   ].join("\n")
   assert.deepEqual(countDiffChanges(samplePatch), { additions: 1, deletions: 1 })
 
-  const unified = renderOpenCodeDiff(samplePatch, { path: "src/math.ts", maxWidth: 80, view: "unified" }, plainStyle)
+  const unified = renderOpenCodeDiff(
+    samplePatch,
+    { path: "src/math.ts", maxWidth: 80, view: "unified" },
+    plainStyle,
+  )
   assert.ok(unified[0]!.includes("← Edit"))
   assert.ok(unified[0]!.includes("+1 -1"))
   assert.ok(unified.some((l) => l.includes("5 -   return a - b;")))
   assert.ok(unified.some((l) => l.includes("5 +   return a + b;")))
   assert.ok(unified.at(-1)!.startsWith("╹"))
 
-  const split = renderOpenCodeDiff(samplePatch, { path: "src/math.ts", maxWidth: 120, view: "split" }, createStyle(true))
+  const split = renderOpenCodeDiff(
+    samplePatch,
+    { path: "src/math.ts", maxWidth: 120, view: "split" },
+    createStyle(true),
+  )
   assert.ok(split.some((l) => l.includes("│") && l.includes(" - ") && l.includes(" + ")))
 
   const created = renderOpenCodeDiff(
@@ -688,7 +737,11 @@ test("real PTY OpenCode bottom-pinned raised prompt, Shift+Tab mode cycling, Alw
                       type: "function",
                       function: {
                         name: "edit_file",
-                        arguments: JSON.stringify({ path: "one.txt", oldText: "old1", newText: "new1" }),
+                        arguments: JSON.stringify({
+                          path: "one.txt",
+                          oldText: "old1",
+                          newText: "new1",
+                        }),
                       },
                     },
                     {
@@ -696,7 +749,11 @@ test("real PTY OpenCode bottom-pinned raised prompt, Shift+Tab mode cycling, Alw
                       type: "function",
                       function: {
                         name: "edit_file",
-                        arguments: JSON.stringify({ path: "two.txt", oldText: "old2", newText: "new2" }),
+                        arguments: JSON.stringify({
+                          path: "two.txt",
+                          oldText: "old2",
+                          newText: "new2",
+                        }),
                       },
                     },
                   ],
@@ -710,7 +767,12 @@ test("real PTY OpenCode bottom-pinned raised prompt, Shift+Tab mode cycling, Alw
       }
       res.end(
         JSON.stringify({
-          choices: [{ finish_reason: "stop", message: { role: "assistant", content: "Both files updated." } }],
+          choices: [
+            {
+              finish_reason: "stop",
+              message: { role: "assistant", content: "Both files updated." },
+            },
+          ],
           usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25 },
         }),
       )
@@ -768,7 +830,10 @@ test("real PTY OpenCode bottom-pinned raised prompt, Shift+Tab mode cycling, Alw
     const parsed = await runPtyDriver(ws, home, 30, 110, steps)
     assert.equal(parsed.exitCode, 0, parsed.output)
     // OpenCode raised surface background ANSI (48;5;235) was painted!
-    assert.ok(parsed.output.includes("\x1b[48;5;235m"), "Expected OpenCode raised prompt background")
+    assert.ok(
+      parsed.output.includes("\x1b[48;5;235m"),
+      "Expected OpenCode raised prompt background",
+    )
     assert.equal(readFileSync(path.join(ws, "one.txt"), "utf8"), "new1\n")
     assert.equal(readFileSync(path.join(ws, "two.txt"), "utf8"), "new2\n")
     // Verify confirmation widget appeared only ONCE across the two edits, and second edit used the saved rule
@@ -813,7 +878,13 @@ test("OpenCode markdown table/code renderer, shell card, grouped read burst, and
   assert.ok(mdLines.every((l) => visibleWidth(l) <= 64))
 
   const shellCard = renderOpenCodeShellCard(
-    { command: "npm test", output: "exitCode: 0\npass 1\npass 2", status: "ok", exitCode: 0, maxWidth: 80 },
+    {
+      command: "npm test",
+      output: "exitCode: 0\npass 1\npass 2",
+      status: "ok",
+      exitCode: 0,
+      maxWidth: 80,
+    },
     plain,
   ).join("\n")
   assert.ok(shellCard.includes("$ npm test"))
@@ -854,11 +925,31 @@ test("OpenCode markdown table/code renderer, shell card, grouped read burst, and
                   role: "assistant",
                   content: "",
                   tool_calls: [
-                    { id: "l1", type: "function", function: { name: "list_files", arguments: "{}" } },
-                    { id: "r1", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: "a.txt" }) } },
-                    { id: "r2", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: "b.txt" }) } },
-                    { id: "r3", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: "c.txt" }) } },
-                    { id: "r4", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: "d.txt" }) } },
+                    {
+                      id: "l1",
+                      type: "function",
+                      function: { name: "list_files", arguments: "{}" },
+                    },
+                    {
+                      id: "r1",
+                      type: "function",
+                      function: { name: "read_file", arguments: JSON.stringify({ path: "a.txt" }) },
+                    },
+                    {
+                      id: "r2",
+                      type: "function",
+                      function: { name: "read_file", arguments: JSON.stringify({ path: "b.txt" }) },
+                    },
+                    {
+                      id: "r3",
+                      type: "function",
+                      function: { name: "read_file", arguments: JSON.stringify({ path: "c.txt" }) },
+                    },
+                    {
+                      id: "r4",
+                      type: "function",
+                      function: { name: "read_file", arguments: JSON.stringify({ path: "d.txt" }) },
+                    },
                   ],
                 },
               },
@@ -883,7 +974,11 @@ test("OpenCode markdown table/code renderer, shell card, grouped read burst, and
                       type: "function",
                       function: {
                         name: "edit_file",
-                        arguments: JSON.stringify({ path: "a.txt", oldText: "old-value", newText: "new-value" }),
+                        arguments: JSON.stringify({
+                          path: "a.txt",
+                          oldText: "old-value",
+                          newText: "new-value",
+                        }),
                       },
                     },
                   ],
@@ -1008,7 +1103,9 @@ test("real PTY untrusted session unlocks & switches to accept-edits on bare Ente
       }
       res.end(
         JSON.stringify({
-          choices: [{ finish_reason: "stop", message: { role: "assistant", content: "Created hello.py." } }],
+          choices: [
+            { finish_reason: "stop", message: { role: "assistant", content: "Created hello.py." } },
+          ],
         }),
       )
     })

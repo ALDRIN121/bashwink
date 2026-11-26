@@ -9,8 +9,20 @@
  * before it, so deleting, reordering or editing any line breaks `verify()`.
  */
 
-import { createHash } from "node:crypto"
-import { appendFileSync, mkdirSync, readFileSync, existsSync } from "node:fs"
+import { createHash, randomBytes } from "node:crypto"
+import {
+  appendFileSync,
+  closeSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs"
 import path from "node:path"
 
 export const EVIDENCE_VERSION = 1
@@ -298,14 +310,83 @@ export class EvidenceRecorder {
   /** Number of entries the recorder failed to write since construction. */
   private writeFailures = 0
   private readonly instanceSecrets: readonly string[]
+  private lastKnownSize = 0
+  private readonly lockFile: string
 
   constructor(options: RecorderOptions) {
     this.file = path.join(options.directory, options.file ?? "evidence.jsonl")
+    this.lockFile = `${this.file}.lock`
     this.maxText = options.maxText ?? DEFAULT_MAX_TEXT
     this.now = options.now ?? (() => new Date())
     this.instanceSecrets = (options.secretValues ?? []).filter((value) => value.length >= 4)
     mkdirSync(options.directory, { recursive: true })
-    this.resume()
+    this.withFileLock(() => this.resumeLocked())
+  }
+
+  private withFileLock<T>(fn: () => T): T {
+    const deadline = Date.now() + 5_000
+    const sleepBuf = new Int32Array(new SharedArrayBuffer(4))
+    let attempt = 0
+    while (true) {
+      try {
+        const fd = openSync(
+          this.lockFile,
+          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+          0o600,
+        )
+        try {
+          writeSync(fd, `${process.pid}:${Date.now()}:${randomBytes(4).toString("hex")}\n`)
+        } finally {
+          closeSync(fd)
+        }
+        try {
+          return fn()
+        } finally {
+          try {
+            unlinkSync(this.lockFile)
+          } catch {
+            // Lock already removed or cleaned up.
+          }
+        }
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException | undefined)?.code
+        if (code !== "EEXIST") throw err
+        // Reclaim stale locks left by crashed processes.
+        try {
+          const st = statSync(this.lockFile)
+          const raw = readFileSync(this.lockFile, "utf8").trim()
+          const pidStr = raw.split(":")[0]
+          const ownerPid = pidStr ? Number(pidStr) : NaN
+          let ownerDead = false
+          if (Number.isInteger(ownerPid) && ownerPid > 0 && ownerPid !== process.pid) {
+            try {
+              process.kill(ownerPid, 0)
+            } catch (killErr) {
+              if ((killErr as NodeJS.ErrnoException | undefined)?.code === "ESRCH") {
+                ownerDead = true
+              }
+            }
+          }
+          if (ownerDead || Date.now() - st.mtimeMs > 30_000) {
+            try {
+              unlinkSync(this.lockFile)
+              continue
+            } catch {
+              // Another contender unlinked it first.
+            }
+          }
+        } catch {
+          // Lock vanished while inspecting; retry acquire.
+          continue
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(`Timed out waiting for evidence lock ${this.lockFile}`)
+        }
+        attempt += 1
+        const waitMs = Math.min(25, 2 + attempt)
+        Atomics.wait(sleepBuf, 0, 0, waitMs)
+      }
+    }
   }
 
   /**
@@ -317,13 +398,19 @@ export class EvidenceRecorder {
    * chain is now verified on startup, and a degraded state is recorded and surfaced rather
    * than swallowed.
    */
-  private resume(): void {
-    if (!existsSync(this.file)) return
-    const lines = readFileSync(this.file, "utf8")
-      .split("\n")
-      .filter((line) => line.trim().length > 0)
+  private resumeLocked(): void {
+    if (!existsSync(this.file)) {
+      this.lastKnownSize = 0
+      return
+    }
+    const size = statSync(this.file).size
+    const text = readFileSync(this.file, "utf8")
+    const lines = text.split("\n").filter((line) => line.trim().length > 0)
     const last = lines.at(-1)
-    if (!last) return
+    if (!last) {
+      this.lastKnownSize = size
+      return
+    }
     let parsed: EvidenceEntry
     try {
       parsed = JSON.parse(last) as EvidenceEntry
@@ -337,13 +424,77 @@ export class EvidenceRecorder {
     }
     // Verify the whole chain before trusting its head. A truncated or edited log must not
     // be extended as though it were intact.
-    const result = verify(this.file)
+    const result = verifyText(text)
     if (!result.ok) {
       this.degraded = `existing log ${this.file} failed verification (${result.reason}); refusing to extend it`
       return
     }
     this.seq = parsed.seq
     this.prevHash = parsed.hash
+    this.lastKnownSize = size
+  }
+
+  private syncHeadLocked(): void {
+    if (!existsSync(this.file)) {
+      if (this.lastKnownSize > 0) {
+        this.degraded = `existing log ${this.file} disappeared externally; refusing to fork chain`
+        throw new Error(this.degraded)
+      }
+      this.seq = 0
+      this.prevHash = GENESIS
+      this.lastKnownSize = 0
+      return
+    }
+    const size = statSync(this.file).size
+    if (size === this.lastKnownSize) return
+    if (size < this.lastKnownSize) {
+      this.resumeLocked()
+      if (this.degraded !== undefined) throw new Error(this.degraded)
+      return
+    }
+    // Another recorder instance or process appended entries: verify only the appended delta.
+    const deltaLen = size - this.lastKnownSize
+    const buf = Buffer.alloc(deltaLen)
+    const fd = openSync(this.file, "r")
+    try {
+      let offset = 0
+      while (offset < deltaLen) {
+        const read = readSync(fd, buf, offset, deltaLen - offset, this.lastKnownSize + offset)
+        if (read === 0) break
+        offset += read
+      }
+    } finally {
+      closeSync(fd)
+    }
+    const deltaLines = buf
+      .toString("utf8")
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+    let seq = this.seq
+    let prev = this.prevHash
+    for (const line of deltaLines) {
+      let entry: EvidenceEntry
+      try {
+        entry = JSON.parse(line) as EvidenceEntry
+      } catch {
+        this.degraded = `shared log ${this.file} contains malformed JSON appended externally`
+        throw new Error(this.degraded)
+      }
+      if (entry.v !== EVIDENCE_VERSION || entry.seq !== seq + 1 || entry.prevHash !== prev) {
+        this.degraded = `shared log ${this.file} chain mismatch at seq ${String(entry.seq)}`
+        throw new Error(this.degraded)
+      }
+      const { hash, ...body } = entry
+      if (entryHash(body) !== hash) {
+        this.degraded = `shared log ${this.file} hash mismatch at seq ${entry.seq}`
+        throw new Error(this.degraded)
+      }
+      seq = entry.seq
+      prev = hash
+    }
+    this.seq = seq
+    this.prevHash = prev
+    this.lastKnownSize = size
   }
 
   /**
@@ -402,41 +553,55 @@ export class EvidenceRecorder {
 
   /** Append one entry and return it, including its hash. */
   record(phase: ToolPhase, call: ToolCallRef, payload: EvidencePayload): EvidenceEntry {
-    const body: Omit<EvidenceEntry, "hash"> = {
-      v: EVIDENCE_VERSION,
-      seq: this.seq + 1,
-      at: this.now().toISOString(),
-      phase,
-      // Call metadata is caller-controlled too, so it is sanitised on the same boundary.
-      call: redact(
-        {
-          id: call.id,
-          tool: call.tool,
-          sessionID: call.sessionID,
-          ...(call.agent === undefined ? {} : { agent: call.agent }),
-          ...(call.messageID === undefined ? {} : { messageID: call.messageID }),
-          ...(call.taskID === undefined ? {} : { taskID: call.taskID }),
-          ...(call.unassignedReason === undefined ? {} : { unassignedReason: call.unassignedReason }),
-        },
-        0,
-        this.instanceSecrets,
-      ) as ToolCallRef,
-      payload: this.sanitisePayload(payload),
-      prevHash: this.prevHash,
+    if (this.degraded !== undefined) {
+      throw new Error(this.degraded)
     }
-    const sessionModel = this.models.get(String(call.sessionID))
-    if (body.payload.model === undefined && sessionModel !== undefined)
-      // Attached *after* `sanitisePayload` ran, so it has to be bounded on the way in here as
-      // well. Skipping this let a hostile session's model id reach the chain unbounded — the
-      // one path where caller-controlled text could bypass the single write boundary.
-      (body.payload as { model?: ModelRef }).model = this.sanitisePayload({
-        model: sessionModel,
-      }).model as ModelRef
-    const entry: EvidenceEntry = { ...body, hash: entryHash(body) }
-    appendFileSync(this.file, `${canonical(entry)}\n`, "utf8")
-    this.seq = entry.seq
-    this.prevHash = entry.hash
-    return entry
+    return this.withFileLock(() => {
+      this.syncHeadLocked()
+      const body: Omit<EvidenceEntry, "hash"> = {
+        v: EVIDENCE_VERSION,
+        seq: this.seq + 1,
+        at: this.now().toISOString(),
+        phase,
+        // Call metadata is caller-controlled too, so it is sanitised on the same boundary.
+        call: redact(
+          {
+            id: call.id,
+            tool: call.tool,
+            sessionID: call.sessionID,
+            ...(call.agent === undefined ? {} : { agent: call.agent }),
+            ...(call.messageID === undefined ? {} : { messageID: call.messageID }),
+            ...(call.taskID === undefined ? {} : { taskID: call.taskID }),
+            ...(call.unassignedReason === undefined
+              ? {}
+              : { unassignedReason: call.unassignedReason }),
+          },
+          0,
+          this.instanceSecrets,
+        ) as ToolCallRef,
+        payload: this.sanitisePayload(payload),
+        prevHash: this.prevHash,
+      }
+      const sessionModel = this.models.get(String(call.sessionID))
+      if (body.payload.model === undefined && sessionModel !== undefined)
+        // Attached *after* `sanitisePayload` ran, so it has to be bounded on the way in here as
+        // well. Skipping this let a hostile session's model id reach the chain unbounded — the
+        // one path where caller-controlled text could bypass the single write boundary.
+        (body.payload as { model?: ModelRef }).model = this.sanitisePayload({
+          model: sessionModel,
+        }).model as ModelRef
+      const entry: EvidenceEntry = { ...body, hash: entryHash(body) }
+      try {
+        appendFileSync(this.file, `${canonical(entry)}\n`, "utf8")
+      } catch (err) {
+        this.noteWriteFailure(err)
+        throw err
+      }
+      this.seq = entry.seq
+      this.prevHash = entry.hash
+      this.lastKnownSize = statSync(this.file).size
+      return entry
+    })
   }
 
   /** Convenience wrapper. Sanitisation happens once, in {@link record}. */

@@ -14,7 +14,10 @@ export const BRACKETED_PASTE_OFF = "\x1b[?2004l"
 export const CURSOR_HIDE = "\x1b[?25l"
 export const CURSOR_SHOW = "\x1b[?25h"
 
-export function colorsEnabled(env: NodeJS.ProcessEnv = process.env, isTTY = Boolean(process.stdout.isTTY)): boolean {
+export function colorsEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+  isTTY = Boolean(process.stdout.isTTY),
+): boolean {
   if (!isTTY) return false
   if (env["NO_COLOR"] !== undefined && env["NO_COLOR"] !== "") return false
   if (env["TERM"] === "dumb") return false
@@ -64,7 +67,8 @@ export function createStyle(enabled: boolean): TuiStyle {
     selectedRow: (s) => wrapAnsi("\x1b[48;5;237;38;5;255m", "\x1b[49;39m", s, enabled),
     diffLine: (line) => {
       if (!enabled) return line
-      if (line.startsWith("+++") || line.startsWith("---")) return wrapAnsi("\x1b[1;38;5;250m", "\x1b[22;39m", line, true)
+      if (line.startsWith("+++") || line.startsWith("---"))
+        return wrapAnsi("\x1b[1;38;5;250m", "\x1b[22;39m", line, true)
       if (line.startsWith("@@")) return wrapAnsi("\x1b[38;5;80m", "\x1b[39m", line, true)
       if (line.startsWith("+")) return wrapAnsi("\x1b[38;5;114m", "\x1b[39m", line, true)
       if (line.startsWith("-")) return wrapAnsi("\x1b[38;5;203m", "\x1b[39m", line, true)
@@ -83,7 +87,8 @@ export function stripAnsiSequences(text: string): string {
       const next = text.charCodeAt(i + 1)
       if (next === 0x5b) {
         let j = i + 2
-        while (j < text.length && !(text.charCodeAt(j) >= 0x40 && text.charCodeAt(j) <= 0x7e)) j += 1
+        while (j < text.length && !(text.charCodeAt(j) >= 0x40 && text.charCodeAt(j) <= 0x7e))
+          j += 1
         i = j < text.length ? j + 1 : text.length
         continue
       }
@@ -359,7 +364,9 @@ export function wrapComposerLines(
 
     if (i === cursorRow && cursorCol >= segmentStartIdx) {
       visualCursorRow = visualRows.length
-      visualCursorCol = pfxW + visibleWidth(chars.slice(segmentStartIdx, Math.min(cursorCol, chars.length)).join(""))
+      visualCursorCol =
+        pfxW +
+        visibleWidth(chars.slice(segmentStartIdx, Math.min(cursorCol, chars.length)).join(""))
     }
     const segPfx = firstSeg ? fmtPfx(rawPfx) : formatContPrefix(contPrefix)
     visualRows.push(`${segPfx}${chunk}`)
@@ -399,8 +406,22 @@ export function formatPromptMetadata(
     mode?: string | undefined
     trust?: string | undefined
   }> = [
-    { agent, model: input.model, provider, variant: input.variant, mode: modeTag, trust: input.trustLabel },
-    { agent, model: input.model, provider: provider?.split(" / ").at(-1), variant: input.variant, mode: modeTag, trust: input.trustLabel },
+    {
+      agent,
+      model: input.model,
+      provider,
+      variant: input.variant,
+      mode: modeTag,
+      trust: input.trustLabel,
+    },
+    {
+      agent,
+      model: input.model,
+      provider: provider?.split(" / ").at(-1),
+      variant: input.variant,
+      mode: modeTag,
+      trust: input.trustLabel,
+    },
     { agent, model: input.model, mode: modeTag, trust: input.trustLabel },
     { agent, model: input.model, mode: input.permissionMode },
     { agent, model: input.model },
@@ -430,7 +451,8 @@ export function formatPromptMetadata(
     else if (m === "ask") segs.push(style.green(chosen.mode))
     else segs.push(style.muted(chosen.mode))
   }
-  if (chosen.trust) segs.push(input.trusted ? style.green(chosen.trust) : style.yellow(chosen.trust))
+  if (chosen.trust)
+    segs.push(input.trusted ? style.green(chosen.trust) : style.yellow(chosen.trust))
   return segs.join(style.dim(" · "))
 }
 
@@ -474,7 +496,11 @@ export function formatStatusFooterLine(
     candidates.push({ id: "turns", plain: tStr, styled: style.muted(tStr) })
   }
   if (input.tokensText) {
-    candidates.push({ id: "tokens", plain: input.tokensText, styled: style.muted(input.tokensText) })
+    candidates.push({
+      id: "tokens",
+      plain: input.tokensText,
+      styled: style.muted(input.tokensText),
+    })
   }
   if (input.costText) {
     candidates.push({ id: "cost", plain: input.costText, styled: style.muted(input.costText) })
@@ -664,7 +690,13 @@ export function renderOpenCodeDiff(
   const numWidth = Math.max(2, String(maxLineNum).length)
   const out: string[] = [`${rail}${titleText}`]
 
-  const tintLine = (kind: "added" | "removed" | "context", num: string, sign: string, code: string, rowW: number): string => {
+  const tintLine = (
+    kind: "added" | "removed" | "context",
+    num: string,
+    sign: string,
+    code: string,
+    rowW: number,
+  ): string => {
     if (!style.enabled) {
       return `${rail}${num} ${sign} ${truncatePlain(code, Math.max(12, rowW - numWidth - 6))}`
     }
@@ -699,7 +731,15 @@ export function renderOpenCodeDiff(
         const rightTxt = truncatePlain(`${nStr}   ${row.text}`, halfW)
         out.push(`${rail}${style.dim(leftTxt)} ${style.dim("│")} ${rightTxt}`)
       } else {
-        out.push(tintLine("context", nStr, " ", truncatePlain(row.text, Math.max(12, maxWidth - numWidth - 6)), maxWidth))
+        out.push(
+          tintLine(
+            "context",
+            nStr,
+            " ",
+            truncatePlain(row.text, Math.max(12, maxWidth - numWidth - 6)),
+            maxWidth,
+          ),
+        )
       }
       idx += 1
       continue
@@ -744,9 +784,17 @@ export function renderOpenCodeDiff(
             : style.green(truncatePlain(a.text, codeAvail))
           : ""
         const leftPad = " ".repeat(
-          Math.max(0, halfW - visibleWidth(leftNum) - 3 - visibleWidth(r ? truncatePlain(r.text, codeAvail) : "")),
+          Math.max(
+            0,
+            halfW -
+              visibleWidth(leftNum) -
+              3 -
+              visibleWidth(r ? truncatePlain(r.text, codeAvail) : ""),
+          ),
         )
-        const leftCell = r ? `${style.dim(leftNum)}${style.red(" - ")}${leftBody}${leftPad}` : " ".repeat(halfW)
+        const leftCell = r
+          ? `${style.dim(leftNum)}${style.red(" - ")}${leftBody}${leftPad}`
+          : " ".repeat(halfW)
         const rightCell = a ? `${style.dim(rightNum)}${style.green(" + ")}${rightBody}` : ""
         out.push(`${rail}${leftCell} ${style.dim("│")} ${rightCell}`)
       }
@@ -754,9 +802,12 @@ export function renderOpenCodeDiff(
     }
 
     // Unified view (pair 1-to-1 inline highlights when block counts match & small)
-    const canPair = removedRun.length > 0 && removedRun.length === addedRun.length && removedRun.length <= 4
+    const canPair =
+      removedRun.length > 0 && removedRun.length === addedRun.length && removedRun.length <= 4
     const pairs = canPair
-      ? removedRun.map((r, k) => highlightInlineDiffPair(r.text, addedRun[k]!.text, codeAvail, style))
+      ? removedRun.map((r, k) =>
+          highlightInlineDiffPair(r.text, addedRun[k]!.text, codeAvail, style),
+        )
       : undefined
 
     for (let k = 0; k < removedRun.length; k += 1) {
@@ -805,14 +856,17 @@ export type ParsedKeyEvent =
   | { readonly kind: "ctrl"; readonly key: string }
   | { readonly kind: "alt"; readonly key: string }
 
+export const MAX_BRACKETED_PASTE_BYTES = 512 * 1024
+
 export interface KeyParserState {
   pending: string
   inPaste: boolean
   pasteBuffer: string
+  pasteTruncated?: boolean
 }
 
 export function createKeyParserState(): KeyParserState {
-  return { pending: "", inPaste: false, pasteBuffer: "" }
+  return { pending: "", inPaste: false, pasteBuffer: "", pasteTruncated: false }
 }
 
 function parseCsiSequence(body: string, finalChar: string): ParsedKeyEvent | undefined {
@@ -897,18 +951,41 @@ export function feedKeyParser(state: KeyParserState, chunk: string): ParsedKeyEv
     if (state.inPaste) {
       const endMarker = "\x1b[201~"
       const endIdx = input.indexOf(endMarker, i)
+      const ctrlCIdx = input.indexOf("\x03", i)
+      if (ctrlCIdx !== -1 && (endIdx === -1 || ctrlCIdx < endIdx)) {
+        state.pasteBuffer = ""
+        state.pasteTruncated = false
+        state.inPaste = false
+        events.push({ kind: "ctrl", key: "c" })
+        i = ctrlCIdx + 1
+        continue
+      }
+      const appendPasteChunk = (slice: string) => {
+        if (!slice || state.pasteBuffer.length >= MAX_BRACKETED_PASTE_BYTES) {
+          if (slice) state.pasteTruncated = true
+          return
+        }
+        const remaining = MAX_BRACKETED_PASTE_BYTES - state.pasteBuffer.length
+        if (slice.length > remaining) {
+          state.pasteBuffer += slice.slice(0, remaining)
+          state.pasteTruncated = true
+        } else {
+          state.pasteBuffer += slice
+        }
+      }
       if (endIdx === -1) {
         // Keep a trailing prefix in case endMarker is split across chunks
         const tailKeep = Math.min(endMarker.length - 1, input.length - i)
         const safeEnd = input.length - tailKeep
-        if (safeEnd > i) state.pasteBuffer += input.slice(i, safeEnd)
+        if (safeEnd > i) appendPasteChunk(input.slice(i, safeEnd))
         state.pending = input.slice(safeEnd)
         i = input.length
         break
       }
-      state.pasteBuffer += input.slice(i, endIdx)
+      appendPasteChunk(input.slice(i, endIdx))
       events.push({ kind: "paste", text: state.pasteBuffer })
       state.pasteBuffer = ""
+      state.pasteTruncated = false
       state.inPaste = false
       i = endIdx + endMarker.length
       continue
@@ -1043,6 +1120,16 @@ export function flushPendingEscape(state: KeyParserState): ParsedKeyEvent[] {
   return []
 }
 
+export function flushStuckPaste(state: KeyParserState): ParsedKeyEvent[] {
+  if (!state.inPaste) return []
+  const text = state.pasteBuffer + state.pending
+  state.inPaste = false
+  state.pasteBuffer = ""
+  state.pasteTruncated = false
+  state.pending = ""
+  return text ? [{ kind: "paste", text }] : []
+}
+
 function wrapFormattedTokens(styled: string, maxCols: number): string[] {
   const width = Math.max(8, maxCols)
   if (visibleWidth(styled) <= width) return [styled]
@@ -1063,11 +1150,19 @@ function wrapFormattedTokens(styled: string, maxCols: number): string[] {
   while (i < styled.length) {
     if (styled.charCodeAt(i) === 0x1b && styled[i + 1] === "[") {
       let j = i + 2
-      while (j < styled.length && !(styled.charCodeAt(j) >= 0x40 && styled.charCodeAt(j) <= 0x7e)) j += 1
+      while (j < styled.length && !(styled.charCodeAt(j) >= 0x40 && styled.charCodeAt(j) <= 0x7e))
+        j += 1
       const seq = styled.slice(i, j < styled.length ? j + 1 : styled.length)
       line += seq
       if (seq.endsWith("m")) {
-        activeSgr = seq === "\x1b[0m" || seq === "\x1b[39m" || seq === "\x1b[22m" || seq === "\x1b[23m" || seq === "\x1b[49m" ? "" : `${activeSgr}${seq}`
+        activeSgr =
+          seq === "\x1b[0m" ||
+          seq === "\x1b[39m" ||
+          seq === "\x1b[22m" ||
+          seq === "\x1b[23m" ||
+          seq === "\x1b[49m"
+            ? ""
+            : `${activeSgr}${seq}`
       }
       i = j < styled.length ? j + 1 : styled.length
       continue
@@ -1128,12 +1223,19 @@ export function renderInlineMarkdown(text: string, style: TuiStyle): string {
     return token
   })
 
-  out = out.replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, (_m, label: string, url: string) =>
-    `${style.blue(label)} ${style.dim(`(${url})`)}`,
+  out = out.replace(
+    /\[([^\]\n]+)\]\(([^)\n]+)\)/g,
+    (_m, label: string, url: string) => `${style.blue(label)} ${style.dim(`(${url})`)}`,
   )
   out = out.replace(/\*\*([^*\n]+)\*\*/g, (_m, boldText: string) => style.bold(boldText))
-  out = out.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, (_m, pre: string, it: string) => `${pre}${style.italic(it)}`)
-  out = out.replace(/(^|\s)_([^_\n]+)_(?=$|\s|[.,:;!?])/g, (_m, pre: string, it: string) => `${pre}${style.italic(it)}`)
+  out = out.replace(
+    /(^|[^*])\*([^*\n]+)\*(?!\*)/g,
+    (_m, pre: string, it: string) => `${pre}${style.italic(it)}`,
+  )
+  out = out.replace(
+    /(^|\s)_([^_\n]+)_(?=$|\s|[.,:;!?])/g,
+    (_m, pre: string, it: string) => `${pre}${style.italic(it)}`,
+  )
 
   for (let i = 0; i < codePlaceholders.length; i += 1) {
     out = out.split(`\x00CODE${i}\x00`).join(codePlaceholders[i]!)
@@ -1175,16 +1277,13 @@ function renderMarkdownTable(
   style: TuiStyle,
 ): string[] {
   const colCount = Math.max(1, headerCells.length, ...bodyRows.map((r) => r.length))
-  const padRow = (r: string[]) => Array.from({ length: colCount }, (_, i) => renderInlineMarkdown(r[i] ?? "", style))
+  const padRow = (r: string[]) =>
+    Array.from({ length: colCount }, (_, i) => renderInlineMarkdown(r[i] ?? "", style))
   const styledHeader = padRow(headerCells)
   const styledBody = bodyRows.map(padRow)
 
   const naturalWidths = Array.from({ length: colCount }, (_, c) =>
-    Math.max(
-      4,
-      visibleWidth(styledHeader[c]!),
-      ...styledBody.map((r) => visibleWidth(r[c]!)),
-    ),
+    Math.max(4, visibleWidth(styledHeader[c]!), ...styledBody.map((r) => visibleWidth(r[c]!))),
   )
 
   // Reserve 2-char indent + box borders (colCount + 1) + 2 spaces cell padding per column
@@ -1282,11 +1381,7 @@ export function renderOpenCodeMarkdown(
     }
 
     // Markdown table: current line has pipes AND next line is separator
-    if (
-      line.includes("|") &&
-      i + 1 < rawLines.length &&
-      isTableSeparatorLine(rawLines[i + 1]!)
-    ) {
+    if (line.includes("|") && i + 1 < rawLines.length && isTableSeparatorLine(rawLines[i + 1]!)) {
       const header = splitMarkdownTableRow(line)
       i += 2
       const body: string[][] = []
@@ -1306,7 +1401,9 @@ export function renderOpenCodeMarkdown(
       const content = renderInlineMarkdown(headingMatch[2]!, style)
       const wrapped = wrapFormattedTokens(content, Math.max(16, width - 4))
       for (const w of wrapped) {
-        out.push(`  ${level <= 2 ? style.accentBold(stripAnsiSequences(w)) : style.bold(stripAnsiSequences(w))}`)
+        out.push(
+          `  ${level <= 2 ? style.accentBold(stripAnsiSequences(w)) : style.bold(stripAnsiSequences(w))}`,
+        )
       }
       i += 1
       continue
@@ -1322,7 +1419,10 @@ export function renderOpenCodeMarkdown(
     // Blockquote
     if (trimmed.startsWith(">")) {
       const body = trimmed.replace(/^>\s?/, "")
-      const wrapped = wrapFormattedTokens(renderInlineMarkdown(body, style), Math.max(16, width - 6))
+      const wrapped = wrapFormattedTokens(
+        renderInlineMarkdown(body, style),
+        Math.max(16, width - 6),
+      )
       for (const w of wrapped) {
         out.push(`  ${style.accent("┃")} ${style.muted(stripAnsiSequences(w))}`)
       }
@@ -1379,7 +1479,12 @@ export function renderOpenCodeShellCard(
               ? `✗ signal ${opts.signal}`
               : `✗ exit ${opts.exitCode === null || opts.exitCode === undefined ? "error" : opts.exitCode}`,
           )
-  const rail = opts.status === "ok" ? style.accent("┃") : opts.status === "denied" ? style.yellow("┃") : style.red("┃")
+  const rail =
+    opts.status === "ok"
+      ? style.accent("┃")
+      : opts.status === "denied"
+        ? style.yellow("┃")
+        : style.red("┃")
   const cmdMax = Math.max(12, width - 20)
   const cmdLine = `${rail} ${style.bold("$")} ${style.bold(truncatePlain(opts.command, cmdMax))}  ${statusText}`
 

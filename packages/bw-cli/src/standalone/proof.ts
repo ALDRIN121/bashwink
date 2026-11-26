@@ -6,7 +6,10 @@
 import { createHash } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
-import { verify as verifyEvidenceFile } from "../../../bw-evidence/src/recorder.ts"
+import {
+  verify as verifyEvidenceFile,
+  type EvidenceEntry,
+} from "../../../bw-evidence/src/recorder.ts"
 import type { TaskContract } from "../contract.ts"
 import type {
   ClaimStatus,
@@ -23,6 +26,17 @@ import type {
 const FALSE_CLAIM_PATTERN =
   /\b(?:all\s+tests?\s+(?:are\s+)?pass(?:ed|ing)?|tests?\s+pass(?:ed)?|everything\s+(?:passed|passes|works)|verified\s+(?:passing|clean)|all\s+checks?\s+(?:are\s+)?green)\b/i
 
+const TEST_FILTER_FLAGS = new Set([
+  "--grep",
+  "-g",
+  "-t",
+  "--test-name-pattern",
+  "-k",
+  "--skip",
+  "--passWithNoTests",
+  "--only",
+])
+
 export function fileSha256(filePath: string): string | undefined {
   if (!existsSync(filePath)) return undefined
   try {
@@ -36,30 +50,142 @@ function commandString(cmd: CommandOutcomeRecord): string {
   return [cmd.command, ...cmd.args].join(" ").trim()
 }
 
-function looksLikeVerificationCommand(cmdText: string): boolean {
-  const lower = cmdText.toLowerCase()
-  return (
-    /\b(?:test|pytest|vitest|jest|mocha|ava|tap|unittest|typecheck|tsc|lint|check|verify)\b/.test(
-      lower,
-    ) ||
-    /node\s+--test/.test(lower) ||
-    /go\s+test/.test(lower) ||
-    /cargo\s+(?:test|check)/.test(lower) ||
-    /npm\s+run\s+(?:test|lint|check|typecheck|verify)/.test(lower)
-  )
+function normalizeExeName(exe: string): string {
+  return path
+    .basename(exe.trim())
+    .toLowerCase()
+    .replace(/\.(?:exe|cmd|bat)$/i, "")
 }
 
-function matchesCriterionCommand(
+export function tokenizeCommandLine(commandLine: string): {
+  readonly tokens: string[]
+  readonly hasShellMeta: boolean
+} {
+  const tokens: string[] = []
+  let current = ""
+  let inSingle = false
+  let inDouble = false
+  let hasToken = false
+  let hasShellMeta = false
+
+  for (let i = 0; i < commandLine.length; i += 1) {
+    const ch = commandLine[i]!
+    if (ch === "\\" && !inSingle && i + 1 < commandLine.length) {
+      current += commandLine[i + 1]!
+      hasToken = true
+      i += 1
+      continue
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle
+      hasToken = true
+      continue
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble
+      hasToken = true
+      continue
+    }
+    if (!inSingle && !inDouble) {
+      if (ch === "&" || ch === "|" || ch === ";" || ch === "<" || ch === ">" || ch === "`") {
+        hasShellMeta = true
+      }
+      if (ch === "$" && commandLine[i + 1] === "(") {
+        hasShellMeta = true
+      }
+      if (/\s/.test(ch)) {
+        if (hasToken) {
+          tokens.push(current)
+          current = ""
+          hasToken = false
+        }
+        continue
+      }
+    }
+    current += ch
+    hasToken = true
+  }
+  if (hasToken) tokens.push(current)
+  return { tokens, hasShellMeta }
+}
+
+function looksLikeVerificationCommand(cmd: CommandOutcomeRecord): boolean {
+  const exe = normalizeExeName(cmd.command)
+  const a0 = (cmd.args[0] ?? "").toLowerCase()
+  const a1 = (cmd.args[1] ?? "").toLowerCase()
+  if (
+    exe === "pytest" ||
+    exe === "vitest" ||
+    exe === "jest" ||
+    exe === "mocha" ||
+    exe === "ava" ||
+    exe === "tap" ||
+    exe === "tsc" ||
+    exe === "oxlint" ||
+    exe === "eslint"
+  ) {
+    return true
+  }
+  if (
+    exe === "node" &&
+    (cmd.args.includes("--test") || cmd.args.some((a) => /\.(?:test|spec)\.[cm]?[jt]s$/i.test(a)))
+  ) {
+    return true
+  }
+  if (
+    (exe === "python" || exe === "python3") &&
+    a0 === "-m" &&
+    (a1 === "pytest" || a1 === "unittest")
+  ) {
+    return true
+  }
+  if (exe === "go" && a0 === "test") return true
+  if (exe === "cargo" && (a0 === "test" || a0 === "check" || a0 === "clippy")) return true
+  if (
+    (exe === "npm" || exe === "pnpm" || exe === "yarn" || exe === "bun") &&
+    (a0 === "test" ||
+      (a0 === "run" && ["test", "lint", "check", "typecheck", "verify"].includes(a1)))
+  ) {
+    return true
+  }
+  return false
+}
+
+export function matchesCriterionCommand(
   declaredCommand: string,
   observedCmd: CommandOutcomeRecord,
 ): boolean {
-  const observed = commandString(observedCmd)
-  if (observed === declaredCommand.trim()) return true
-  return observed.includes(declaredCommand.trim())
+  const { tokens, hasShellMeta } = tokenizeCommandLine(declaredCommand.trim())
+  if (tokens.length === 0 || hasShellMeta) return false
+  const declExe = normalizeExeName(tokens[0]!)
+  const obsExe = normalizeExeName(observedCmd.command)
+  if (!declExe || obsExe !== declExe) return false
+
+  const declArgs = tokens.slice(1)
+  if (observedCmd.args.length < declArgs.length) return false
+  for (let i = 0; i < declArgs.length; i += 1) {
+    if (observedCmd.args[i] !== declArgs[i]) return false
+  }
+  // Extra args (e.g. targeting a specific test file) cannot silently filter or skip tests.
+  const extraArgs = observedCmd.args.slice(declArgs.length)
+  for (const extra of extraArgs) {
+    const flagName = extra.split("=")[0]!
+    if (TEST_FILTER_FLAGS.has(flagName)) return false
+  }
+  return true
+}
+
+function sameCommandInvocation(a: CommandOutcomeRecord, b: CommandOutcomeRecord): boolean {
+  if (normalizeExeName(a.command) !== normalizeExeName(b.command)) return false
+  if (a.args.length !== b.args.length) return false
+  return (
+    a.args.every((val, idx) => val === b.args[idx]) && path.resolve(a.cwd) === path.resolve(b.cwd)
+  )
 }
 
 export interface BuildProofPackInput {
   readonly runId: string
+  readonly workspace?: string
   readonly outcome: RunSummaryRecord["outcome"]
   readonly finalText: string
   readonly baseline?: WorkspaceBaseline
@@ -69,6 +195,8 @@ export interface BuildProofPackInput {
   readonly testIntegrity: readonly TestIntegrityFinding[]
   readonly contract?: TaskContract
   readonly evidenceFile: string
+  readonly lastMutationOrder?: number
+  readonly unobservableMutations?: boolean
 }
 
 export function buildProofPack(input: BuildProofPackInput): ProofPackManifest {
@@ -78,19 +206,20 @@ export function buildProofPack(input: BuildProofPackInput): ProofPackManifest {
   const evidenceChainOk = evVerify.ok
   const evidenceEntries = evVerify.entries
 
-  const checks: ProofCheckRecord[] = []
-  let lastPassingCommandIdx = -1
+  const rawChecks: ProofCheckRecord[] = []
+  const lastMutationOrder = input.lastMutationOrder
 
   for (const [idx, cmd] of input.commands.entries()) {
     const cmdText = commandString(cmd)
-    const kind: ProofCheckRecord["kind"] = looksLikeVerificationCommand(cmdText) ? "test" : "command"
+    const kind: ProofCheckRecord["kind"] = looksLikeVerificationCommand(cmd) ? "test" : "command"
     if (cmd.decision === "denied") {
-      checks.push({
+      rawChecks.push({
         id: `cmd-${idx + 1}`,
         name: cmdText,
         kind,
         status: "not_run",
         command: cmdText,
+        cwd: cmd.cwd,
         ...(cmd.outputDigest ? { outputDigest: cmd.outputDigest } : {}),
         ...(cmd.evidenceSeq !== undefined ? { evidenceSeq: cmd.evidenceSeq } : {}),
         ...(cmd.evidenceHash ? { evidenceHash: cmd.evidenceHash } : {}),
@@ -98,19 +227,41 @@ export function buildProofPack(input: BuildProofPackInput): ProofPackManifest {
       continue
     }
     const passed = !cmd.timedOut && cmd.signal === null && cmd.exitCode === 0
-    if (passed) lastPassingCommandIdx = idx
-    checks.push({
+    const isStale =
+      passed &&
+      lastMutationOrder !== undefined &&
+      cmd.actionOrder !== undefined &&
+      cmd.actionOrder < lastMutationOrder
+    rawChecks.push({
       id: `cmd-${idx + 1}`,
       name: cmdText,
       kind,
       status: passed ? "passed" : "failed",
       command: cmdText,
+      cwd: cmd.cwd,
       exitCode: cmd.exitCode,
       ...(cmd.outputDigest ? { outputDigest: cmd.outputDigest } : {}),
       ...(cmd.evidenceSeq !== undefined ? { evidenceSeq: cmd.evidenceSeq } : {}),
       ...(cmd.evidenceHash ? { evidenceHash: cmd.evidenceHash } : {}),
+      ...(isStale ? { stale: true } : {}),
     })
   }
+
+  // Mark earlier failures as superseded only if the exact same invocation subsequently passed on the final state.
+  const checks: ProofCheckRecord[] = rawChecks.map((chk, idx) => {
+    if (chk.status !== "failed") return chk
+    const failedCmd = input.commands[idx]!
+    const hasLaterFreshPass = rawChecks.some((laterChk, laterIdx) => {
+      if (laterIdx <= idx || laterChk.status !== "passed" || laterChk.stale) return false
+      return sameCommandInvocation(failedCmd, input.commands[laterIdx]!)
+    })
+    return hasLaterFreshPass ? { ...chk, superseded: true } : chk
+  })
+
+  const freshPassingChecks = checks.filter((c) => c.status === "passed" && !c.stale)
+  const freshPassingTests = freshPassingChecks.filter((c) => c.kind === "test")
+  const stalePassingChecks = checks.filter((c) => c.status === "passed" && c.stale)
+  const unresolvedFailedChecks = checks.filter((c) => c.status === "failed" && !c.superseded)
 
   const criteria: CriterionOutcomeRecord[] = []
   if (input.contract) {
@@ -126,13 +277,11 @@ export function buildProofPack(input: BuildProofPackInput): ProofPackManifest {
       }
       const declaredCmd = c.command?.trim()
       if (!declaredCmd) {
-        const hasPassingVerification = checks.some(
-          (ch) => ch.status === "passed" && (ch.kind === "test" || checks.length > 0),
-        )
-        const hasFailedCommand = checks.some((ch) => ch.status === "failed")
-        const status: CriterionOutcomeRecord["status"] = hasFailedCommand
+        const hasFreshTestPass = freshPassingTests.length > 0
+        const hasUnresolvedFailure = unresolvedFailedChecks.length > 0
+        const status: CriterionOutcomeRecord["status"] = hasUnresolvedFailure
           ? "failed"
-          : hasPassingVerification
+          : hasFreshTestPass
             ? "passed"
             : "not_run"
         criteria.push({
@@ -142,16 +291,22 @@ export function buildProofPack(input: BuildProofPackInput): ProofPackManifest {
           status,
           ...(c.check ? { checkId: c.check } : {}),
           ...(status === "not_run"
-            ? { reason: "No passing verification command observed for this criterion." }
+            ? {
+                reason: stalePassingChecks.some((ch) => ch.kind === "test")
+                  ? "Verification command ran before later workspace edits; re-run on the final state."
+                  : "No passing verification command observed for this criterion.",
+              }
             : {}),
         })
         continue
       }
-      const matchingApproved = input.commands.filter(
-        (cmd) => cmd.decision === "approved" && matchesCriterionCommand(declaredCmd, cmd),
-      )
-      const lastMatch = matchingApproved.at(-1)
-      if (!lastMatch) {
+      const matchingApproved = input.commands
+        .map((cmd, idx) => ({ cmd, chk: checks[idx]! }))
+        .filter(
+          ({ cmd }) => cmd.decision === "approved" && matchesCriterionCommand(declaredCmd, cmd),
+        )
+      const lastEntry = matchingApproved.at(-1)
+      if (!lastEntry) {
         criteria.push({
           id: c.id,
           statement: c.statement,
@@ -160,13 +315,22 @@ export function buildProofPack(input: BuildProofPackInput): ProofPackManifest {
           checkId: declaredCmd,
           reason: `Required command '${declaredCmd}' was not run.`,
         })
-      } else if (!lastMatch.timedOut && lastMatch.signal === null && lastMatch.exitCode === 0) {
+      } else if (lastEntry.chk.status === "passed" && !lastEntry.chk.stale) {
         criteria.push({
           id: c.id,
           statement: c.statement,
           required: c.required,
           status: "passed",
           checkId: declaredCmd,
+        })
+      } else if (lastEntry.chk.status === "passed" && lastEntry.chk.stale) {
+        criteria.push({
+          id: c.id,
+          statement: c.statement,
+          required: c.required,
+          status: "not_run",
+          checkId: declaredCmd,
+          reason: `Command '${declaredCmd}' passed before later workspace edits and is now stale.`,
         })
       } else {
         criteria.push({
@@ -175,7 +339,7 @@ export function buildProofPack(input: BuildProofPackInput): ProofPackManifest {
           required: c.required,
           status: "failed",
           checkId: declaredCmd,
-          reason: `Command '${declaredCmd}' exited ${lastMatch.exitCode ?? "unknown"}.`,
+          reason: `Command '${declaredCmd}' exited ${lastEntry.cmd.exitCode ?? "unknown"}.`,
         })
       }
     }
@@ -185,24 +349,43 @@ export function buildProofPack(input: BuildProofPackInput): ProofPackManifest {
   if (!evidenceChainOk) {
     unverifiedReasons.push(`Evidence chain check failed (${evVerify.ok ? "" : evVerify.reason}).`)
   }
-  const failedChecks = checks.filter((c) => c.status === "failed")
-  if (failedChecks.length > 0) {
-    unverifiedReasons.push(`${failedChecks.length} executed command/check(s) failed.`)
+  if (input.baseline?.partial) {
+    unverifiedReasons.push(
+      `Workspace baseline scan was partial (${input.baseline.partialReason ?? "bounded"}); integrity is incomplete.`,
+    )
+  }
+  if (input.unobservableMutations) {
+    unverifiedReasons.push(
+      "Workspace filesystem changes after command execution exceeded scan bounds and could not be fully observed.",
+    )
+  }
+  if (unresolvedFailedChecks.length > 0) {
+    unverifiedReasons.push(`${unresolvedFailedChecks.length} executed command/check(s) failed.`)
   }
   const declinedChecks = checks.filter((c) => c.status === "not_run")
   if (declinedChecks.length > 0) {
-    unverifiedReasons.push(`${declinedChecks.length} proposed command/check(s) were not run (declined).`)
+    unverifiedReasons.push(
+      `${declinedChecks.length} proposed command/check(s) were not run (declined).`,
+    )
   }
   if (input.testIntegrity.length > 0) {
     unverifiedReasons.push(
       `${input.testIntegrity.length} TestGuard integrity finding(s) recorded during run.`,
     )
   }
-  const passingChecks = checks.filter((c) => c.status === "passed")
-  if (input.changedTests.length > 0 && lastPassingCommandIdx < 0) {
-    unverifiedReasons.push("Test files were modified with no passing verification command.")
-  } else if (input.changedFiles.length > 0 && passingChecks.length === 0) {
-    unverifiedReasons.push("Workspace files were modified without any passing verification command.")
+  if (stalePassingChecks.length > 0 && freshPassingChecks.length === 0) {
+    unverifiedReasons.push(
+      "Workspace was modified after the last passing verification command; re-run checks on the final state.",
+    )
+  }
+  if (input.changedTests.length > 0 && freshPassingTests.length === 0) {
+    unverifiedReasons.push(
+      "Test files were modified with no fresh passing verification command on the final state.",
+    )
+  } else if (input.changedFiles.length > 0 && freshPassingChecks.length === 0) {
+    unverifiedReasons.push(
+      "Workspace files were modified without any fresh passing verification command.",
+    )
   }
   if (input.contract) {
     for (const cr of criteria) {
@@ -212,9 +395,9 @@ export function buildProofPack(input: BuildProofPackInput): ProofPackManifest {
     }
   }
   const claimsSuccessInText = FALSE_CLAIM_PATTERN.test(input.finalText)
-  if (claimsSuccessInText && passingChecks.length === 0) {
+  if (claimsSuccessInText && freshPassingChecks.length === 0) {
     unverifiedReasons.push(
-      "Model output claimed passing checks/tests without observed passing command evidence.",
+      "Model output claimed passing checks/tests without observed fresh passing command evidence.",
     )
   }
 
@@ -230,8 +413,10 @@ export function buildProofPack(input: BuildProofPackInput): ProofPackManifest {
   } else if (unverifiedReasons.length === 0) {
     claimStatus = "verified"
   } else if (
-    failedChecks.length > 0 ||
+    unresolvedFailedChecks.length > 0 ||
     input.testIntegrity.length > 0 ||
+    input.unobservableMutations ||
+    Boolean(input.baseline?.partial) ||
     criteria.some((cr) => cr.required && cr.status === "failed") ||
     !evidenceChainOk
   ) {
@@ -243,6 +428,7 @@ export function buildProofPack(input: BuildProofPackInput): ProofPackManifest {
   return {
     version: 1,
     runId: input.runId,
+    ...(input.workspace ? { workspace: input.workspace } : {}),
     ...(input.baseline ? { baseline: input.baseline } : {}),
     checks,
     criteria,
@@ -250,6 +436,7 @@ export function buildProofPack(input: BuildProofPackInput): ProofPackManifest {
     verified: claimStatus === "verified",
     claimStatus,
     unverifiedReasons,
+    ...(input.unobservableMutations ? { unobservableMutations: true } : {}),
     evidenceFile: input.evidenceFile,
     evidenceEntries,
     evidenceChainOk,
@@ -261,30 +448,100 @@ export function verifyProofPack(manifest: ProofPackManifest): {
   readonly issues: readonly string[]
 } {
   const issues: string[] = []
-  if (manifest.version !== 1) issues.push(`Unsupported ProofPack version: ${String(manifest.version)}`)
+  if (manifest.version !== 1)
+    issues.push(`Unsupported ProofPack version: ${String(manifest.version)}`)
+  const entriesBySeq = new Map<number, EvidenceEntry>()
   if (!existsSync(manifest.evidenceFile)) {
     issues.push(`Missing evidence file: ${manifest.evidenceFile}`)
   } else {
     const ev = verifyEvidenceFile(manifest.evidenceFile)
-    if (!ev.ok) issues.push(`Evidence chain verification failed: ${ev.reason}`)
-    else if (ev.entries < manifest.evidenceEntries) {
-      issues.push(
-        `Evidence file has fewer entries (${ev.entries}) than ProofPack declared (${manifest.evidenceEntries}).`,
-      )
+    if (!ev.ok) {
+      issues.push(`Evidence chain verification failed: ${ev.reason}`)
+    } else {
+      if (ev.entries < manifest.evidenceEntries) {
+        issues.push(
+          `Evidence file has fewer entries (${ev.entries}) than ProofPack declared (${manifest.evidenceEntries}).`,
+        )
+      }
+      try {
+        const lines = readFileSync(manifest.evidenceFile, "utf8")
+          .split("\n")
+          .filter((l) => l.trim().length > 0)
+        for (const line of lines) {
+          const parsed = JSON.parse(line) as EvidenceEntry
+          entriesBySeq.set(parsed.seq, parsed)
+        }
+      } catch {
+        issues.push(`Could not parse evidence entries from ${manifest.evidenceFile}`)
+      }
     }
   }
-  if (manifest.verified) {
-    if (manifest.claimStatus !== "verified") {
-      issues.push(`ProofPack claims verified=true with claimStatus=${manifest.claimStatus}`)
+  if (manifest.verified || manifest.claimStatus === "verified") {
+    if (!manifest.verified || manifest.claimStatus !== "verified") {
+      issues.push(
+        `ProofPack inconsistent verified (${String(manifest.verified)}) vs claimStatus (${manifest.claimStatus}).`,
+      )
     }
-    if (manifest.checks.some((c) => c.status === "failed")) {
-      issues.push("ProofPack claims verified=true despite failed check(s).")
+    if (!manifest.evidenceChainOk) {
+      issues.push("ProofPack claims verified=true while evidenceChainOk=false.")
     }
-    if (manifest.criteria.some((c) => c.required && (c.status === "failed" || c.status === "not_run"))) {
+    if (manifest.unverifiedReasons.length > 0) {
+      issues.push("ProofPack claims verified=true despite non-empty unverifiedReasons.")
+    }
+    if (manifest.baseline?.partial) {
+      issues.push("ProofPack claims verified=true despite partial baseline scan.")
+    }
+    if (manifest.unobservableMutations) {
+      issues.push("ProofPack claims verified=true despite unobservable workspace mutations.")
+    }
+    if (manifest.checks.some((c) => c.status === "failed" && !c.superseded)) {
+      issues.push("ProofPack claims verified=true despite unresolved failed check(s).")
+    }
+    if (manifest.checks.some((c) => c.status === "not_run")) {
+      issues.push("ProofPack claims verified=true despite declined/not_run check(s).")
+    }
+    if (manifest.checks.some((c) => c.status === "passed" && c.stale)) {
+      const hasFresh = manifest.checks.some((c) => c.status === "passed" && !c.stale)
+      if (!hasFresh) {
+        issues.push("ProofPack claims verified=true with only stale check(s).")
+      }
+    }
+    if (
+      manifest.criteria.some((c) => c.required && (c.status === "failed" || c.status === "not_run"))
+    ) {
       issues.push("ProofPack claims verified=true despite unmet required criterion.")
     }
     if (manifest.testIntegrity.length > 0) {
       issues.push("ProofPack claims verified=true despite TestGuard findings.")
+    }
+    for (const chk of manifest.checks) {
+      if (chk.status !== "passed") continue
+      if (chk.evidenceSeq === undefined || !chk.evidenceHash) {
+        issues.push(`Passed check '${chk.id}' lacks linked evidenceSeq/evidenceHash.`)
+        continue
+      }
+      const evEntry = entriesBySeq.get(chk.evidenceSeq)
+      if (!evEntry) {
+        issues.push(`Passed check '${chk.id}' references missing evidence seq ${chk.evidenceSeq}.`)
+        continue
+      }
+      if (evEntry.hash !== chk.evidenceHash) {
+        issues.push(`Passed check '${chk.id}' evidenceHash mismatch at seq ${chk.evidenceSeq}.`)
+      }
+      if (
+        evEntry.phase !== "after" ||
+        evEntry.payload.status !== "completed" ||
+        evEntry.payload.exit !== 0
+      ) {
+        issues.push(
+          `Passed check '${chk.id}' linked evidence seq ${chk.evidenceSeq} does not record a passing exit=0 completion.`,
+        )
+      }
+      if (evEntry.call.sessionID !== manifest.runId) {
+        issues.push(
+          `Passed check '${chk.id}' linked evidence seq ${chk.evidenceSeq} belongs to run '${evEntry.call.sessionID}', not '${manifest.runId}'.`,
+        )
+      }
     }
   }
   return { ok: issues.length === 0, issues }
@@ -302,7 +559,8 @@ export function renderProofSummary(result: TaskResult): string {
   }
   if (pack && pack.checks.length > 0) {
     for (const check of pack.checks) {
-      const code = check.exitCode !== undefined && check.exitCode !== null ? ` (exit ${check.exitCode})` : ""
+      const code =
+        check.exitCode !== undefined && check.exitCode !== null ? ` (exit ${check.exitCode})` : ""
       lines.push(`  Check [${check.status}] ${check.name}${code}`)
     }
   } else {
@@ -340,7 +598,9 @@ export function exportProofBundle(
         workspace: summary.workspace,
         outcome: summary.outcome,
         claimStatus: summary.claimStatus ?? summary.proofPack?.claimStatus ?? "inconclusive",
-        ...(summary.contractId ? { contractId: summary.contractId, contractRevision: summary.contractRevision } : {}),
+        ...(summary.contractId
+          ? { contractId: summary.contractId, contractRevision: summary.contractRevision }
+          : {}),
         changedFiles: summary.changedFiles,
         changedTests: summary.changedTests,
         proofPack: summary.proofPack ?? null,
@@ -373,7 +633,9 @@ export function exportProofBundle(
   if (pack && pack.criteria.length > 0) {
     lines.push("", "## Criteria")
     for (const cr of pack.criteria) {
-      lines.push(`- [${cr.status}] \`${cr.id}\`: ${cr.statement}${cr.reason ? ` — ${cr.reason}` : ""}`)
+      lines.push(
+        `- [${cr.status}] \`${cr.id}\`: ${cr.statement}${cr.reason ? ` — ${cr.reason}` : ""}`,
+      )
     }
   }
   if (pack && pack.testIntegrity.length > 0) {

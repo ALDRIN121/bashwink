@@ -41,18 +41,39 @@ export class ProviderRequestError extends Error {
   readonly kind: ProviderErrorKind
   readonly status?: number
   readonly retryable: boolean
+  readonly retryAfterMs?: number
 
   constructor(
     kind: ProviderErrorKind,
     message: string,
-    options: { readonly status?: number; readonly retryable?: boolean } = {},
+    options: {
+      readonly status?: number
+      readonly retryable?: boolean
+      readonly retryAfterMs?: number
+    } = {},
   ) {
     super(message)
     this.name = "ProviderRequestError"
     this.kind = kind
     if (options.status !== undefined) this.status = options.status
     this.retryable = options.retryable ?? false
+    if (options.retryAfterMs !== undefined) this.retryAfterMs = options.retryAfterMs
   }
+}
+
+function parseRetryAfterMs(raw: string | null): number | undefined {
+  if (!raw) return undefined
+  const trimmed = raw.trim()
+  if (trimmed === "") return undefined
+  if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
+    const ms = Math.round(Number(trimmed) * 1000)
+    return Number.isFinite(ms) && ms >= 0 ? Math.min(ms, 60_000) : undefined
+  }
+  const ts = Date.parse(trimmed)
+  if (Number.isFinite(ts)) {
+    return Math.min(Math.max(0, ts - Date.now()), 60_000)
+  }
+  return undefined
 }
 
 function scrubSecret(text: string, secret?: string): string {
@@ -63,6 +84,22 @@ function scrubSecret(text: string, secret?: string): string {
   return out
 }
 
+export function safeWireToolArguments(call: ToolCall): string {
+  if (call.rawArguments !== undefined) {
+    const trimmed = call.rawArguments.trim()
+    if (trimmed === "") return "{}"
+    try {
+      const parsed = JSON.parse(trimmed) as unknown
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        return call.rawArguments
+      }
+    } catch {
+      // Malformed JSON arguments (e.g. ToolInputError replay) must not break next wire request.
+    }
+  }
+  return JSON.stringify(call.input ?? {})
+}
+
 function toWireMessages(messages: readonly ChatMessage[]): unknown[] {
   return messages.map((msg) => {
     if (msg.role === "assistant") {
@@ -71,7 +108,7 @@ function toWireMessages(messages: readonly ChatMessage[]): unknown[] {
         type: "function",
         function: {
           name: call.name,
-          arguments: call.rawArguments ?? JSON.stringify(call.input),
+          arguments: safeWireToolArguments(call),
         },
       }))
       return {
@@ -120,30 +157,53 @@ function normalizeFinishReason(raw: unknown): FinishReason {
   }
 }
 
+function parseNonNegativeIntToken(raw: unknown): {
+  readonly value?: number
+  readonly invalid: boolean
+} {
+  if (raw === undefined || raw === null) return { invalid: false }
+  if (typeof raw === "number" && Number.isInteger(raw) && raw >= 0) {
+    return { value: raw, invalid: false }
+  }
+  return { invalid: true }
+}
+
 function parseUsage(raw: unknown): ModelUsage | undefined {
   if (typeof raw !== "object" || raw === null) return undefined
   const u = raw as Record<string, unknown>
-  const inputTokens =
-    typeof u["prompt_tokens"] === "number" && Number.isFinite(u["prompt_tokens"])
-      ? u["prompt_tokens"]
-      : undefined
-  const outputTokens =
-    typeof u["completion_tokens"] === "number" && Number.isFinite(u["completion_tokens"])
-      ? u["completion_tokens"]
-      : undefined
-  const totalTokens =
-    typeof u["total_tokens"] === "number" && Number.isFinite(u["total_tokens"])
-      ? u["total_tokens"]
-      : inputTokens !== undefined && outputTokens !== undefined
-        ? inputTokens + outputTokens
-        : undefined
-  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
+  const inCheck = parseNonNegativeIntToken(u["prompt_tokens"])
+  const outCheck = parseNonNegativeIntToken(u["completion_tokens"])
+  const totCheck = parseNonNegativeIntToken(u["total_tokens"])
+  let usageInvalid = inCheck.invalid || outCheck.invalid || totCheck.invalid
+  const inputTokens = inCheck.value
+  const outputTokens = outCheck.value
+  let totalTokens = totCheck.value
+
+  if (
+    inputTokens !== undefined &&
+    outputTokens !== undefined &&
+    totalTokens !== undefined &&
+    totalTokens < inputTokens + outputTokens
+  ) {
+    usageInvalid = true
+    totalTokens = inputTokens + outputTokens
+  } else if (totalTokens === undefined && inputTokens !== undefined && outputTokens !== undefined) {
+    totalTokens = inputTokens + outputTokens
+  }
+
+  if (
+    inputTokens === undefined &&
+    outputTokens === undefined &&
+    totalTokens === undefined &&
+    !usageInvalid
+  ) {
     return undefined
   }
   return {
     ...(inputTokens === undefined ? {} : { inputTokens }),
     ...(outputTokens === undefined ? {} : { outputTokens }),
     ...(totalTokens === undefined ? {} : { totalTokens }),
+    ...(usageInvalid ? { usageInvalid: true } : {}),
   }
 }
 
@@ -151,15 +211,30 @@ async function readBoundedText(
   response: Response,
   maxBytes: number,
   endpoint: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (!response.body) return await response.text()
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
   let received = 0
+  const onAbort = () => {
+    void reader.cancel().catch(() => undefined)
+  }
+  if (signal) {
+    if (signal.aborted) {
+      await reader.cancel().catch(() => undefined)
+      throw new ProviderRequestError("cancelled", "Model request was cancelled.")
+    }
+    signal.addEventListener("abort", onAbort, { once: true })
+  }
   try {
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
+      if (signal?.aborted) {
+        await reader.cancel().catch(() => undefined)
+        throw new ProviderRequestError("cancelled", "Model request was cancelled.")
+      }
       if (value) {
         received += value.byteLength
         if (received > maxBytes) {
@@ -173,6 +248,7 @@ async function readBoundedText(
       }
     }
   } finally {
+    signal?.removeEventListener("abort", onAbort)
     reader.releaseLock()
   }
   return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString("utf8")
@@ -189,19 +265,24 @@ export interface CompleteRequest {
   readonly temperature?: number
   readonly timeoutMs?: number
   readonly maxResponseBytes?: number
+  readonly stream?: boolean
+  readonly onDelta?: (delta: string) => void
   readonly fetchImpl?: typeof fetch
 }
 
 const DEFAULT_ANTHROPIC_MAX_TOKENS = 8192
 
 function buildEndpointURL(baseURL: string, protocol: WireProtocol): string {
-  const trimmed = baseURL.replace(/\/+$/, "")
+  const u = new URL(baseURL)
+  const cleanPath = u.pathname.replace(/\/+$/, "")
   if (protocol === "anthropic-messages") {
-    if (trimmed.endsWith("/v1/messages")) return trimmed
-    if (trimmed.endsWith("/v1")) return `${trimmed}/messages`
-    return `${trimmed}/v1/messages`
+    if (cleanPath.endsWith("/v1/messages")) u.pathname = cleanPath
+    else if (cleanPath.endsWith("/v1")) u.pathname = `${cleanPath}/messages`
+    else u.pathname = `${cleanPath}/v1/messages`
+  } else {
+    u.pathname = `${cleanPath}/chat/completions`
   }
-  return `${trimmed}/chat/completions`
+  return u.toString()
 }
 
 function toAnthropicMessages(messages: readonly ChatMessage[]): {
@@ -287,32 +368,39 @@ function normalizeAnthropicStopReason(raw: unknown): FinishReason {
 function parseAnthropicUsage(raw: unknown): ModelUsage | undefined {
   if (typeof raw !== "object" || raw === null) return undefined
   const u = raw as Record<string, unknown>
-  const baseInput =
-    typeof u["input_tokens"] === "number" && Number.isFinite(u["input_tokens"]) ? u["input_tokens"] : undefined
-  const cacheRead =
-    typeof u["cache_read_input_tokens"] === "number" && Number.isFinite(u["cache_read_input_tokens"])
-      ? u["cache_read_input_tokens"]
-      : 0
-  const cacheCreate =
-    typeof u["cache_creation_input_tokens"] === "number" && Number.isFinite(u["cache_creation_input_tokens"])
-      ? u["cache_creation_input_tokens"]
-      : 0
-  const inputTokens = baseInput !== undefined ? baseInput + cacheRead + cacheCreate : undefined
-  const outputTokens =
-    typeof u["output_tokens"] === "number" && Number.isFinite(u["output_tokens"]) ? u["output_tokens"] : undefined
+  const baseCheck = parseNonNegativeIntToken(u["input_tokens"])
+  const cacheReadCheck = parseNonNegativeIntToken(u["cache_read_input_tokens"])
+  const cacheCreateCheck = parseNonNegativeIntToken(u["cache_creation_input_tokens"])
+  const outCheck = parseNonNegativeIntToken(u["output_tokens"])
+  const usageInvalid =
+    baseCheck.invalid || cacheReadCheck.invalid || cacheCreateCheck.invalid || outCheck.invalid
+  const inputTokens =
+    baseCheck.value !== undefined
+      ? baseCheck.value + (cacheReadCheck.value ?? 0) + (cacheCreateCheck.value ?? 0)
+      : undefined
+  const outputTokens = outCheck.value
   const totalTokens =
     inputTokens !== undefined && outputTokens !== undefined ? inputTokens + outputTokens : undefined
-  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
+  if (
+    inputTokens === undefined &&
+    outputTokens === undefined &&
+    totalTokens === undefined &&
+    !usageInvalid
+  ) {
     return undefined
   }
   return {
     ...(inputTokens === undefined ? {} : { inputTokens }),
     ...(outputTokens === undefined ? {} : { outputTokens }),
     ...(totalTokens === undefined ? {} : { totalTokens }),
+    ...(usageInvalid ? { usageInvalid: true } : {}),
   }
 }
 
-function parseAnthropicPayload(payload: Record<string, unknown>, baseURL: string): ProviderCompletion {
+function parseAnthropicPayload(
+  payload: Record<string, unknown>,
+  baseURL: string,
+): ProviderCompletion {
   const blocks = payload["content"]
   if (!Array.isArray(blocks)) {
     throw new ProviderRequestError(
@@ -412,7 +500,8 @@ function parseOpenAIPayload(payload: Record<string, unknown>, baseURL: string): 
         )
       }
       const tcObj = tc as Record<string, unknown>
-      const id = typeof tcObj["id"] === "string" && tcObj["id"] !== "" ? tcObj["id"] : `call_${i + 1}`
+      const id =
+        typeof tcObj["id"] === "string" && tcObj["id"] !== "" ? tcObj["id"] : `call_${i + 1}`
       const fn = tcObj["function"]
       if (typeof fn !== "object" || fn === null) {
         throw new ProviderRequestError(
@@ -497,10 +586,317 @@ function resolveRequestSecret(
   return resolveCredentialSecret(credential, env)
 }
 
+async function* readSSEEvents(
+  response: Response,
+  maxBytes: number,
+  endpoint: string,
+  signal?: AbortSignal,
+): AsyncGenerator<{ readonly event?: string; readonly data: string }> {
+  if (!response.body) return
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let received = 0
+  let buffer = ""
+  const onAbort = () => {
+    void reader.cancel().catch(() => undefined)
+  }
+  if (signal) {
+    if (signal.aborted) {
+      await reader.cancel().catch(() => undefined)
+      throw new ProviderRequestError("cancelled", "Model request was cancelled.")
+    }
+    signal.addEventListener("abort", onAbort, { once: true })
+  }
+  const emitBlock = (rawBlock: string) => {
+    const lines = rawBlock.split(/\r?\n/)
+    let eventName: string | undefined
+    const dataLines: string[] = []
+    for (const line of lines) {
+      if (line.startsWith(":")) continue
+      if (line.startsWith("event:")) eventName = line.slice(6).trim()
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart())
+    }
+    if (dataLines.length === 0) return undefined
+    return { ...(eventName !== undefined ? { event: eventName } : {}), data: dataLines.join("\n") }
+  }
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (signal?.aborted) {
+        await reader.cancel().catch(() => undefined)
+        throw new ProviderRequestError("cancelled", "Model request was cancelled.")
+      }
+      if (value) {
+        received += value.byteLength
+        if (received > maxBytes) {
+          await reader.cancel().catch(() => undefined)
+          throw new ProviderRequestError(
+            "response_too_large",
+            `Provider response from ${endpoint} exceeded ${maxBytes} bytes.`,
+          )
+        }
+        buffer += decoder.decode(value, { stream: true })
+        while (true) {
+          const sepMatch = /\r?\n\r?\n/.exec(buffer)
+          if (!sepMatch) break
+          const block = buffer.slice(0, sepMatch.index)
+          buffer = buffer.slice(sepMatch.index + sepMatch[0].length)
+          const parsed = emitBlock(block)
+          if (parsed) yield parsed
+        }
+      }
+    }
+    buffer += decoder.decode()
+    if (buffer.trim() !== "") {
+      const parsed = emitBlock(buffer)
+      if (parsed) yield parsed
+    }
+  } finally {
+    signal?.removeEventListener("abort", onAbort)
+    reader.releaseLock()
+  }
+}
+
+async function parseOpenAISSE(
+  response: Response,
+  maxBytes: number,
+  endpoint: string,
+  onDelta?: (delta: string) => void,
+  signal?: AbortSignal,
+): Promise<ProviderCompletion> {
+  const textParts: string[] = []
+  const toolAcc = new Map<number, { id: string; name: string; args: string }>()
+  let finishReason: FinishReason = "unknown"
+  let usage: ModelUsage | undefined
+  let sawEvent = false
+
+  for await (const ev of readSSEEvents(response, maxBytes, endpoint, signal)) {
+    if (ev.data === "[DONE]") break
+    let chunk: Record<string, unknown>
+    try {
+      chunk = JSON.parse(ev.data) as Record<string, unknown>
+    } catch {
+      throw new ProviderRequestError(
+        "malformed_response",
+        `Provider at ${endpoint} emitted invalid JSON in stream chunk.`,
+      )
+    }
+    sawEvent = true
+    if (chunk["usage"]) {
+      const parsedUsage = parseUsage(chunk["usage"])
+      if (parsedUsage) usage = parsedUsage
+    }
+    const choices = chunk["choices"]
+    if (!Array.isArray(choices) || choices.length === 0) continue
+    const ch = choices[0] as Record<string, unknown>
+    if (ch["finish_reason"] !== undefined && ch["finish_reason"] !== null) {
+      finishReason = normalizeFinishReason(ch["finish_reason"])
+    }
+    const delta = ch["delta"]
+    if (typeof delta === "object" && delta !== null) {
+      const d = delta as Record<string, unknown>
+      if (typeof d["content"] === "string" && d["content"].length > 0) {
+        textParts.push(d["content"])
+        onDelta?.(d["content"])
+      }
+      const tcList = d["tool_calls"]
+      if (Array.isArray(tcList)) {
+        for (let i = 0; i < tcList.length; i += 1) {
+          const item = tcList[i] as Record<string, unknown>
+          const idx = typeof item["index"] === "number" ? item["index"] : i
+          const existing = toolAcc.get(idx) ?? { id: `call_${idx + 1}`, name: "", args: "" }
+          if (typeof item["id"] === "string" && item["id"] !== "") existing.id = item["id"]
+          const fn = item["function"] as Record<string, unknown> | undefined
+          if (fn) {
+            if (typeof fn["name"] === "string" && fn["name"] !== "") existing.name += fn["name"]
+            if (typeof fn["arguments"] === "string") existing.args += fn["arguments"]
+          }
+          toolAcc.set(idx, existing)
+        }
+      }
+    }
+  }
+
+  if (!sawEvent) {
+    throw new ProviderRequestError(
+      "malformed_response",
+      `Provider at ${endpoint} ended stream without returning any completion events.`,
+    )
+  }
+
+  const toolCalls: ToolCall[] = []
+  const toolInputErrors: ToolInputError[] = []
+  for (const [, tc] of [...toolAcc.entries()].sort(([a], [b]) => a - b)) {
+    if (tc.name === "") {
+      throw new ProviderRequestError(
+        "malformed_response",
+        `Provider streamed tool call '${tc.id}' with an empty tool name.`,
+      )
+    }
+    const rawArgs = tc.args === "" ? "{}" : tc.args
+    try {
+      const parsedArgs = rawArgs.trim() === "" ? {} : (JSON.parse(rawArgs) as unknown)
+      if (typeof parsedArgs !== "object" || parsedArgs === null || Array.isArray(parsedArgs)) {
+        toolInputErrors.push({ id: tc.id, name: tc.name, raw: rawArgs })
+      } else {
+        toolCalls.push({
+          id: tc.id,
+          name: tc.name,
+          input: parsedArgs as Record<string, unknown>,
+          rawArguments: rawArgs,
+        })
+      }
+    } catch {
+      toolInputErrors.push({ id: tc.id, name: tc.name, raw: rawArgs })
+    }
+  }
+
+  return {
+    text: textParts.join(""),
+    toolCalls,
+    toolInputErrors,
+    finishReason,
+    ...(usage === undefined ? {} : { usage }),
+  }
+}
+
+async function parseAnthropicSSE(
+  response: Response,
+  maxBytes: number,
+  endpoint: string,
+  onDelta?: (delta: string) => void,
+  signal?: AbortSignal,
+): Promise<ProviderCompletion> {
+  const textParts: string[] = []
+  const toolBlocks = new Map<number, { id: string; name: string; jsonText: string }>()
+  let finishReason: FinishReason = "unknown"
+  let usage: ModelUsage | undefined
+  let sawEvent = false
+
+  for await (const ev of readSSEEvents(response, maxBytes, endpoint, signal)) {
+    if (!ev.data || ev.data === "[DONE]") continue
+    let chunk: Record<string, unknown>
+    try {
+      chunk = JSON.parse(ev.data) as Record<string, unknown>
+    } catch {
+      throw new ProviderRequestError(
+        "malformed_response",
+        `Provider at ${endpoint} emitted invalid JSON in Anthropic stream.`,
+      )
+    }
+    sawEvent = true
+    const type = typeof chunk["type"] === "string" ? chunk["type"] : ev.event
+    if (
+      type === "message_start" &&
+      typeof chunk["message"] === "object" &&
+      chunk["message"] !== null
+    ) {
+      const msg = chunk["message"] as Record<string, unknown>
+      if (msg["usage"]) usage = parseAnthropicUsage(msg["usage"])
+    } else if (type === "content_block_start") {
+      const idx = typeof chunk["index"] === "number" ? chunk["index"] : 0
+      const cb = chunk["content_block"] as Record<string, unknown> | undefined
+      if (cb && cb["type"] === "tool_use") {
+        toolBlocks.set(idx, {
+          id: typeof cb["id"] === "string" && cb["id"] !== "" ? cb["id"] : `toolu_${idx + 1}`,
+          name: typeof cb["name"] === "string" ? cb["name"] : "",
+          jsonText:
+            typeof cb["input"] === "object" &&
+            cb["input"] !== null &&
+            Object.keys(cb["input"]).length > 0
+              ? JSON.stringify(cb["input"])
+              : "",
+        })
+      }
+    } else if (type === "content_block_delta") {
+      const idx = typeof chunk["index"] === "number" ? chunk["index"] : 0
+      const delta = chunk["delta"] as Record<string, unknown> | undefined
+      if (delta?.["type"] === "text_delta" && typeof delta["text"] === "string") {
+        textParts.push(delta["text"])
+        onDelta?.(delta["text"])
+      } else if (
+        delta?.["type"] === "input_json_delta" &&
+        typeof delta["partial_json"] === "string"
+      ) {
+        const blk = toolBlocks.get(idx)
+        if (blk) blk.jsonText += delta["partial_json"]
+      }
+    } else if (type === "message_delta") {
+      const delta = chunk["delta"] as Record<string, unknown> | undefined
+      if (delta && delta["stop_reason"] !== undefined) {
+        finishReason = normalizeAnthropicStopReason(delta["stop_reason"])
+      }
+      if (chunk["usage"]) {
+        const deltaUsage = parseAnthropicUsage(chunk["usage"])
+        if (deltaUsage) {
+          const mergedIn = deltaUsage.inputTokens ?? usage?.inputTokens
+          const mergedOut = deltaUsage.outputTokens ?? usage?.outputTokens
+          const mergedInvalid = Boolean(usage?.usageInvalid || deltaUsage.usageInvalid)
+          usage = {
+            ...(mergedIn !== undefined ? { inputTokens: mergedIn } : {}),
+            ...(mergedOut !== undefined ? { outputTokens: mergedOut } : {}),
+            ...(mergedIn !== undefined && mergedOut !== undefined
+              ? { totalTokens: mergedIn + mergedOut }
+              : {}),
+            ...(mergedInvalid ? { usageInvalid: true } : {}),
+          }
+        }
+      }
+    }
+  }
+
+  if (!sawEvent) {
+    throw new ProviderRequestError(
+      "malformed_response",
+      `Provider at ${endpoint} ended stream without returning any Anthropic events.`,
+    )
+  }
+
+  const toolCalls: ToolCall[] = []
+  const toolInputErrors: ToolInputError[] = []
+  for (const [, blk] of [...toolBlocks.entries()].sort(([a], [b]) => a - b)) {
+    if (blk.name === "") {
+      throw new ProviderRequestError(
+        "malformed_response",
+        `Provider streamed Anthropic tool call '${blk.id}' with empty name.`,
+      )
+    }
+    const raw = blk.jsonText.trim() === "" ? "{}" : blk.jsonText
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        toolInputErrors.push({ id: blk.id, name: blk.name, raw })
+      } else {
+        toolCalls.push({
+          id: blk.id,
+          name: blk.name,
+          input: parsed as Record<string, unknown>,
+          rawArguments: raw,
+        })
+      }
+    } catch {
+      toolInputErrors.push({ id: blk.id, name: blk.name, raw })
+    }
+  }
+
+  return {
+    text: textParts.join(""),
+    toolCalls,
+    toolInputErrors,
+    finishReason,
+    ...(usage === undefined ? {} : { usage }),
+  }
+}
+
 export async function complete(req: CompleteRequest): Promise<ProviderCompletion> {
   const protocol: WireProtocol = req.config.wireProtocol ?? "openai-chat"
   const endpoint = buildEndpointURL(req.config.baseURL, protocol)
-  const cred = resolveRequestSecret(req.config.credential, req.env ?? process.env, req.apiKeyOverride)
+  const cred = resolveRequestSecret(
+    req.config.credential,
+    req.env ?? process.env,
+    req.apiKeyOverride,
+  )
   if (!cred.ok) {
     throw new ProviderRequestError(
       "credential_missing",
@@ -527,6 +923,7 @@ export async function complete(req: CompleteRequest): Promise<ProviderCompletion
   }
 
   const headers = buildAuthHeaders(protocol, req.config.headers, cred.secret)
+  const wantStream = req.stream === true || req.onDelta !== undefined
 
   const body =
     protocol === "anthropic-messages"
@@ -539,7 +936,7 @@ export async function complete(req: CompleteRequest): Promise<ProviderCompletion
             ...(req.tools.length > 0 ? { tools: toAnthropicTools(req.tools) } : {}),
             max_tokens: req.maxOutputTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS,
             ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-            stream: false,
+            stream: wantStream,
           })
         })()
       : JSON.stringify({
@@ -548,7 +945,7 @@ export async function complete(req: CompleteRequest): Promise<ProviderCompletion
           ...(req.tools.length > 0 ? { tools: toWireTools(req.tools) } : {}),
           ...(req.maxOutputTokens !== undefined ? { max_tokens: req.maxOutputTokens } : {}),
           ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-          stream: false,
+          stream: wantStream,
         })
 
   const fetchFn = req.fetchImpl ?? fetch
@@ -592,9 +989,18 @@ export async function complete(req: CompleteRequest): Promise<ProviderCompletion
       )
     }
 
-    const rawText = await readBoundedText(response, maxResponseBytes, req.config.baseURL)
     if (!response.ok) {
-      const safeSnippet = scrubSecret(rawText.slice(0, 400).replace(/\s+/g, " ").trim(), cred.secret)
+      const rawText = await readBoundedText(
+        response,
+        maxResponseBytes,
+        req.config.baseURL,
+        controller.signal,
+      )
+      const safeSnippet = scrubSecret(
+        rawText.slice(0, 400).replace(/\s+/g, " ").trim(),
+        cred.secret,
+      )
+      const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"))
       if (response.status === 401 || response.status === 403) {
         throw new ProviderRequestError(
           "unauthorized",
@@ -606,16 +1012,46 @@ export async function complete(req: CompleteRequest): Promise<ProviderCompletion
         throw new ProviderRequestError(
           "rate_limit",
           `Provider at ${req.config.baseURL} rate-limited the request (HTTP 429): ${safeSnippet}`,
-          { status: 429, retryable: true },
+          { status: 429, retryable: true, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) },
         )
       }
+      const isRetryable = response.status === 408 || response.status >= 500
       throw new ProviderRequestError(
         "http_error",
         `Provider at ${req.config.baseURL} returned HTTP ${response.status}: ${safeSnippet}`,
-        { status: response.status, retryable: response.status >= 500 },
+        {
+          status: response.status,
+          retryable: isRetryable,
+          ...(isRetryable && retryAfterMs !== undefined ? { retryAfterMs } : {}),
+        },
       )
     }
 
+    const contentType = (response.headers.get("content-type") ?? "").toLowerCase()
+    if (wantStream && contentType.includes("text/event-stream")) {
+      return protocol === "anthropic-messages"
+        ? await parseAnthropicSSE(
+            response,
+            maxResponseBytes,
+            req.config.baseURL,
+            req.onDelta,
+            controller.signal,
+          )
+        : await parseOpenAISSE(
+            response,
+            maxResponseBytes,
+            req.config.baseURL,
+            req.onDelta,
+            controller.signal,
+          )
+    }
+
+    const rawText = await readBoundedText(
+      response,
+      maxResponseBytes,
+      req.config.baseURL,
+      controller.signal,
+    )
     let json: unknown
     try {
       json = JSON.parse(rawText)
@@ -668,6 +1104,7 @@ export interface ProbeModelsRequest {
   readonly apiKeyOverride?: string
   readonly timeoutMs?: number
   readonly maxResponseBytes?: number
+  readonly signal?: AbortSignal
   readonly fetchImpl?: typeof fetch
 }
 
@@ -677,6 +1114,7 @@ export interface ProbeModelsResult {
   readonly probedURL: string
   readonly resolvedBaseURL?: string
   readonly usedFallback?: boolean
+  readonly cancelled?: boolean
   readonly error?: string
 }
 
@@ -684,25 +1122,30 @@ function buildModelsCandidates(
   baseURL: string,
   protocol: WireProtocol,
 ): ReadonlyArray<{ readonly base: string; readonly url: string; readonly isFallback: boolean }> {
-  const clean = baseURL.replace(/\/+$/, "")
+  const parsed = new URL(baseURL)
+  const cleanPath = parsed.pathname.replace(/\/+$/, "")
   const out: Array<{ base: string; url: string; isFallback: boolean }> = []
-  const push = (base: string, isFallback: boolean) => {
-    const b = base.replace(/\/+$/, "")
-    if (!b) return
-    const url =
+  const push = (basePath: string, isFallback: boolean) => {
+    const bp = basePath.replace(/\/+$/, "")
+    const baseStr = `${parsed.origin}${bp}${parsed.search}`
+
+    const probeObj = new URL(parsed.origin)
+    probeObj.pathname =
       protocol === "anthropic-messages"
-        ? b.endsWith("/v1")
-          ? `${b}/models`
-          : `${b}/v1/models`
-        : `${b}/models`
-    if (!out.some((x) => x.url === url)) out.push({ base: b, url, isFallback })
+        ? bp.endsWith("/v1")
+          ? `${bp}/models`
+          : `${bp}/v1/models`
+        : `${bp}/models`
+    probeObj.search = parsed.search
+    const urlStr = probeObj.toString()
+    if (!out.some((x) => x.url === urlStr)) out.push({ base: baseStr, url: urlStr, isFallback })
   }
 
-  push(clean, false)
-  if (clean.endsWith("/v1")) {
-    push(clean.slice(0, -3), true)
+  push(cleanPath, false)
+  if (cleanPath.endsWith("/v1")) {
+    push(cleanPath.slice(0, -3), true)
   } else {
-    push(`${clean}/v1`, true)
+    push(`${cleanPath}/v1`, true)
   }
   return out
 }
@@ -735,21 +1178,32 @@ function extractModelIdsFromPayload(payload: unknown): string[] {
 }
 
 /**
- * Hermes-style `GET /models` probe with same-origin `base±/v1` fallback and redirect refusal.
+ * Hermes-style `GET /models` probe with same-origin `base±/v1` fallback, redirect refusal,
+ * and immediate AbortSignal propagation.
  */
 export async function probeModels(req: ProbeModelsRequest): Promise<ProbeModelsResult> {
   const protocol: WireProtocol = req.wireProtocol ?? "openai-chat"
+  const candidates = buildModelsCandidates(req.baseURL, protocol)
+  const defaultProbed = candidates[0]?.url ?? `${req.baseURL.replace(/\/+$/, "")}/models`
+  if (req.signal?.aborted) {
+    return {
+      ok: false,
+      models: [],
+      probedURL: defaultProbed,
+      cancelled: true,
+      error: "Model discovery cancelled by user.",
+    }
+  }
   const cred = resolveRequestSecret(req.credential, req.env ?? process.env, req.apiKeyOverride)
   if (!cred.ok) {
     return {
       ok: false,
       models: [],
-      probedURL: `${req.baseURL.replace(/\/+$/, "")}/models`,
+      probedURL: defaultProbed,
       error: `Cannot authenticate (${cred.summary}).`,
     }
   }
 
-  const candidates = buildModelsCandidates(req.baseURL, protocol)
   const headers = buildAuthHeaders(protocol, req.headers, cred.secret)
   delete headers["Content-Type"]
   const fetchFn = req.fetchImpl ?? fetch
@@ -758,8 +1212,23 @@ export async function probeModels(req: ProbeModelsRequest): Promise<ProbeModelsR
   let lastError: string | undefined
 
   for (const candidate of candidates) {
+    if (req.signal?.aborted) {
+      return {
+        ok: false,
+        models: [],
+        probedURL: candidate.url,
+        cancelled: true,
+        error: "Model discovery cancelled by user.",
+      }
+    }
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, timeoutMs)
+    const onParentAbort = () => controller.abort()
+    req.signal?.addEventListener("abort", onParentAbort, { once: true })
     try {
       const response = await fetchFn(candidate.url, {
         method: "GET",
@@ -772,7 +1241,12 @@ export async function probeModels(req: ProbeModelsRequest): Promise<ProbeModelsR
         lastError = `Refused HTTP ${response.status} redirect to ${location}.`
         continue
       }
-      const rawText = await readBoundedText(response, maxResponseBytes, candidate.url)
+      const rawText = await readBoundedText(
+        response,
+        maxResponseBytes,
+        candidate.url,
+        controller.signal,
+      )
       if (!response.ok) {
         const snippet = scrubSecret(rawText.slice(0, 200).replace(/\s+/g, " ").trim(), cred.secret)
         lastError = `HTTP ${response.status}${snippet ? `: ${snippet}` : ""}`
@@ -791,16 +1265,28 @@ export async function probeModels(req: ProbeModelsRequest): Promise<ProbeModelsR
         usedFallback: candidate.isFallback,
       }
     } catch (error) {
-      lastError = scrubSecret(error instanceof Error ? error.message : String(error), cred.secret)
+      if (req.signal?.aborted) {
+        return {
+          ok: false,
+          models: [],
+          probedURL: candidate.url,
+          cancelled: true,
+          error: "Model discovery cancelled by user.",
+        }
+      }
+      lastError = timedOut
+        ? `Model discovery timed out at ${candidate.url} after ${timeoutMs} ms.`
+        : scrubSecret(error instanceof Error ? error.message : String(error), cred.secret)
     } finally {
       clearTimeout(timer)
+      req.signal?.removeEventListener("abort", onParentAbort)
     }
   }
 
   return {
     ok: false,
     models: [],
-    probedURL: candidates[0]?.url ?? `${req.baseURL.replace(/\/+$/, "")}/models`,
+    probedURL: defaultProbed,
     ...(lastError ? { error: lastError } : {}),
   }
 }
@@ -810,8 +1296,13 @@ export interface TestConnectionRequest {
   readonly env?: NodeJS.ProcessEnv
   readonly apiKeyOverride?: string
   readonly timeoutMs?: number
+  readonly signal?: AbortSignal
+  readonly onProgress?: (stage: string) => void
+  readonly checkToolCapability?: boolean
   readonly fetchImpl?: typeof fetch
 }
+
+export type ToolSupportStatus = "supported" | "accepted_text_only" | "unsupported" | "untested"
 
 export interface TestConnectionResult {
   readonly ok: boolean
@@ -822,16 +1313,47 @@ export interface TestConnectionResult {
   readonly discoveredModelsCount?: number
   readonly modelListedInCatalog?: boolean
   readonly probedURL?: string
+  readonly toolSupport?: ToolSupportStatus
+  readonly cancelled?: boolean
   readonly errorKind?: ProviderErrorKind
   readonly error?: string
 }
 
+const PROBE_TOOL_DEF: ToolDefinition = {
+  name: "bw_connection_probe",
+  description: "Harmless read-only echo probe used during setup to verify tool-call capability.",
+  parameters: {
+    type: "object",
+    properties: { ok: { type: "boolean" } },
+    additionalProperties: false,
+  },
+}
+
 /**
- * Verify provider authentication, `/models` visibility (best-effort), and a minimal sample
- * completion (`Reply with OK.`) modeled on Hermes setup & connectivity verification.
+ * Verify provider authentication, `/models` visibility (best-effort), usable sample completion,
+ * and tool-call schema compatibility within an overall bounded deadline and AbortSignal.
  */
-export async function testProviderConnection(req: TestConnectionRequest): Promise<TestConnectionResult> {
+export async function testProviderConnection(
+  req: TestConnectionRequest,
+): Promise<TestConnectionResult> {
   const started = Date.now()
+  const totalBudgetMs = Math.max(200, req.timeoutMs ?? 15_000)
+  const deadline = started + totalBudgetMs
+
+  if (req.signal?.aborted) {
+    return {
+      ok: false,
+      latencyMs: 0,
+      cancelled: true,
+      errorKind: "cancelled",
+      error: "Connection test cancelled by user.",
+    }
+  }
+
+  const probeTimeout = Math.min(4_000, Math.max(150, Math.floor(totalBudgetMs * 0.4)))
+  req.onProgress?.(
+    `Probing /models catalog at ${req.config.baseURL} (timeout ${probeTimeout} ms)...`,
+  )
   const probe = await probeModels({
     baseURL: req.config.baseURL,
     credential: req.config.credential,
@@ -839,28 +1361,28 @@ export async function testProviderConnection(req: TestConnectionRequest): Promis
     ...(req.config.headers ? { headers: req.config.headers } : {}),
     ...(req.env ? { env: req.env } : {}),
     ...(req.apiKeyOverride !== undefined ? { apiKeyOverride: req.apiKeyOverride } : {}),
-    timeoutMs: Math.min(6_000, req.timeoutMs ?? 15_000),
+    timeoutMs: probeTimeout,
+    ...(req.signal ? { signal: req.signal } : {}),
     ...(req.fetchImpl ? { fetchImpl: req.fetchImpl } : {}),
   })
 
-  try {
-    const completion = await complete({
-      config: req.config,
-      messages: [{ role: "user", content: "Reply with OK." }],
-      tools: [],
-      ...(req.env ? { env: req.env } : {}),
-      ...(req.apiKeyOverride !== undefined ? { apiKeyOverride: req.apiKeyOverride } : {}),
-      maxOutputTokens: 16,
-      timeoutMs: req.timeoutMs ?? 15_000,
-      ...(req.fetchImpl ? { fetchImpl: req.fetchImpl } : {}),
-    })
-    const snippet = completion.text.trim().replace(/\s+/g, " ").slice(0, 80)
+  if (probe.cancelled || req.signal?.aborted) {
     return {
-      ok: true,
+      ok: false,
       latencyMs: Date.now() - started,
-      replySnippet: snippet || "(empty response)",
-      finishReason: completion.finishReason,
-      ...(completion.usage ? { usage: completion.usage } : {}),
+      cancelled: true,
+      errorKind: "cancelled",
+      error: "Connection test cancelled by user.",
+    }
+  }
+
+  const remainingMs = deadline - Date.now()
+  if (remainingMs <= 50) {
+    return {
+      ok: false,
+      latencyMs: Date.now() - started,
+      errorKind: "timeout",
+      error: `Connection test timed out after ${totalBudgetMs} ms during /models discovery at ${req.config.baseURL}.`,
       ...(probe.ok
         ? {
             discoveredModelsCount: probe.models.length,
@@ -869,9 +1391,141 @@ export async function testProviderConnection(req: TestConnectionRequest): Promis
           }
         : {}),
     }
+  }
+
+  const checkTools = req.checkToolCapability !== false
+  req.onProgress?.(
+    `Testing sample completion${checkTools ? " & tool schema" : ""} (${remainingMs} ms remaining)...`,
+  )
+
+  const runSample = async (withTools: boolean, timeoutMs: number) =>
+    await complete({
+      config: req.config,
+      messages: [{ role: "user", content: "Reply with OK." }],
+      tools: withTools ? [PROBE_TOOL_DEF] : [],
+      ...(req.env ? { env: req.env } : {}),
+      ...(req.apiKeyOverride !== undefined ? { apiKeyOverride: req.apiKeyOverride } : {}),
+      ...(req.signal ? { signal: req.signal } : {}),
+      maxOutputTokens: 32,
+      timeoutMs,
+      ...(req.fetchImpl ? { fetchImpl: req.fetchImpl } : {}),
+    })
+
+  let toolSupport: ToolSupportStatus = checkTools ? "accepted_text_only" : "untested"
+  try {
+    let completion: ProviderCompletion
+    try {
+      completion = await runSample(checkTools, remainingMs)
+      if (checkTools && completion.toolCalls.length > 0) {
+        toolSupport = "supported"
+      }
+    } catch (firstErr) {
+      if (
+        checkTools &&
+        firstErr instanceof ProviderRequestError &&
+        firstErr.kind === "http_error" &&
+        (firstErr.status === 400 || firstErr.status === 422)
+      ) {
+        const retryRemaining = deadline - Date.now()
+        if (retryRemaining > 100) {
+          toolSupport = "unsupported"
+          completion = await runSample(false, retryRemaining)
+        } else {
+          throw firstErr
+        }
+      } else {
+        throw firstErr
+      }
+    }
+
+    const snippet = completion.text.trim().replace(/\s+/g, " ").slice(0, 80)
+    const catalogMeta = probe.ok
+      ? {
+          discoveredModelsCount: probe.models.length,
+          modelListedInCatalog: probe.models.includes(req.config.model),
+          probedURL: probe.probedURL,
+        }
+      : {}
+
+    if (completion.finishReason === "error") {
+      return {
+        ok: false,
+        latencyMs: Date.now() - started,
+        ...(snippet ? { replySnippet: snippet } : {}),
+        finishReason: completion.finishReason,
+        ...(completion.usage ? { usage: completion.usage } : {}),
+        toolSupport,
+        ...catalogMeta,
+        errorKind: "malformed_response",
+        error: "Provider returned finish_reason='error' on sample request.",
+      }
+    }
+    if (completion.finishReason === "content_filter") {
+      return {
+        ok: false,
+        latencyMs: Date.now() - started,
+        ...(snippet ? { replySnippet: snippet } : {}),
+        finishReason: completion.finishReason,
+        ...(completion.usage ? { usage: completion.usage } : {}),
+        toolSupport,
+        ...catalogMeta,
+        errorKind: "malformed_response",
+        error: "Provider filtered the sample response (finish_reason='content_filter').",
+      }
+    }
+    if (completion.finishReason === "length") {
+      return {
+        ok: false,
+        latencyMs: Date.now() - started,
+        ...(snippet ? { replySnippet: snippet } : {}),
+        finishReason: completion.finishReason,
+        ...(completion.usage ? { usage: completion.usage } : {}),
+        toolSupport,
+        ...catalogMeta,
+        errorKind: "malformed_response",
+        error:
+          "Sample response was truncated (finish_reason='length') and cannot confirm usable output.",
+      }
+    }
+    if (completion.toolInputErrors.length > 0) {
+      return {
+        ok: false,
+        latencyMs: Date.now() - started,
+        ...(snippet ? { replySnippet: snippet } : {}),
+        finishReason: completion.finishReason,
+        ...(completion.usage ? { usage: completion.usage } : {}),
+        toolSupport,
+        ...catalogMeta,
+        errorKind: "malformed_response",
+        error: "Provider returned malformed tool-call arguments during connection probe.",
+      }
+    }
+    if (snippet === "" && completion.toolCalls.length === 0) {
+      return {
+        ok: false,
+        latencyMs: Date.now() - started,
+        finishReason: completion.finishReason,
+        ...(completion.usage ? { usage: completion.usage } : {}),
+        toolSupport,
+        ...catalogMeta,
+        errorKind: "malformed_response",
+        error: "Provider returned an empty response with no usable text or tool call.",
+      }
+    }
+
+    return {
+      ok: true,
+      latencyMs: Date.now() - started,
+      replySnippet: snippet || `[tool:${completion.toolCalls[0]!.name}]`,
+      finishReason: completion.finishReason,
+      ...(completion.usage ? { usage: completion.usage } : {}),
+      toolSupport,
+      ...catalogMeta,
+    }
   } catch (error) {
     const latencyMs = Date.now() - started
     const message = error instanceof Error ? error.message : String(error)
+    const cancelled = error instanceof ProviderRequestError && error.kind === "cancelled"
     return {
       ok: false,
       latencyMs,
@@ -882,6 +1536,7 @@ export async function testProviderConnection(req: TestConnectionRequest): Promis
             probedURL: probe.probedURL,
           }
         : {}),
+      ...(cancelled ? { cancelled: true } : {}),
       ...(error instanceof ProviderRequestError ? { errorKind: error.kind } : {}),
       error: message,
     }

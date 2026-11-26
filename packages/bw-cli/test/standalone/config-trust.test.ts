@@ -282,6 +282,41 @@ test("Hermes-style setup supports pasted API key (0600 key file), live /models f
           { status: 200, headers: { "content-type": "application/json" } },
         )
       }
+      const rawBody = typeof init?.body === "string" ? init.body : ""
+      const parsedBody = rawBody
+        ? (JSON.parse(rawBody) as {
+            tools?: Array<{ function?: { name?: string } }>
+            messages?: Array<{ role?: string }>
+          })
+        : {}
+      const hasProbeTool = Boolean(
+        parsedBody.tools?.some((t) => t.function?.name === "bw_connection_probe"),
+      )
+      const hasToolResult = Boolean(parsedBody.messages?.some((m) => m.role === "tool"))
+      if (hasProbeTool && !hasToolResult) {
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                finish_reason: "tool_calls",
+                message: {
+                  role: "assistant",
+                  content: "",
+                  tool_calls: [
+                    {
+                      id: "call_probe_1",
+                      type: "function",
+                      function: { name: "bw_connection_probe", arguments: '{"ok":true}' },
+                    },
+                  ],
+                },
+              },
+            ],
+            usage: { prompt_tokens: 10, completion_tokens: 6, total_tokens: 16 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )
+      }
       return new Response(
         JSON.stringify({
           choices: [{ finish_reason: "stop", message: { role: "assistant", content: "OK" } }],
@@ -309,6 +344,7 @@ test("Hermes-style setup supports pasted API key (0600 key file), live /models f
     const loaded = loadStandaloneConfig(dir)
     assert.equal(loaded.status, "ok")
     assert.equal(loaded.config.model, "hermes-live-coder")
+    assert.equal(loaded.config.connectionStatus, "verified")
     assert.equal(loaded.config.credential.kind, "file")
     const keyFilePath = (loaded.config.credential as { kind: "file"; path: string }).path
     assert.equal(readFileSync(keyFilePath, "utf8").trim(), "sk-hermes-live-secret-999")
@@ -318,8 +354,8 @@ test("Hermes-style setup supports pasted API key (0600 key file), live /models f
     )
     assert.ok(okSetup.stdout().includes("Found 2 live model(s)"))
     assert.ok(okSetup.stdout().includes("Connection verified"))
-    // /models fetched once on 'f', then testProviderConnection called GET /models + POST /chat/completions
-    assert.equal(seenRequests.length, 3)
+    // /models fetched once on 'f', then testProviderConnection called GET /models + text sample + tool probe + follow-up
+    assert.equal(seenRequests.length, 5)
     assert.equal(seenRequests[0]!.auth, "Bearer sk-hermes-live-secret-999")
     assert.equal(seenRequests[2]!.url, "https://api.openai.com/v1/chat/completions")
   } finally {

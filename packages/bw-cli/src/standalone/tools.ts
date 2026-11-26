@@ -25,6 +25,7 @@ import {
 } from "node:fs"
 import path from "node:path"
 import { homedir } from "node:os"
+import { StringDecoder } from "node:string_decoder"
 import {
   checkWorkspaceReadPath,
   checkWorkspaceWritePath,
@@ -124,34 +125,202 @@ function sha256Bytes(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex")
 }
 
-function loadGitIgnorePatterns(workspace: string): readonly string[] {
-  const giPath = path.join(workspace, ".gitignore")
+interface GitIgnoreRule {
+  readonly baseDirRel: string
+  readonly negated: boolean
+  readonly dirOnly: boolean
+  readonly anchored: boolean
+  readonly pattern: string
+}
+
+function unescapeGitIgnoreLine(raw: string): string {
+  // Trim unescaped trailing spaces while preserving `\ `.
+  let end = raw.length
+  while (end > 0 && raw[end - 1] === " " && (end < 2 || raw[end - 2] !== "\\")) {
+    end -= 1
+  }
+  return raw.slice(0, end).replace(/\\([#! ])/g, "$1")
+}
+
+function parseGitIgnoreFile(dirAbs: string, baseDirRel: string): GitIgnoreRule[] {
+  const giPath = path.join(dirAbs, ".gitignore")
   if (!existsSync(giPath)) return []
+  let raw: string
   try {
-    const raw = readFileSync(giPath, "utf8")
-    const patterns: string[] = []
-    for (const line of raw.split(/\r?\n/)) {
-      const trimmed = line.trim()
-      if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("!")) continue
-      patterns.push(trimmed.replace(/^\//, "").replace(/\/+$/, ""))
-    }
-    return patterns
+    raw = readFileSync(giPath, "utf8")
   } catch {
     return []
   }
+  const rules: GitIgnoreRule[] = []
+  for (const rawLine of raw.split(/\r?\n/)) {
+    if (!rawLine || rawLine.trim() === "") continue
+    if (rawLine.startsWith("#")) continue
+    let line = unescapeGitIgnoreLine(rawLine)
+    if (!line) continue
+    let negated = false
+    if (line.startsWith("!")) {
+      negated = true
+      line = line.slice(1)
+    } else if (line.startsWith("\\!")) {
+      line = `!${line.slice(2)}`
+    } else if (line.startsWith("\\#")) {
+      line = `#${line.slice(2)}`
+    }
+    if (!line) continue
+    const dirOnly = line.endsWith("/")
+    if (dirOnly) line = line.slice(0, -1)
+    if (!line) continue
+    const leadingSlash = line.startsWith("/")
+    if (leadingSlash) line = line.slice(1)
+    const anchored = leadingSlash || line.includes("/")
+    rules.push({ baseDirRel, negated, dirOnly, anchored, pattern: line })
+  }
+  return rules
 }
 
-function isIgnoredByRules(relPosix: string, name: string, rules: readonly string[]): boolean {
+function matchesGitIgnoreRule(
+  relFromWorkspace: string,
+  name: string,
+  isDir: boolean,
+  rule: GitIgnoreRule,
+): boolean {
+  if (rule.dirOnly && !isDir) return false
+  let relInScope = relFromWorkspace
+  if (rule.baseDirRel !== "") {
+    const prefix = `${rule.baseDirRel}/`
+    if (!relFromWorkspace.startsWith(prefix)) return false
+    relInScope = relFromWorkspace.slice(prefix.length)
+  }
+  if (!rule.anchored) {
+    return globMatch(rule.pattern, name) || globMatch(rule.pattern, relInScope)
+  }
+  return (
+    globMatch(rule.pattern, relInScope) ||
+    (!rule.dirOnly && relInScope.startsWith(`${rule.pattern}/`))
+  )
+}
+
+function isIgnoredByGitRules(
+  relFromWorkspace: string,
+  name: string,
+  isDir: boolean,
+  rules: readonly GitIgnoreRule[],
+  trackedFiles?: ReadonlySet<string>,
+): boolean {
   if (name === ".git" || name === "node_modules") return true
+  if (!isDir && trackedFiles?.has(relFromWorkspace)) return false
+  let ignored = false
   for (const rule of rules) {
-    if (!rule) continue
-    if (!rule.includes("/")) {
-      if (globMatch(rule, name)) return true
-    } else if (globMatch(rule, relPosix) || relPosix.startsWith(`${rule}/`)) {
-      return true
+    if (matchesGitIgnoreRule(relFromWorkspace, name, isDir, rule)) {
+      ignored = !rule.negated
     }
   }
-  return false
+  return ignored
+}
+
+function loadGitTrackedFiles(workspace: string): Set<string> | undefined {
+  if (!existsSync(path.join(workspace, ".git"))) return undefined
+  for (const gitBin of ["git", "/Library/Developer/CommandLineTools/usr/bin/git", "/usr/bin/git"]) {
+    try {
+      const res = spawnSync(gitBin, ["ls-files", "-z"], {
+        cwd: workspace,
+        encoding: "utf8",
+        timeout: 300,
+      })
+      if (res.status === 0) {
+        return new Set(
+          res.stdout
+            .split("\0")
+            .map((p) => p.replace(/\\/g, "/"))
+            .filter(Boolean),
+        )
+      }
+      if (res.status !== undefined) break
+    } catch {
+      // Try next git candidate
+    }
+  }
+  return undefined
+}
+
+export function collectWorkspaceFilesBFS(
+  workspace: string,
+  options: {
+    readonly startDirAbs?: string
+    readonly maxDepth?: number
+    readonly maxCollect?: number
+    readonly includeDirs?: boolean
+  } = {},
+): { readonly entries: string[]; readonly hasMore: boolean } {
+  const startDirAbs = options.startDirAbs ?? workspace
+  const maxDepth = options.maxDepth ?? 5
+  const maxCollect = options.maxCollect ?? 300
+  const includeDirs = options.includeDirs ?? false
+
+  const trackedFiles = loadGitTrackedFiles(workspace)
+  const rootRules = parseGitIgnoreFile(workspace, "")
+  const startRel = path.relative(workspace, startDirAbs).split(path.sep).join("/")
+  const initialRules: GitIgnoreRule[] = [...rootRules]
+  if (startRel && startRel !== "." && !startRel.startsWith("..")) {
+    const parts = startRel.split("/")
+    let accum = ""
+    for (const part of parts) {
+      accum = accum ? `${accum}/${part}` : part
+      initialRules.push(...parseGitIgnoreFile(path.join(workspace, accum), accum))
+    }
+  }
+
+  const out: string[] = []
+  let hasMore = false
+  const queue: Array<{
+    readonly dir: string
+    readonly depth: number
+    readonly rules: readonly GitIgnoreRule[]
+  }> = [{ dir: startDirAbs, depth: 1, rules: initialRules }]
+
+  while (queue.length > 0 && !hasMore) {
+    const { dir: current, depth, rules } = queue.shift()!
+    let dirEntries
+    try {
+      dirEntries = readdirSync(current, { withFileTypes: true }).sort((a, b) =>
+        a.name.localeCompare(b.name),
+      )
+    } catch {
+      continue
+    }
+    for (const entry of dirEntries) {
+      if (out.length >= maxCollect) {
+        hasMore = true
+        break
+      }
+      const full = path.join(current, entry.name)
+      const rel = path.relative(workspace, full).split(path.sep).join("/")
+      const isDir = entry.isDirectory()
+      if (entry.isSymbolicLink()) {
+        try {
+          const resolved = physicalPath(full)
+          if (!contains(workspace, resolved)) continue
+        } catch {
+          continue
+        }
+      }
+      if (isIgnoredByGitRules(rel, entry.name, isDir, rules, trackedFiles)) continue
+      if (isDir) {
+        if (includeDirs) out.push(`${rel}/`)
+        if (depth < maxDepth) {
+          const nested = parseGitIgnoreFile(full, rel)
+          queue.push({
+            dir: full,
+            depth: depth + 1,
+            rules: nested.length > 0 ? [...rules, ...nested] : rules,
+          })
+        }
+      } else if (entry.isFile()) {
+        out.push(rel)
+      }
+    }
+  }
+  return { entries: out, hasMore }
 }
 
 export function executeListFiles(
@@ -195,52 +364,14 @@ export function executeListFiles(
     return { ok: false, output: `Not a directory: ${dirArg ?? "."}` }
   }
 
-  const ignoreRules = loadGitIgnorePatterns(boundary.workspace)
-  const allEntries: string[] = []
-  const maxCollect = offset + MAX_LIST_ENTRIES + 1
-  const queue: Array<{ readonly dir: string; readonly depth: number }> = [
-    { dir: check.resolvedPath, depth: 1 },
-  ]
-  let hasMore = false
-
-  while (queue.length > 0 && !hasMore) {
-    const { dir: current, depth } = queue.shift()!
-    let entries
-    try {
-      entries = readdirSync(current, { withFileTypes: true }).sort((a, b) =>
-        a.name.localeCompare(b.name),
-      )
-    } catch {
-      continue
-    }
-    // Root-level files and directories are emitted in breadth-first order so large subdirectories
-    // never starve top-level project files like README.md or package.json.
-    for (const entry of entries) {
-      if (allEntries.length >= maxCollect) {
-        hasMore = true
-        break
-      }
-      const full = path.join(current, entry.name)
-      const rel = path.relative(boundary.workspace, full).split(path.sep).join("/")
-      if (isIgnoredByRules(rel, entry.name, ignoreRules)) continue
-      if (entry.isSymbolicLink()) {
-        try {
-          const resolved = physicalPath(full)
-          if (!contains(boundary.workspace, resolved)) continue
-        } catch {
-          continue
-        }
-      }
-      if (entry.isDirectory()) {
-        allEntries.push(`${rel}/`)
-        if (depth < maxDepth) {
-          queue.push({ dir: full, depth: depth + 1 })
-        }
-      } else if (entry.isFile()) {
-        allEntries.push(rel)
-      }
-    }
-  }
+  const collected = collectWorkspaceFilesBFS(boundary.workspace, {
+    startDirAbs: check.resolvedPath,
+    maxDepth,
+    maxCollect: offset + MAX_LIST_ENTRIES + 1,
+    includeDirs: true,
+  })
+  const allEntries = collected.entries
+  const hasMore = collected.hasMore
 
   const results = allEntries.slice(offset, offset + MAX_LIST_ENTRIES)
   const truncated = allEntries.length > offset + MAX_LIST_ENTRIES || hasMore
@@ -330,6 +461,7 @@ export function executeReadFile(
   let totalReadBytes = 0
   let stoppedByByteBudget = false
   const chunkBuf = Buffer.alloc(16 * 1024)
+  const decoder = new StringDecoder("utf8")
 
   try {
     while (!eof) {
@@ -352,7 +484,7 @@ export function executeReadFile(
         checkedBinary = true
       }
       totalReadBytes += bytesRead
-      const chunkStr = leftover + chunkBuf.subarray(0, bytesRead).toString("utf8")
+      const chunkStr = leftover + decoder.write(chunkBuf.subarray(0, bytesRead))
       const parts = chunkStr.split(/\r?\n/)
       leftover = parts.pop() ?? ""
       for (const line of parts) {
@@ -378,19 +510,27 @@ export function executeReadFile(
         break
       }
     }
-    if (eof && leftover !== undefined) {
-      // Only push trailing segment if file wasn't empty or had content after final newline
-      if (totalReadBytes > 0 || collectedLines.length === 0) {
-        if (leftover !== "" || !chunkBuf.subarray(0, 0).length) {
-          if (totalReadBytes === 0) {
-            lineNum = 1
-            if (start === 1) collectedLines.push("")
-          } else {
-            lineNum += 1
-            if (lineNum >= start && lineNum <= requestedMaxLines) {
-              collectedLines.push(leftover)
-            }
-          }
+    if (eof) {
+      const tailDecoded = leftover + decoder.end()
+      if (totalReadBytes === 0) {
+        lineNum = 1
+        if (start === 1 && collectedLines.length === 0) collectedLines.push("")
+      } else if (tailDecoded !== "") {
+        lineNum += 1
+        if (lineNum >= start && lineNum <= requestedMaxLines) {
+          collectedLines.push(tailDecoded)
+        }
+      }
+      // If reached end of file right at requestedMaxLines, probe 1 byte to check true EOF vs more lines.
+    } else if (lineNum >= requestedMaxLines) {
+      // Check whether any unread lines remain after requestedMaxLines.
+      if (leftover !== "") {
+        eof = false
+      } else {
+        const peek = Buffer.alloc(1)
+        const moreBytes = readSync(fd, peek, 0, 1, null)
+        if (moreBytes === 0) {
+          eof = decoder.end() === ""
         }
       }
     }

@@ -227,6 +227,7 @@ export interface CommandOutcomeRecord {
   readonly exitCode: number | null
   readonly signal: string | null
   readonly timedOut: boolean
+  readonly zeroTestsDetected?: boolean
   readonly outputDigest?: string
   readonly evidenceSeq?: number
   readonly evidenceHash?: string

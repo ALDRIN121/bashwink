@@ -659,3 +659,41 @@ describe("EX-27: shared evidence ledger serialization across instances and proce
     if (verified.ok) expect(verified.entries).toBe(30)
   })
 })
+
+describe("Issue #102: full-prefix digest verification detects same-size and in-place tampering", () => {
+  test("refuses subsequent append when an existing line was modified in place with identical byte length", () => {
+    const recorder = new EvidenceRecorder({ directory: dir, now: fixed })
+    recorder.recordTool("before", { ...call, id: "c1" }, { input: { cmd: "echo alpha" } })
+    recorder.recordTool("after", { ...call, id: "c1" }, { status: "completed", exit: 0 })
+
+    const file = path.join(dir, "evidence.jsonl")
+    const original = readFileSync(file, "utf8")
+    const tampered = original.replace("echo alpha", "echo omega")
+    expect(Buffer.byteLength(tampered)).toBe(Buffer.byteLength(original))
+    writeFileSync(file, tampered, "utf8")
+
+    expect(() =>
+      recorder.recordTool("before", { ...call, id: "c2" }, { input: { cmd: "pwd" } }),
+    ).toThrow(/hash mismatch|tamper|chain/i)
+  })
+
+  test("a fresh resumed recorder marks degraded and refuses to append after same-size prefix tampering", () => {
+    const r1 = new EvidenceRecorder({ directory: dir, now: fixed })
+    r1.recordTool("before", { ...call, id: "c1" }, { input: { cmd: "echo 1111" } })
+    r1.recordTool("after", { ...call, id: "c1" }, { status: "completed", exit: 0 })
+
+    const file = path.join(dir, "evidence.jsonl")
+    const original = readFileSync(file, "utf8")
+    const tampered = original.replace("echo 1111", "echo 2222")
+    expect(Buffer.byteLength(tampered)).toBe(Buffer.byteLength(original))
+    writeFileSync(file, tampered, "utf8")
+
+    const r2 = new EvidenceRecorder({ directory: dir, now: fixed })
+    expect(r2.health.ok).toBe(false)
+    expect(r2.health.degraded).toMatch(/hash mismatch|tamper/i)
+    expect(() => r2.recordTool("before", { ...call, id: "c2" }, { input: { cmd: "pwd" } })).toThrow(
+      /refusing|hash mismatch/i,
+    )
+    expect(readFileSync(file, "utf8")).toBe(tampered)
+  })
+})

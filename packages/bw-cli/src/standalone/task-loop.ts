@@ -11,7 +11,7 @@
 
 import { createHash, randomBytes } from "node:crypto"
 import { spawnSync } from "node:child_process"
-import { existsSync, readdirSync, statSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import path from "node:path"
 import type { Paths } from "../paths.ts"
 import { LimitConfigError, parseLimits } from "../usage-guard.ts"
@@ -396,6 +396,15 @@ interface WorkspaceMutationSnapshot {
   readonly files: Map<string, string>
 }
 
+function fileContentSignature(absPath: string, size: number, mtimeMs: number): string {
+  const MAX_HASH_BYTES = 2 * 1024 * 1024
+  if (size <= MAX_HASH_BYTES) {
+    const hash = createHash("sha256").update(readFileSync(absPath)).digest("hex")
+    return `${size}:${hash}`
+  }
+  return `${size}:${mtimeMs}`
+}
+
 function captureWorkspaceMutationSnapshot(workspace: string): WorkspaceMutationSnapshot {
   const MAX_SNAPSHOT_MS = 300
   const MAX_TRACKED_FILES = 1500
@@ -427,7 +436,7 @@ function captureWorkspaceMutationSnapshot(workspace: string): WorkspaceMutationS
             const abs = path.join(workspace, rel)
             try {
               const st = statSync(abs)
-              files.set(rel, `${status}:${st.size}:${st.mtimeMs}`)
+              files.set(rel, `${status}:${fileContentSignature(abs, st.size, st.mtimeMs)}`)
             } catch {
               files.set(rel, `${status}:missing`)
             }
@@ -823,10 +832,14 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
         stopReason: `Reached total token budget (${totalTokens} >= ${budgets.maxTotalTokens}).`,
       }
     }
-    if (budgets.maxInputTokens !== undefined && totalInput >= budgets.maxInputTokens) {
+    const estInput = estimateRequestInputTokens(requestMessages)
+    if (
+      budgets.maxInputTokens !== undefined &&
+      (totalInput >= budgets.maxInputTokens || totalInput + estInput > budgets.maxInputTokens)
+    ) {
       return {
         ok: false,
-        stopReason: `Reached input token budget (${totalInput} >= ${budgets.maxInputTokens}).`,
+        stopReason: `Reached input token budget (${totalInput + estInput} > ${budgets.maxInputTokens}).`,
       }
     }
     const remainingBudgetOutput =
@@ -842,23 +855,17 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
 
     let requestMaxOutputTokens = remainingBudgetOutput
     if (budgets.maxTotalTokens !== undefined) {
-      const estInput = estimateRequestInputTokens(requestMessages)
-      const remainingTotal = Math.max(
-        0,
-        budgets.maxTotalTokens - totalTokens - (totalTokens > 0 ? estInput : 0),
-      )
-      if (totalTokens > 0 && remainingTotal <= 0) {
+      const remainingTotal = Math.max(0, budgets.maxTotalTokens - totalTokens - estInput)
+      if (remainingTotal < 1) {
         return {
           ok: false,
           stopReason: `Stopped before exceeding total token budget (${budgets.maxTotalTokens}).`,
         }
       }
-      if (remainingTotal > 0) {
-        requestMaxOutputTokens =
-          requestMaxOutputTokens !== undefined
-            ? Math.min(requestMaxOutputTokens, remainingTotal)
-            : remainingTotal
-      }
+      requestMaxOutputTokens =
+        requestMaxOutputTokens !== undefined
+          ? Math.min(requestMaxOutputTokens, remainingTotal)
+          : remainingTotal
     }
     if (requestedCap !== undefined) {
       requestMaxOutputTokens =
@@ -911,23 +918,40 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
     }
   }
 
-  const checkPostResponseBudget = (): string | undefined => {
+  const checkPostResponseBudget = (requireStrictExceeded = false): string | undefined => {
     if (budgets.maxElapsedMs !== undefined && Date.now() - runStartedMs >= budgets.maxElapsedMs) {
       return `Reached elapsed time budget (${budgets.maxElapsedMs}ms).`
     }
-    if (budgets.maxOutputTokens !== undefined && totalOutput >= budgets.maxOutputTokens) {
+    if (
+      budgets.maxOutputTokens !== undefined &&
+      (requireStrictExceeded
+        ? totalOutput > budgets.maxOutputTokens
+        : totalOutput >= budgets.maxOutputTokens)
+    ) {
       return `Reached output token budget (${totalOutput} >= ${budgets.maxOutputTokens}).`
     }
-    if (budgets.maxTotalTokens !== undefined && totalTokens >= budgets.maxTotalTokens) {
+    if (
+      budgets.maxTotalTokens !== undefined &&
+      (requireStrictExceeded
+        ? totalTokens > budgets.maxTotalTokens
+        : totalTokens >= budgets.maxTotalTokens)
+    ) {
       return `Reached total token budget (${totalTokens} >= ${budgets.maxTotalTokens}).`
     }
-    if (budgets.maxInputTokens !== undefined && totalInput >= budgets.maxInputTokens) {
+    if (
+      budgets.maxInputTokens !== undefined &&
+      (requireStrictExceeded
+        ? totalInput > budgets.maxInputTokens
+        : totalInput >= budgets.maxInputTokens)
+    ) {
       return `Reached input token budget (${totalInput} >= ${budgets.maxInputTokens}).`
     }
     if (
       budgets.maxCostUsd !== undefined &&
       input.config.price &&
-      totalCostUsd >= budgets.maxCostUsd
+      (requireStrictExceeded
+        ? totalCostUsd > budgets.maxCostUsd + 1e-12
+        : totalCostUsd >= budgets.maxCostUsd)
     ) {
       return `Reached cost budget ($${budgets.maxCostUsd.toFixed(4)}).`
     }
@@ -1005,7 +1029,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
     targetOrCmd: string,
     detail: string,
   ): Promise<GuardianVerdict & { readonly budgetStopped?: string }> => {
-    const cacheKey = `${tool}:${targetOrCmd}:${createHash("sha256").update(detail).digest("hex")}`
+    const cacheKey = `${tool}:${boundary.workspace}:${permissionMode}:${String(boundary.trusted)}:${targetOrCmd}:${createHash("sha256").update(detail).digest("hex")}`
     const cached = guardianCache.get(cacheKey)
     if (cached) {
       deps.onEvent?.({
@@ -1228,6 +1252,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
   let noProgressStreak = 0
   let lastNoProgressKey = ""
   const recentNoProgressKeys: string[] = []
+  const seenPassSignaturesSinceMutation = new Set<string>()
   const sessionID = runId
 
   try {
@@ -1313,15 +1338,35 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
           const retryMsLeft =
             budgets.maxElapsedMs !== undefined
               ? budgets.maxElapsedMs - (Date.now() - runStartedMs)
-              : 10_000
-          const backoffMs = Math.min(
-            error.retryAfterMs ?? 400 * 2 ** attempt,
-            5_000,
-            Math.max(0, retryMsLeft - 100),
-          )
-          if (backoffMs <= 0 || requests + guardianRequests >= budgets.maxRequests) {
-            outcome = "failed"
-            stopReason = sanitizeSecretText(error.message, activeSecret)
+              : 120_000
+          if (retryMsLeft <= 0) {
+            outcome = "budget_stopped"
+            stopReason = `Reached elapsed time budget (${budgets.maxElapsedMs}ms) before retry.`
+            requestFailed = true
+            break
+          }
+          let backoffMs: number
+          if (error.retryAfterMs !== undefined) {
+            if (error.retryAfterMs >= retryMsLeft) {
+              outcome = "budget_stopped"
+              stopReason = `Server Retry-After delay (${error.retryAfterMs}ms) exceeds remaining elapsed budget (${retryMsLeft}ms).`
+              requestFailed = true
+              break
+            }
+            backoffMs = Math.max(0, error.retryAfterMs)
+          } else {
+            const expDelay = Math.min(400 * 2 ** attempt, 5_000)
+            if (retryMsLeft <= 100) {
+              outcome = "budget_stopped"
+              stopReason = `Insufficient elapsed budget (${retryMsLeft}ms) remaining for retry.`
+              requestFailed = true
+              break
+            }
+            backoffMs = Math.min(expDelay, retryMsLeft - 100)
+          }
+          if (requests + guardianRequests >= budgets.maxRequests) {
+            outcome = "budget_stopped"
+            stopReason = `Reached request limit (${budgets.maxRequests} model requests per task).`
             requestFailed = true
             break
           }
@@ -1378,6 +1423,12 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
       const calls = pendingCalls(completion)
       if (calls.length === 0) {
         finalText = completion.text
+        const finalBudgetStop = checkPostResponseBudget(true)
+        if (finalBudgetStop !== undefined) {
+          outcome = "budget_stopped"
+          stopReason = finalBudgetStop
+          break
+        }
         if (finalText) {
           deps.onEvent?.({ type: "assistant_text", text: finalText })
           turnMessages.push({ role: "assistant", content: finalText })
@@ -1385,7 +1436,8 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
         if (
           completion.finishReason === "error" ||
           completion.finishReason === "content_filter" ||
-          completion.finishReason === "length"
+          completion.finishReason === "length" ||
+          completion.finishReason === "unknown"
         ) {
           outcome = "failed"
           stopReason =
@@ -1393,10 +1445,19 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
               ? "Provider stopped response due to content_filter."
               : completion.finishReason === "length"
                 ? "Model response truncated at output length limit before completion."
-                : "Provider returned finish_reason: error."
+                : completion.finishReason === "unknown"
+                  ? "Provider ended response with incomplete/unknown finish_reason."
+                  : "Provider returned finish_reason: error."
         } else {
           outcome = "completed"
         }
+        break
+      }
+
+      if (completion.finishReason !== "tool_calls" && completion.finishReason !== "stop") {
+        outcome = "failed"
+        stopReason = `Model response ended with non-terminal/error finishReason='${completion.finishReason}'; aborted before running tool calls.`
+        finalText = completion.text
         break
       }
 
@@ -1439,6 +1500,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
 
       const results: ToolDispatchResult[] = []
       let abortedOrUncertain = false
+      const mutationOrderBeforeStep = lastMutationOrder
 
       for (const item of calls) {
         if (input.signal?.aborted) {
@@ -1511,7 +1573,17 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
 
         // Write `before` evidence BEFORE executing side effects; fail closed if evidence cannot be written.
         try {
-          recorder.recordTool("before", ref, { input: call.input })
+          const beforeInput =
+            call.name === "run_command"
+              ? {
+                  ...call.input,
+                  resolvedCwd:
+                    typeof call.input["cwd"] === "string" && call.input["cwd"].trim() !== ""
+                      ? path.resolve(boundary.workspace, call.input["cwd"])
+                      : boundary.workspace,
+                }
+              : call.input
+          recorder.recordTool("before", ref, { input: beforeInput })
         } catch (err) {
           outcome = "uncertain"
           stopReason = `Stopped before executing '${call.name}' because evidence could not be recorded: ${err instanceof Error ? err.message : String(err)}`
@@ -1776,12 +1848,11 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
             abortedOrUncertain = true
             break
           }
-          if (
-            budgets.maxElapsedMs !== undefined &&
-            Date.now() - runStartedMs >= budgets.maxElapsedMs
-          ) {
+          const postEditAuthStop = checkPostResponseBudget(true)
+          if (postEditAuthStop !== undefined) {
+            recorder.recordTool("denied", ref, { input: call.input, note: postEditAuthStop })
             outcome = "budget_stopped"
-            stopReason = `Reached elapsed time budget (${budgets.maxElapsedMs}ms).`
+            stopReason = postEditAuthStop
             abortedOrUncertain = true
             break
           }
@@ -1810,6 +1881,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
           }
           if (applied.ok) {
             lastMutationOrder = editOrder
+            guardianCache.clear()
           }
           if (applied.ok && testFindings.length > 0) {
             testIntegrityFindings.push(...testFindings)
@@ -1983,21 +2055,20 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
             abortedOrUncertain = true
             break
           }
+          const postCmdAuthStop = checkPostResponseBudget(true)
+          if (postCmdAuthStop !== undefined) {
+            recorder.recordTool("denied", ref, { input: call.input, note: postCmdAuthStop })
+            outcome = "budget_stopped"
+            stopReason = postCmdAuthStop
+            abortedOrUncertain = true
+            break
+          }
           deps.onEvent?.({
             type: "tool_approved",
             callId: call.id,
             tool: call.name,
             source: auth.source,
           })
-          if (
-            budgets.maxElapsedMs !== undefined &&
-            Date.now() - runStartedMs >= budgets.maxElapsedMs
-          ) {
-            outcome = "budget_stopped"
-            stopReason = `Reached elapsed time budget (${budgets.maxElapsedMs}ms).`
-            abortedOrUncertain = true
-            break
-          }
           const remainingMs =
             budgets.maxElapsedMs !== undefined
               ? Math.max(100, budgets.maxElapsedMs - (Date.now() - runStartedMs))
@@ -2024,6 +2095,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
           }
           if (mutationDelta.mutatedFiles.length > 0) {
             lastMutationOrder = cmdOrder
+            guardianCache.clear()
             for (const rel of mutationDelta.mutatedFiles) {
               changedFilesSet.add(rel)
               const scopeCheck = checkWorkspaceWritePath(boundary, rel)
@@ -2098,6 +2170,14 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
           }
 
           const succeeded = !run.cancelled && !run.timedOut && run.exitCode === 0
+          const zeroTestsDetected =
+            succeeded &&
+            /(?:\b0\s+(?:tests?|specs?|suites?|examples?|files?)\b|\b(?:tests?|examples?|specs?)\s*[:=]?\s*0\b|\bno tests found\b|\bcollected\s+0\s+(?:tests?|items?)\b)/i.test(
+              run.output,
+            ) &&
+            !/\b[1-9]\d*\s+(?:tests?\s+)?(?:pass|passed)\b/i.test(run.output) &&
+            !/^ok\s+\d+\s+-/m.test(run.output) &&
+            !/#\s*pass\s+[1-9]/i.test(run.output)
           const formattedOutput =
             `exitCode: ${run.exitCode === null ? "null" : String(run.exitCode)}` +
             (run.signal ? ` signal: ${run.signal}` : "") +
@@ -2137,6 +2217,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
             exitCode: run.exitCode,
             signal: run.signal,
             timedOut: run.timedOut,
+            ...(zeroTestsDetected ? { zeroTestsDetected: true } : {}),
             actionOrder: cmdOrder,
             ...(afterCmdEntry.payload.fullDigest !== undefined
               ? { outputDigest: afterCmdEntry.payload.fullDigest }
@@ -2185,18 +2266,21 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
       turnMessages.push(...stepMsgs)
 
       const stepHadFileChange =
+        lastMutationOrder > mutationOrderBeforeStep ||
         results.some(
           (r) => r.tool === "edit_file" && r.status === "ok" && r.changedFile !== undefined,
-        ) ||
-        (step > 0 &&
-          lastMutationOrder > 0 &&
-          commands.some(
-            (c) =>
-              c.actionOrder === lastMutationOrder && results.some((r) => r.tool === "run_command"),
-          ))
-      const stepHadPassedCommand = results.some(
-        (r) => r.tool === "run_command" && r.status === "ok",
-      )
+        )
+      if (stepHadFileChange) {
+        seenPassSignaturesSinceMutation.clear()
+      }
+      const stepHadNovelPassedCommand = results.some((r, idx) => {
+        if (r.tool !== "run_command" || r.status !== "ok") return false
+        const callInput = calls[idx]?.call.input
+        const sig = `${JSON.stringify(callInput ?? {})}=>${normalizeLoopText(r.output)}`
+        if (seenPassSignaturesSinceMutation.has(sig)) return false
+        seenPassSignaturesSinceMutation.add(sig)
+        return true
+      })
 
       // Normalized consecutive failure + no-progress + alternating-cycle loop detection (BW-076 / EX-16 / EX-17).
       const errorSignature = results
@@ -2219,7 +2303,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
         lastFailureKey = ""
       }
 
-      if (!stepHadFileChange && !stepHadPassedCommand && calls.length > 0) {
+      if (!stepHadFileChange && !stepHadNovelPassedCommand && calls.length > 0) {
         const noProgressKey = calls
           .map((item, idx) => {
             const res = results[idx]

@@ -1,6 +1,15 @@
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs"
 import { spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -19,11 +28,17 @@ import {
   evaluateContractGate,
   loadActiveContract,
 } from "../../src/standalone/contract-store.ts"
-import { buildProofPack, verifyProofPack } from "../../src/standalone/proof.ts"
+import {
+  buildProofPack,
+  matchesCriterionCommand,
+  verifyProofPack,
+} from "../../src/standalone/proof.ts"
 import {
   complete,
+  probeModels,
   ProviderRequestError,
   safeWireToolArguments,
+  testProviderConnection,
 } from "../../src/standalone/provider.ts"
 import {
   createBoundaryContext,
@@ -41,11 +56,13 @@ import {
   finalizeTurnCheckpoints,
   forkSession,
   listSessionSummaries,
+  listWorkspaceFiles,
   loadPromptHistory,
   loadSession,
   restoreTurnCheckpoints,
   rewindSessionToTurn,
   saveSession,
+  withFileLock,
 } from "../../src/standalone/session.ts"
 import { runTask } from "../../src/standalone/task-loop.ts"
 import { inspectTestEdit } from "../../src/standalone/test-guard.ts"
@@ -131,8 +148,12 @@ test("Audit #10-#14: URL query preservation, local loopback HTTPS, home key expa
   assert.equal(classifyEndpoint("https://api.openai.com/v1"), "remote")
   assert.throws(() => normalizeBaseURL("https://192.168.1.5:8443/v1", "local"), /loopback/i)
 
-  const expanded = expandHomeCredentialPath("~/.keys/test.key", { HOME: "/tmp/fakehome" })
-  assert.equal(expanded, path.join("/tmp/fakehome", ".keys/test.key"))
+  const fakeHome = path.resolve(tmpdir(), "bw-fakehome-test")
+  const expanded = expandHomeCredentialPath("~/.keys/test.key", {
+    HOME: fakeHome,
+    USERPROFILE: fakeHome,
+  })
+  assert.equal(expanded, path.join(fakeHome, ".keys", "test.key"))
 
   const parsed = parseStandaloneConfig(
     JSON.stringify({
@@ -657,5 +678,810 @@ test("Audit #40: standalone CLI refuses --sandbox with exit 3 rather than silent
     assert.match(res.stderr, /not included|refusing/i)
   } finally {
     rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("Issues #89, #90, #91: same-size Git mutation detection, strict ProofPack command matching & before-receipt binding", async () => {
+  const f = tempFixture()
+  try {
+    const runGit = (args: string[]) => {
+      const r = spawnSync("git", args, { cwd: f.workspace, encoding: "utf8" })
+      if (r.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${r.stderr}`)
+    }
+    runGit(["init"])
+    runGit(["config", "user.email", "test@bashwink.local"])
+    runGit(["config", "user.name", "Test User"])
+    writeFileSync(path.join(f.workspace, "app.txt"), "init\n", "utf8")
+    runGit(["add", "app.txt"])
+    runGit(["commit", "-m", "init"])
+    // Make app.txt dirty before task starts, and create an untracked file of known byte length.
+    writeFileSync(path.join(f.workspace, "app.txt"), "aaaa\n", "utf8")
+    writeFileSync(path.join(f.workspace, "scratch.txt"), "1111\n", "utf8")
+
+    let step = 0
+    const mutRes = await runTask(
+      {
+        workspace: f.workspace,
+        prompt: "modify dirty tracked and untracked files with identical byte sizes",
+        trusted: true,
+        config: f.config,
+        budgets: { maxRequests: 5 },
+      },
+      {
+        paths: f.paths,
+        env: f.env,
+        confirmAction: async () => "once",
+        completeImpl: async () => {
+          step += 1
+          if (step === 1) {
+            return {
+              text: "",
+              finishReason: "tool_calls",
+              toolCalls: [
+                {
+                  id: "m1",
+                  name: "run_command",
+                  input: {
+                    command: process.execPath,
+                    args: [
+                      "-e",
+                      "const fs = require('fs'); fs.writeFileSync('app.txt', 'bbbb\\n'); fs.writeFileSync('scratch.txt', '2222\\n'); console.log('tests 0');",
+                    ],
+                  },
+                },
+              ],
+              toolInputErrors: [],
+            }
+          }
+          return { text: "done", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+        },
+      },
+    )
+    assert.equal(mutRes.outcome, "completed")
+    assert.equal(mutRes.changedFiles.includes("app.txt"), true)
+    assert.equal(mutRes.changedFiles.includes("scratch.txt"), true)
+    assert.equal(mutRes.commands[0]?.zeroTestsDetected, true)
+
+    // #90: Subdirectory cwd and positional test filters must not match `npm test` / `node --test`
+    const subDir = path.join(f.workspace, "empty-sub")
+    mkdirSync(subDir, { recursive: true })
+    assert.equal(
+      matchesCriterionCommand(
+        "npm test",
+        {
+          command: "npm",
+          args: ["test", "--", "only.test.js"],
+          cwd: f.workspace,
+          decision: "approved",
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          actionOrder: 1,
+        },
+        f.workspace,
+      ),
+      false,
+    )
+    assert.equal(
+      matchesCriterionCommand(
+        "node --test",
+        {
+          command: "node",
+          args: ["--test"],
+          cwd: subDir,
+          decision: "approved",
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          actionOrder: 1,
+        },
+        f.workspace,
+      ),
+      false,
+    )
+
+    // #90 zeroTestsDetected + #91 before-receipt cross-verification
+    const evidenceFile = path.join(f.paths.evidence, "evidence.jsonl")
+    const baseline = captureWorkspaceBaseline(f.workspace)
+    const contract = createStandaloneContract(f.paths.data, f.workspace, {
+      objective: "pass tests",
+      allowedPaths: ["app.txt"],
+      criteria: [{ id: "t1", statement: "tests pass", command: "npm test" }],
+    })
+    const recorder = createStandaloneRecorder(f.paths.evidence, "run-91")
+    const fakeRef = { id: "spoof-1", tool: "run_command", sessionID: "run-91" }
+    recorder.recordTool("before", fakeRef, {
+      input: { command: "node", args: ["--version"], resolvedCwd: f.workspace },
+    })
+    const spoofAfter = recorder.recordTool("after", fakeRef, {
+      status: "completed",
+      exit: 0,
+      output: "v22.13.0",
+    })
+
+    const spoofPack = buildProofPack({
+      runId: "run-91",
+      outcome: "completed",
+      finalText: "done",
+      workspace: f.workspace,
+      baseline,
+      changedFiles: [],
+      changedTests: [],
+      lastMutationOrder: 0,
+      commands: [
+        {
+          command: "npm",
+          args: ["test"],
+          cwd: f.workspace,
+          decision: "approved",
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          actionOrder: 1,
+          evidenceSeq: spoofAfter.seq,
+          evidenceHash: spoofAfter.hash,
+        },
+      ],
+      testIntegrity: [],
+      contract,
+      evidenceFile,
+    })
+    assert.equal(verifyProofPack(spoofPack).ok, false)
+
+    const okRef = { id: "real-1", tool: "run_command", sessionID: "run-91" }
+    recorder.recordTool("before", okRef, {
+      input: { command: "npm", args: ["test"], resolvedCwd: f.workspace },
+    })
+    const zeroAfter = recorder.recordTool("after", okRef, {
+      status: "completed",
+      exit: 0,
+      output: "0 tests",
+    })
+    const zeroPack = buildProofPack({
+      runId: "run-91",
+      outcome: "completed",
+      finalText: "done",
+      workspace: f.workspace,
+      baseline,
+      changedFiles: [],
+      changedTests: [],
+      lastMutationOrder: 0,
+      commands: [
+        {
+          command: "npm",
+          args: ["test"],
+          cwd: f.workspace,
+          decision: "approved",
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          actionOrder: 1,
+          zeroTestsDetected: true,
+          evidenceSeq: zeroAfter.seq,
+          evidenceHash: zeroAfter.hash,
+        },
+      ],
+      testIntegrity: [],
+      contract,
+      evidenceFile,
+    })
+    assert.notEqual(zeroPack.claimStatus, "verified")
+    assert.notEqual(zeroPack.criteria[0]?.status, "passed")
+  } finally {
+    f.cleanup()
+  }
+})
+
+test("Issues #92, #93, #105, #106, #107: budget bounds, incomplete SSE/finishReason fail-closed, no-op loop, guardian invalidation & Retry-After", async () => {
+  const f = tempFixture()
+  try {
+    writeFileSync(path.join(f.workspace, "target.txt"), "before\n", "utf8")
+
+    // #92a: pre-request maxInputTokens check aborts before step 1
+    let req1Called = 0
+    const preInRes = await runTask(
+      {
+        workspace: f.workspace,
+        prompt: "oversized input relative to cap",
+        trusted: true,
+        config: f.config,
+        budgets: { maxInputTokens: 20 },
+      },
+      {
+        paths: f.paths,
+        env: f.env,
+        confirmAction: async () => "once",
+        completeImpl: async () => {
+          req1Called += 1
+          return { text: "ok", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+        },
+      },
+    )
+    assert.equal(preInRes.outcome, "budget_stopped")
+    assert.equal(req1Called, 0)
+
+    // #92b: final reply exceeding maxCostUsd must return budget_stopped, NOT completed
+    const overCostFinal = await runTask(
+      {
+        workspace: f.workspace,
+        prompt: "hi",
+        trusted: true,
+        config: { ...f.config, price: { inputUsdPer1M: 1000, outputUsdPer1M: 1000 } },
+        budgets: { maxCostUsd: 0.5 },
+      },
+      {
+        paths: f.paths,
+        env: f.env,
+        confirmAction: async () => "once",
+        completeImpl: async () => ({
+          text: "expensive final answer",
+          finishReason: "stop",
+          toolCalls: [],
+          toolInputErrors: [],
+          usage: { inputTokens: 400, outputTokens: 200, costUsd: 0.6 },
+        }),
+      },
+    )
+    assert.equal(overCostFinal.outcome, "budget_stopped")
+
+    // #93a: finishReason="unknown" with tool call must fail closed before writing file
+    const unknownRes = await runTask(
+      {
+        workspace: f.workspace,
+        prompt: "try write with unknown finishReason",
+        trusted: true,
+        config: f.config,
+        budgets: { maxRequests: 2 },
+      },
+      {
+        paths: f.paths,
+        env: f.env,
+        confirmAction: async () => "once",
+        completeImpl: async () => ({
+          text: "",
+          finishReason: "unknown",
+          toolCalls: [
+            {
+              id: "u1",
+              name: "edit_file",
+              input: { path: "target.txt", old_string: "before", new_string: "corrupt" },
+            },
+          ],
+          toolInputErrors: [],
+        }),
+      },
+    )
+    assert.equal(unknownRes.outcome, "failed")
+    assert.match(unknownRes.stopReason ?? "", /non-terminal|unknown/i)
+    assert.equal(readFileSync(path.join(f.workspace, "target.txt"), "utf8"), "before\n")
+
+    // #93b: truncated OpenAI SSE stream without [DONE] or finish_reason & streamed error fail
+    const sseServer = createServer((req, res) => {
+      if (req.url?.includes("/truncated-openai")) {
+        res.writeHead(200, { "content-type": "text/event-stream" })
+        res.write('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n')
+        res.end()
+        return
+      }
+      if (req.url?.includes("/error-openai")) {
+        res.writeHead(200, { "content-type": "text/event-stream" })
+        res.write('data: {"error":{"message":"stream crashed"}}\n\n')
+        res.write("data: [DONE]\n\n")
+        res.end()
+        return
+      }
+      if (req.url?.includes("/truncated-anthropic")) {
+        res.writeHead(200, { "content-type": "text/event-stream" })
+        res.write(
+          'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}\n\n',
+        )
+        res.end()
+        return
+      }
+      res.writeHead(404)
+      res.end()
+    })
+    await new Promise<void>((resolve) => sseServer.listen(0, "127.0.0.1", resolve))
+    try {
+      const addr = sseServer.address() as { port: number }
+      await assert.rejects(
+        () =>
+          complete({
+            config: {
+              ...f.config,
+              endpointType: "local",
+              baseURL: `http://127.0.0.1:${addr.port}/truncated-openai`,
+            },
+            messages: [{ role: "user", content: "hi" }],
+            tools: [],
+            stream: true,
+            env: f.env,
+          }),
+        /prematurely|terminal completion|incomplete/i,
+      )
+      await assert.rejects(
+        () =>
+          complete({
+            config: {
+              ...f.config,
+              endpointType: "local",
+              baseURL: `http://127.0.0.1:${addr.port}/error-openai`,
+            },
+            messages: [{ role: "user", content: "hi" }],
+            tools: [],
+            stream: true,
+            env: f.env,
+          }),
+        /stream crashed/i,
+      )
+      await assert.rejects(
+        () =>
+          complete({
+            config: {
+              ...f.config,
+              endpointType: "local",
+              wireProtocol: "anthropic-messages",
+              baseURL: `http://127.0.0.1:${addr.port}/truncated-anthropic`,
+            },
+            messages: [{ role: "user", content: "hi" }],
+            tools: [],
+            stream: true,
+            env: f.env,
+          }),
+        /prematurely|terminal completion|incomplete|message_stop/i,
+      )
+    } finally {
+      await new Promise<void>((resolve) => sseServer.close(() => resolve()))
+    }
+
+    // #105: identical exit-0 command repeated without mutation trips noProgressStreak
+    let noopStep = 0
+    const noopRes = await runTask(
+      {
+        workspace: f.workspace,
+        prompt: "repeat identical exit-0 check",
+        trusted: true,
+        config: f.config,
+        budgets: { maxRequests: 10 },
+      },
+      {
+        paths: f.paths,
+        env: f.env,
+        confirmAction: async () => "once",
+        completeImpl: async () => {
+          noopStep += 1
+          return {
+            text: "",
+            finishReason: "tool_calls",
+            toolCalls: [
+              {
+                id: `noop-${noopStep}`,
+                name: "run_command",
+                input: { command: process.execPath, args: ["-e", "process.exit(0)"] },
+              },
+            ],
+            toolInputErrors: [],
+          }
+        },
+      },
+    )
+    assert.equal(noopRes.outcome, "budget_stopped")
+    assert.match(noopRes.stopReason ?? "", /without workspace mutation|no[- ]progress/i)
+
+    // #106: Guardian cache is invalidated when workspace mutates
+    writeFileSync(
+      path.join(f.workspace, "mutator.js"),
+      "require('fs').writeFileSync('g.txt', 'mut\\n');\n",
+      "utf8",
+    )
+    let guardCalls = 0
+    let gStep = 0
+    const gRes = await runTask(
+      {
+        workspace: f.workspace,
+        prompt: "run identical mutating script twice",
+        trusted: true,
+        config: f.config,
+        permissionMode: "smart",
+        budgets: { maxRequests: 6 },
+      },
+      {
+        paths: f.paths,
+        env: f.env,
+        confirmAction: async () => "once",
+        completeImpl: async (req) => {
+          if (
+            req.messages.some(
+              (m) =>
+                m.role === "system" &&
+                typeof m.content === "string" &&
+                m.content.includes("runtime security reviewer"),
+            )
+          ) {
+            guardCalls += 1
+            return { text: "APPROVE", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+          }
+          gStep += 1
+          if (gStep <= 2) {
+            return {
+              text: "",
+              finishReason: "tool_calls",
+              toolCalls: [
+                {
+                  id: `g-${gStep}`,
+                  name: "run_command",
+                  input: {
+                    command: process.execPath,
+                    args: ["mutator.js"],
+                  },
+                },
+              ],
+              toolInputErrors: [],
+            }
+          }
+          return { text: "done", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+        },
+      },
+    )
+    assert.equal(gRes.outcome, "completed")
+    assert.equal(guardCalls, 2)
+
+    // #107: retryAfterMs=0 retries immediately; retryAfterMs beyond maxElapsedMs stops cleanly instead of shortening
+    let retryZeroStep = 0
+    const retryZeroRes = await runTask(
+      {
+        workspace: f.workspace,
+        prompt: "retry 0s",
+        trusted: true,
+        config: f.config,
+        budgets: { maxRequests: 3, maxElapsedMs: 5000 },
+      },
+      {
+        paths: f.paths,
+        env: f.env,
+        confirmAction: async () => "once",
+        completeImpl: async () => {
+          retryZeroStep += 1
+          if (retryZeroStep === 1) {
+            throw new ProviderRequestError("rate_limit", "429 retry now", {
+              status: 429,
+              retryable: true,
+              retryAfterMs: 0,
+            })
+          }
+          return { text: "recovered", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+        },
+      },
+    )
+    assert.equal(retryZeroRes.outcome, "completed")
+
+    let retryTooLongCalls = 0
+    const retryTooLongRes = await runTask(
+      {
+        workspace: f.workspace,
+        prompt: "retry 120s",
+        trusted: true,
+        config: f.config,
+        budgets: { maxRequests: 3, maxElapsedMs: 250 },
+      },
+      {
+        paths: f.paths,
+        env: f.env,
+        confirmAction: async () => "once",
+        completeImpl: async () => {
+          retryTooLongCalls += 1
+          throw new ProviderRequestError("rate_limit", "429 slow down", {
+            status: 429,
+            retryable: true,
+            retryAfterMs: 120_000,
+          })
+        },
+      },
+    )
+    assert.equal(retryTooLongRes.outcome, "budget_stopped")
+    assert.equal(retryTooLongCalls, 1)
+  } finally {
+    f.cleanup()
+  }
+})
+
+test("Issues #95, #96, #97, #98, #103: fail-closed locks, transactional rewind conflicts, binary secret omission, fork history & schema validation", () => {
+  const f = tempFixture()
+  try {
+    // #95: Live-PID lock aged past stale threshold is NOT stolen; throws timeout and never runs unlocked
+    const lockPath = path.join(f.root, "test.lock")
+    writeFileSync(lockPath, `${process.pid}:other-holder\n${Date.now() - 60_000}\n`, "utf8")
+    const past = new Date(Date.now() - 60_000)
+    utimesSync(lockPath, past, past)
+    let ranUnlocked = false
+    assert.throws(
+      () =>
+        withFileLock(
+          lockPath,
+          () => {
+            ranUnlocked = true
+          },
+          80,
+        ),
+      /Timed out/i,
+    )
+    assert.equal(ranUnlocked, false)
+
+    // Dead PID lock is reclaimed cleanly
+    writeFileSync(lockPath, `9999999:dead-holder\n${Date.now()}\n`, "utf8")
+    let ranAfterReclaim = false
+    withFileLock(
+      lockPath,
+      () => {
+        ranAfterReclaim = true
+      },
+      500,
+    )
+    assert.equal(ranAfterReclaim, true)
+
+    // #96: Multi-file rewind leaves ALL files untouched when any file has an external conflict or deletion
+    const boundary = createBoundaryContext(f.workspace, f.paths, f.config, f.env)
+    const aPath = path.join(f.workspace, "a.txt")
+    const bPath = path.join(f.workspace, "b.txt")
+    writeFileSync(aPath, "orig-a\n", "utf8")
+    writeFileSync(bPath, "orig-b\n", "utf8")
+    const cpA = captureFileCheckpoint(f.workspace, "a.txt", aPath)
+    const cpB = captureFileCheckpoint(f.workspace, "b.txt", bPath)
+    assert.ok(cpA && cpB)
+    writeFileSync(aPath, "turn1-a\n", "utf8")
+    writeFileSync(bPath, "turn1-b\n", "utf8")
+    const finalized = finalizeTurnCheckpoints(boundary, [cpA, cpB])
+
+    let turnToRevertSes = createSession(f.workspace)
+    turnToRevertSes = appendTurnToSession(turnToRevertSes, {
+      userPrompt: "edit a and b",
+      result: {
+        runId: "r-96",
+        outcome: "completed",
+        finalText: "ok",
+        changedFiles: ["a.txt", "b.txt"],
+        changedTests: [],
+        commands: [],
+        messages: [
+          { role: "user", content: "edit a and b" },
+          { role: "assistant", content: "ok" },
+        ],
+        requests: 1,
+        guardianRequests: 0,
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        evidenceFile: "ev",
+        runRecordFile: "rr",
+      },
+      model: "m",
+      checkpoints: finalized,
+    })
+
+    // Mutate b.txt externally -> conflict on b.txt must leave BOTH a.txt and b.txt untouched!
+    writeFileSync(bPath, "external-b\n", "utf8")
+    const r1 = restoreTurnCheckpoints(boundary, turnToRevertSes.turns)
+    assert.equal(r1.skipped.length, 1)
+    assert.equal(r1.restored.length, 0)
+    assert.equal(readFileSync(aPath, "utf8"), "turn1-a\n")
+    assert.equal(readFileSync(bPath, "utf8"), "external-b\n")
+
+    // External deletion of b.txt -> conflict deleted_externally_since_turn leaves a.txt untouched too!
+    rmSync(bPath)
+    const r2 = restoreTurnCheckpoints(boundary, turnToRevertSes.turns)
+    assert.equal(r2.skipped.length, 1)
+    assert.match(r2.skipped[0]!.reason, /deleted_externally_since_turn/)
+    assert.equal(existsSync(bPath), false)
+    assert.equal(readFileSync(aPath, "utf8"), "turn1-a\n")
+
+    // #97: NUL binary / UTF-16 file containing synthetic credential must be omitted without raw base64 secret leak
+    const synAntKey = ["sk-", "ant-", "api03-", "AbCdEfGhIjKlMnOpQrStUvWxYz123456"].join("")
+    const secretBinPath = path.join(f.workspace, "secret-utf16.bin")
+    writeFileSync(
+      secretBinPath,
+      Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(synAntKey, "utf16le")]),
+    )
+    const secretCp = captureFileCheckpoint(f.workspace, "secret-utf16.bin", secretBinPath)
+    assert.ok(secretCp)
+    assert.ok(secretCp.omittedReason)
+    assert.equal(secretCp.contentBase64, undefined)
+
+    // #98: Full forkSession preserves historyArchive so rewinding forked session recovers older turns
+    let s = createSession(f.workspace)
+    for (let i = 1; i <= 4; i += 1) {
+      s = appendTurnToSession(s, {
+        userPrompt: `turn ${i}`,
+        result: {
+          runId: `r-${i}`,
+          outcome: "completed",
+          finalText: `reply ${i}`,
+          changedFiles: [],
+          changedTests: [],
+          commands: [],
+          messages: [
+            { role: "user", content: `turn ${i}` },
+            { role: "assistant", content: `reply ${i}` },
+          ],
+          requests: 1,
+          guardianRequests: 0,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          evidenceFile: "ev",
+          runRecordFile: "rr",
+        },
+        model: "m",
+        checkpoints: [],
+      })
+    }
+    const compacted = compactSessionMessages(s, 2)
+    assert.ok((compacted.updated.historyArchive?.messages.length ?? 0) > 0)
+    const fullFork = forkSession(compacted.updated)
+    assert.deepEqual(fullFork.historyArchive, compacted.updated.historyArchive)
+    const rewoundFork = rewindSessionToTurn(fullFork, 1)
+    assert.ok(
+      rewoundFork.updated.messages.some((m) => m.role === "assistant" && m.content === "reply 1"),
+    )
+
+    // #103: Reject turns missing nested usage / changedFiles array
+    const badSess = createSession(f.workspace)
+    const badJson = {
+      ...badSess,
+      turns: [
+        {
+          id: "t1",
+          timestamp: badSess.createdAt,
+          userPrompt: "hi",
+          assistantText: "ok",
+          outcome: "completed",
+          requests: 1,
+          changedFiles: [123],
+        },
+      ],
+    }
+    mkdirSync(path.join(f.paths.data, "sessions"), { recursive: true })
+    writeFileSync(
+      path.join(f.paths.data, "sessions", `${badSess.id}.json`),
+      JSON.stringify(badJson),
+      "utf8",
+    )
+    assert.equal(loadSession(f.paths.data, badSess.id), undefined)
+  } finally {
+    f.cleanup()
+  }
+})
+
+test("Issues #99, #100, #101, #104: streaming UTF-8 boundaries, provider tool probe, single probeModels deadline, and full .gitignore negation/nested support", async () => {
+  const f = tempFixture()
+  try {
+    const boundary = createBoundaryContext(f.workspace, f.paths, f.config, f.env)
+    // #99: Multi-byte UTF-8 across 16 KiB boundary and exact EOF newline behavior
+    const boundaryText = `${"a".repeat(16382)}€😀\nend\n`
+    writeFileSync(path.join(f.workspace, "utf8-boundary.txt"), boundaryText, "utf8")
+    const utf8Res = executeReadFile(boundary, {
+      path: "utf8-boundary.txt",
+      startLine: 1,
+      endLine: 2,
+    })
+    assert.equal(utf8Res.ok, true)
+    assert.equal((utf8Res.output as string).includes("\uFFFD"), false)
+    assert.equal((utf8Res.output as string).includes("€😀"), true)
+
+    writeFileSync(path.join(f.workspace, "two-lines.txt"), "one\ntwo\n", "utf8")
+    const exactRes = executeReadFile(boundary, {
+      path: "two-lines.txt",
+      startLine: 1,
+      endLine: 2,
+    })
+    assert.equal(exactRes.ok, true)
+    assert.equal((exactRes.output as string).includes("startLine: 3"), false)
+    const pastEofRes = executeReadFile(boundary, {
+      path: "two-lines.txt",
+      startLine: 3,
+      endLine: 5,
+    })
+    assert.equal(pastEofRes.ok, false)
+
+    // #104: Nested .gitignore, !negation, anchored rules, and tracked overrides
+    const runGit = (args: string[]) => {
+      const r = spawnSync("git", args, { cwd: f.workspace, encoding: "utf8" })
+      if (r.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${r.stderr}`)
+    }
+    runGit(["init"])
+    runGit(["config", "user.email", "test@bashwink.local"])
+    runGit(["config", "user.name", "Test User"])
+    writeFileSync(path.join(f.workspace, ".gitignore"), "*.log\n!keep.log\n/rootonly.dat\n", "utf8")
+    writeFileSync(path.join(f.workspace, "tracked.log"), "tracked\n", "utf8")
+    runGit(["add", "-f", ".gitignore", "tracked.log"])
+    runGit(["commit", "-m", "gitignore-base"])
+    writeFileSync(path.join(f.workspace, "drop.log"), "drop\n", "utf8")
+    writeFileSync(path.join(f.workspace, "keep.log"), "keep\n", "utf8")
+    writeFileSync(path.join(f.workspace, "rootonly.dat"), "ignored\n", "utf8")
+    mkdirSync(path.join(f.workspace, "sub"), { recursive: true })
+    writeFileSync(path.join(f.workspace, "sub/.gitignore"), "*.tmp\n!important.tmp\n", "utf8")
+    writeFileSync(path.join(f.workspace, "sub/rootonly.dat"), "kept\n", "utf8")
+    writeFileSync(path.join(f.workspace, "sub/skip.tmp"), "skip\n", "utf8")
+    writeFileSync(path.join(f.workspace, "sub/important.tmp"), "keep\n", "utf8")
+
+    const listed = listWorkspaceFiles(f.workspace)
+    assert.equal(listed.includes("tracked.log"), true)
+    assert.equal(listed.includes("keep.log"), true)
+    assert.equal(listed.includes("drop.log"), false)
+    assert.equal(listed.includes("rootonly.dat"), false)
+    assert.equal(listed.includes("sub/rootonly.dat"), true)
+    assert.equal(listed.includes("sub/important.tmp"), true)
+    assert.equal(listed.includes("sub/skip.tmp"), false)
+
+    const toolList = executeListFiles(boundary, {})
+    assert.equal(toolList.ok, true)
+    const listedLines = (toolList.output as string).split("\n")
+    assert.equal(listedLines.includes("keep.log"), true)
+    assert.equal(listedLines.includes("drop.log"), false)
+    assert.equal(listedLines.includes("sub/important.tmp"), true)
+    assert.equal(listedLines.includes("sub/skip.tmp"), false)
+
+    // #100 & #101: toolSupport distinction (text-only vs unsupported vs supported) and single probeModels deadline
+    const srv = createServer((req, res) => {
+      if (req.url === "/slow/models" || req.url === "/slow/v1/models") {
+        setTimeout(() => {
+          if (!res.writableEnded) {
+            res.writeHead(200, { "content-type": "application/json" })
+            res.end('{"data":[{"id":"m1"}]}')
+          }
+        }, 300)
+        return
+      }
+      if (req.url?.endsWith("/models")) {
+        res.writeHead(200, { "content-type": "application/json" })
+        res.end('{"data":[{"id":"test-model"}]}')
+        return
+      }
+      let body = ""
+      req.on("data", (c) => (body += String(c)))
+      req.on("end", () => {
+        const parsed = body ? (JSON.parse(body) as { tools?: unknown[] }) : {}
+        if (req.url?.startsWith("/textonly/") && parsed.tools && parsed.tools.length > 0) {
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(
+            JSON.stringify({
+              choices: [
+                { finish_reason: "stop", message: { role: "assistant", content: "cannot call" } },
+              ],
+            }),
+          )
+          return
+        }
+        res.writeHead(200, { "content-type": "application/json" })
+        res.end(
+          JSON.stringify({
+            choices: [{ finish_reason: "stop", message: { role: "assistant", content: "OK" } }],
+          }),
+        )
+      })
+    })
+    await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", resolve))
+    try {
+      const addr = srv.address() as { port: number }
+      const textOnlyRes = await testProviderConnection({
+        config: {
+          ...f.config,
+          endpointType: "local",
+          baseURL: `http://127.0.0.1:${addr.port}/textonly/v1`,
+        },
+        env: f.env,
+      })
+      assert.equal(textOnlyRes.ok, true)
+      assert.equal(textOnlyRes.toolSupport, "accepted_text_only")
+
+      const t0 = Date.now()
+      const slowProbe = await probeModels({
+        baseURL: `http://127.0.0.1:${addr.port}/slow`,
+        credential: { kind: "none" },
+        timeoutMs: 160,
+      })
+      const elapsed = Date.now() - t0
+      assert.equal(slowProbe.ok, false)
+      assert.ok(elapsed < 450, `Expected single deadline across fallbacks, got ${elapsed}ms`)
+    } finally {
+      await new Promise<void>((resolve) => srv.close(() => resolve()))
+    }
+  } finally {
+    f.cleanup()
   }
 })

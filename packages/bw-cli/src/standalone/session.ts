@@ -23,6 +23,7 @@ import {
 } from "node:fs"
 import path from "node:path"
 import { checkWorkspaceWritePath, sanitizeSecretText, type BoundaryContext } from "./security.ts"
+import { collectWorkspaceFilesBFS } from "./tools.ts"
 import type {
   ChatMessage,
   CommandOutcomeRecord,
@@ -245,10 +246,11 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-function withFileLock<T>(lockPath: string, fn: () => T): T {
+export function withFileLock<T>(lockPath: string, fn: () => T, timeoutMs = LOCK_TIMEOUT_MS): T {
   const dir = path.dirname(lockPath)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const deadline = Date.now() + LOCK_TIMEOUT_MS
+  const ownerToken = `${process.pid}:${randomBytes(6).toString("hex")}`
+  const deadline = Date.now() + timeoutMs
   let acquired = false
   while (Date.now() <= deadline) {
     try {
@@ -258,7 +260,7 @@ function withFileLock<T>(lockPath: string, fn: () => T): T {
         0o600,
       )
       try {
-        writeFileSync(fd, `${process.pid}\n${Date.now()}\n`, "utf8")
+        writeFileSync(fd, `${ownerToken}\n${Date.now()}\n`, "utf8")
       } finally {
         closeSync(fd)
       }
@@ -270,29 +272,39 @@ function withFileLock<T>(lockPath: string, fn: () => T): T {
       try {
         const st = statSync(lockPath)
         const content = readFileSync(lockPath, "utf8")
-        const ownerPid = Number(content.split("\n")[0]?.trim())
-        const staleAge = Date.now() - st.mtimeMs > LOCK_STALE_MS
-        const deadPid = Number.isInteger(ownerPid) && ownerPid > 0 && !isPidAlive(ownerPid)
-        if (staleAge || deadPid) {
-          unlinkSync(lockPath)
-          continue
+        const ownerPart = content.split("\n")[0]?.trim() ?? ""
+        const ownerPid = Number(ownerPart.split(":")[0])
+        const pidValid = Number.isInteger(ownerPid) && ownerPid > 0
+        const alive = pidValid && isPidAlive(ownerPid)
+        // Reclaim stale lock only if owner PID is definitely dead, or unreadable/corrupt and aged out.
+        if ((pidValid && !alive) || (!pidValid && Date.now() - st.mtimeMs > LOCK_STALE_MS)) {
+          if (readFileSync(lockPath, "utf8").startsWith(ownerPart)) {
+            unlinkSync(lockPath)
+            continue
+          }
         }
       } catch {
-        // Lock removed concurrently; retry immediately
+        // Lock vanished concurrently; retry immediately.
         continue
       }
       sleepSyncMs(10)
     }
   }
+  if (!acquired) {
+    throw new Error(
+      `Timed out waiting for exclusive lock '${lockPath}' after ${LOCK_TIMEOUT_MS}ms.`,
+    )
+  }
   try {
     return fn()
   } finally {
-    if (acquired) {
-      try {
+    try {
+      const current = readFileSync(lockPath, "utf8")
+      if (current.startsWith(ownerToken)) {
         unlinkSync(lockPath)
-      } catch {
-        // Best-effort unlock
       }
+    } catch {
+      // Already unlinked or unavailable
     }
   }
 }
@@ -324,6 +336,37 @@ function writeAtomicJson(targetPath: string, payload: unknown): void {
   renameSync(temp, targetPath)
 }
 
+function isValidIndexEntry(val: unknown): val is SessionIndexEntry {
+  if (typeof val !== "object" || val === null || Array.isArray(val)) return false
+  const e = val as Record<string, unknown>
+  if (
+    typeof e["id"] !== "string" ||
+    e["id"].trim() === "" ||
+    typeof e["title"] !== "string" ||
+    typeof e["workspace"] !== "string" ||
+    typeof e["createdAt"] !== "string" ||
+    typeof e["updatedAt"] !== "string" ||
+    typeof e["turnCount"] !== "number" ||
+    !Number.isInteger(e["turnCount"]) ||
+    e["turnCount"] < 0
+  ) {
+    return false
+  }
+  const u = e["usageTotals"]
+  if (typeof u !== "object" || u === null || Array.isArray(u)) return false
+  const ut = u as Record<string, unknown>
+  return (
+    typeof ut["requests"] === "number" &&
+    Number.isFinite(ut["requests"]) &&
+    typeof ut["inputTokens"] === "number" &&
+    Number.isFinite(ut["inputTokens"]) &&
+    typeof ut["outputTokens"] === "number" &&
+    Number.isFinite(ut["outputTokens"]) &&
+    typeof ut["totalTokens"] === "number" &&
+    Number.isFinite(ut["totalTokens"])
+  )
+}
+
 function loadRawIndex(dataDir: string): Record<string, SessionIndexEntry> {
   const idxFile = sessionsIndexFile(dataDir)
   if (!existsSync(idxFile)) return {}
@@ -332,7 +375,13 @@ function loadRawIndex(dataDir: string): Record<string, SessionIndexEntry> {
     if (parsed["version"] !== SESSION_SCHEMA_VERSION) return {}
     const entries = parsed["entries"]
     if (typeof entries !== "object" || entries === null || Array.isArray(entries)) return {}
-    return entries as Record<string, SessionIndexEntry>
+    const clean: Record<string, SessionIndexEntry> = {}
+    for (const [k, v] of Object.entries(entries as Record<string, unknown>)) {
+      if (isValidIndexEntry(v) && v.id === k) {
+        clean[k] = v
+      }
+    }
+    return clean
   } catch {
     return {}
   }
@@ -350,6 +399,19 @@ function isValidChatMessage(val: unknown): val is ChatMessage {
     return false
   }
   return typeof rec["content"] === "string"
+}
+
+function isFiniteUsageObj(val: unknown): boolean {
+  if (typeof val !== "object" || val === null || Array.isArray(val)) return false
+  const u = val as Record<string, unknown>
+  return (
+    typeof u["inputTokens"] === "number" &&
+    Number.isFinite(u["inputTokens"]) &&
+    typeof u["outputTokens"] === "number" &&
+    Number.isFinite(u["outputTokens"]) &&
+    typeof u["totalTokens"] === "number" &&
+    Number.isFinite(u["totalTokens"])
+  )
 }
 
 function validateSessionRecord(parsed: unknown): SessionRecord | undefined {
@@ -372,30 +434,40 @@ function validateSessionRecord(parsed: unknown): SessionRecord | undefined {
   }
   if (!Array.isArray(rec["turns"])) return undefined
   for (const turn of rec["turns"]) {
-    if (typeof turn !== "object" || turn === null) return undefined
+    if (typeof turn !== "object" || turn === null || Array.isArray(turn)) return undefined
     const t = turn as Record<string, unknown>
     if (
       typeof t["id"] !== "string" ||
       typeof t["userPrompt"] !== "string" ||
       typeof t["assistantText"] !== "string" ||
       typeof t["messageCountBefore"] !== "number" ||
-      !Number.isFinite(t["messageCountBefore"]) ||
+      !Number.isInteger(t["messageCountBefore"]) ||
       t["messageCountBefore"] < 0 ||
       !Array.isArray(t["checkpoints"]) ||
-      !Array.isArray(t["commands"])
+      !Array.isArray(t["commands"]) ||
+      !Array.isArray(t["changedFiles"]) ||
+      !isFiniteUsageObj(t["usage"])
+    ) {
+      return undefined
+    }
+  }
+  if (rec["historyArchive"] !== undefined) {
+    const arch = rec["historyArchive"]
+    if (typeof arch !== "object" || arch === null || Array.isArray(arch)) return undefined
+    const a = arch as Record<string, unknown>
+    if (
+      !Array.isArray(a["messages"]) ||
+      !a["messages"].every(isValidChatMessage) ||
+      !Array.isArray(a["turnMessageOffsets"]) ||
+      !a["turnMessageOffsets"].every((n) => typeof n === "number" && Number.isInteger(n) && n >= 0)
     ) {
       return undefined
     }
   }
   const totals = rec["usageTotals"]
-  if (typeof totals !== "object" || totals === null || Array.isArray(totals)) return undefined
+  if (!isFiniteUsageObj(totals)) return undefined
   const u = totals as Record<string, unknown>
-  if (
-    typeof u["requests"] !== "number" ||
-    typeof u["inputTokens"] !== "number" ||
-    typeof u["outputTokens"] !== "number" ||
-    typeof u["totalTokens"] !== "number"
-  ) {
+  if (typeof u["requests"] !== "number" || !Number.isFinite(u["requests"])) {
     return undefined
   }
   return parsed as SessionRecord
@@ -684,6 +756,15 @@ export function forkSession(source: SessionRecord, upToTurnCount?: number): Sess
       : keptTurns
   const base = createSession(source.workspace, source.gitBranch)
   const forkedFrom = adjustedTurns.at(-1)?.id
+  const forkedArchive = source.historyArchive
+    ? {
+        messages:
+          archiveOffset !== undefined
+            ? source.historyArchive.messages.slice(0, archiveOffset)
+            : [...source.historyArchive.messages],
+        turnMessageOffsets: source.historyArchive.turnMessageOffsets.slice(0, count),
+      }
+    : undefined
   return {
     ...base,
     title: `${source.title} (fork)`,
@@ -692,6 +773,7 @@ export function forkSession(source: SessionRecord, upToTurnCount?: number): Sess
     ...(forkedFrom === undefined ? {} : { forkedFromTurnId: forkedFrom }),
     messages: keptMessages,
     turns: adjustedTurns,
+    ...(forkedArchive ? { historyArchive: forkedArchive } : {}),
     usageTotals: adjustedTurns.reduce(
       (acc, t) => {
         const nextGuardian = (acc.guardianRequests ?? 0) + (t.guardianRequests ?? 0)
@@ -733,9 +815,13 @@ function isSensitiveCheckpointFile(
 ): boolean {
   const norm = relativePath.replace(/\\/g, "/")
   if (SENSITIVE_CHECKPOINT_SEGMENTS.some((re) => re.test(norm))) return true
-  if (content.includes(0)) return false
-  const text = content.toString("utf8")
-  return sanitizeSecretText(text, activeSecret) !== text
+  if (content.includes(0)) return true
+  const utf8 = content.toString("utf8")
+  if (sanitizeSecretText(utf8, activeSecret) !== utf8) return true
+  const stripped = content.toString("latin1").replace(/\0/g, "")
+  if (sanitizeSecretText(stripped, activeSecret) !== stripped) return true
+  const utf16 = content.toString("utf16le")
+  return sanitizeSecretText(utf16, activeSecret) !== utf16
 }
 
 export function captureFileCheckpoint(
@@ -767,7 +853,9 @@ export function captureFileCheckpoint(
         existedBefore: true,
         sha256Before,
         mode,
-        omittedReason: "sensitive_content_omitted",
+        omittedReason: bytes.includes(0)
+          ? "binary_or_sensitive_content_omitted"
+          : "sensitive_content_omitted",
       }
     }
     return {
@@ -812,7 +900,7 @@ export interface RestoreResult {
 export function restoreTurnCheckpoints(
   boundary: BoundaryContext,
   turnsToRevert: readonly SessionTurn[],
-  options: { readonly forceOverwrite?: boolean } = {},
+  options: { readonly forceOverwrite?: boolean; readonly allowPartial?: boolean } = {},
 ): RestoreResult {
   const restored: string[] = []
   const removed: string[] = []
@@ -827,6 +915,8 @@ export function restoreTurnCheckpoints(
     }
   }
 
+  // Preflight every target before modifying any file on disk (#96).
+  const planned: Array<{ readonly cp: FileCheckpoint; readonly resolvedPath: string }> = []
   for (const cp of allCheckpoints) {
     if (cp.omittedReason !== undefined) {
       skipped.push({ path: cp.relativePath, reason: cp.omittedReason })
@@ -837,12 +927,15 @@ export function restoreTurnCheckpoints(
       skipped.push({ path: cp.relativePath, reason: check.reason })
       continue
     }
-    try {
-      if (
-        cp.sha256After !== undefined &&
-        !options.forceOverwrite &&
-        existsSync(check.resolvedPath)
-      ) {
+    if (cp.sha256After !== undefined && !options.forceOverwrite) {
+      if (!existsSync(check.resolvedPath)) {
+        skipped.push({
+          path: cp.relativePath,
+          reason: "deleted_externally_since_turn",
+        })
+        continue
+      }
+      try {
         const currentSha = createHash("sha256")
           .update(readFileSync(check.resolvedPath))
           .digest("hex")
@@ -853,31 +946,91 @@ export function restoreTurnCheckpoints(
           })
           continue
         }
+      } catch (err) {
+        skipped.push({
+          path: cp.relativePath,
+          reason: err instanceof Error ? err.message : String(err),
+        })
+        continue
       }
+    }
+    planned.push({ cp, resolvedPath: check.resolvedPath })
+  }
+
+  if (skipped.length > 0 && !options.allowPartial && !options.forceOverwrite) {
+    return { restored: [], removed: [], skipped }
+  }
+
+  const backups: Array<{
+    readonly resolvedPath: string
+    readonly relativePath: string
+    readonly existed: boolean
+    readonly bytes?: Buffer
+    readonly mode?: number
+  }> = []
+
+  for (const item of planned) {
+    const { cp, resolvedPath } = item
+    try {
+      const existedNow = existsSync(resolvedPath)
+      const prevBytes = existedNow ? readFileSync(resolvedPath) : undefined
+      const prevMode = existedNow ? statSync(resolvedPath).mode & 0o777 : undefined
+
       if (!cp.existedBefore) {
-        if (existsSync(check.resolvedPath)) {
-          unlinkSync(check.resolvedPath)
+        if (existedNow) {
+          backups.push({
+            resolvedPath,
+            relativePath: cp.relativePath,
+            existed: true,
+            ...(prevBytes !== undefined ? { bytes: prevBytes } : {}),
+            ...(prevMode !== undefined ? { mode: prevMode } : {}),
+          })
+          unlinkSync(resolvedPath)
           removed.push(cp.relativePath)
         }
       } else if (cp.contentBase64 !== undefined) {
         const buf = Buffer.from(cp.contentBase64, "base64")
-        mkdirSync(path.dirname(check.resolvedPath), { recursive: true })
+        mkdirSync(path.dirname(resolvedPath), { recursive: true })
         const temp = path.join(
-          path.dirname(check.resolvedPath),
+          path.dirname(resolvedPath),
           `.bw-rewind.${process.pid}.${randomBytes(3).toString("hex")}.tmp`,
         )
         writeFileSync(temp, buf)
         if (cp.mode !== undefined && process.platform !== "win32") {
           chmodSync(temp, cp.mode)
         }
-        renameSync(temp, check.resolvedPath)
+        backups.push({
+          resolvedPath,
+          relativePath: cp.relativePath,
+          existed: existedNow,
+          ...(prevBytes !== undefined ? { bytes: prevBytes } : {}),
+          ...(prevMode !== undefined ? { mode: prevMode } : {}),
+        })
+        renameSync(temp, resolvedPath)
         restored.push(cp.relativePath)
       }
     } catch (err) {
+      // Roll back earlier writes in this rewind batch to keep workspace consistent.
+      for (let b = backups.length - 1; b >= 0; b -= 1) {
+        const snap = backups[b]!
+        try {
+          if (!snap.existed) {
+            if (existsSync(snap.resolvedPath)) unlinkSync(snap.resolvedPath)
+          } else if (snap.bytes !== undefined) {
+            writeFileSync(snap.resolvedPath, snap.bytes)
+            if (snap.mode !== undefined && process.platform !== "win32") {
+              chmodSync(snap.resolvedPath, snap.mode)
+            }
+          }
+        } catch {
+          // Best-effort rollback
+        }
+      }
       skipped.push({
         path: cp.relativePath,
         reason: err instanceof Error ? err.message : String(err),
       })
+      return { restored: [], removed: [], skipped }
     }
   }
 
@@ -1024,75 +1177,11 @@ export function appendPromptHistory(
   })
 }
 
-function loadGitIgnorePatterns(dir: string): string[] {
-  const file = path.join(dir, ".gitignore")
-  if (!existsSync(file)) return []
-  try {
-    return readFileSync(file, "utf8")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line !== "" && !line.startsWith("#") && !line.startsWith("!"))
-  } catch {
-    return []
-  }
-}
-
-function matchesGitIgnorePattern(
-  relPath: string,
-  name: string,
-  isDir: boolean,
-  pattern: string,
-): boolean {
-  const dirOnly = pattern.endsWith("/")
-  const clean = pattern.replace(/\/$/, "").replace(/^\//, "")
-  if (!clean) return false
-  if (dirOnly && !isDir) return false
-  const regexStr = clean
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, ".*")
-    .replace(/\*/g, "[^/]*")
-    .replace(/\?/g, "[^/]")
-  const re = new RegExp(`^${regexStr}$`)
-  if (!clean.includes("/")) return re.test(name)
-  return re.test(relPath)
-}
-
 /** Bounded BFS workspace file walk with `.gitignore` filtering for `@` autocomplete suggestions. */
 export function listWorkspaceFiles(workspace: string, maxFiles = 300): string[] {
-  const out: string[] = []
-  const skip = new Set([".git", "node_modules", "dist", "build", ".next", ".turbo"])
-  const rootPatterns = loadGitIgnorePatterns(workspace)
-  const queue: { dir: string; depth: number; patterns: string[] }[] = [
-    { dir: workspace, depth: 0, patterns: rootPatterns },
-  ]
-  while (queue.length > 0 && out.length < maxFiles) {
-    const current = queue.shift()!
-    if (current.depth > 5) continue
-    const patterns =
-      current.depth === 0
-        ? current.patterns
-        : [...current.patterns, ...loadGitIgnorePatterns(current.dir)]
-    let entries
-    try {
-      entries = readdirSync(current.dir, { withFileTypes: true }).sort((a, b) =>
-        a.name.localeCompare(b.name),
-      )
-    } catch {
-      continue
-    }
-    for (const entry of entries) {
-      if (out.length >= maxFiles) break
-      if (entry.isSymbolicLink() || skip.has(entry.name)) continue
-      const abs = path.join(current.dir, entry.name)
-      const rel = path.relative(workspace, abs).split(path.sep).join("/")
-      const isDir = entry.isDirectory()
-      if (patterns.some((p) => matchesGitIgnorePattern(rel, entry.name, isDir, p))) continue
-      if (isDir) {
-        queue.push({ dir: abs, depth: current.depth + 1, patterns })
-      } else if (entry.isFile()) {
-        out.push(rel)
-      }
-    }
-  }
-  return out
+  return collectWorkspaceFilesBFS(workspace, {
+    maxDepth: 6,
+    maxCollect: maxFiles,
+    includeDirs: false,
+  }).entries
 }

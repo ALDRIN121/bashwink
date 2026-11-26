@@ -311,7 +311,28 @@ export class EvidenceRecorder {
   private writeFailures = 0
   private readonly instanceSecrets: readonly string[]
   private lastKnownSize = 0
+  private lastKnownDigest = ""
   private readonly lockFile: string
+
+  private digestRangeLocked(length: number): string {
+    if (length <= 0) return ""
+    const hasher = createHash("sha256")
+    const fd = openSync(this.file, "r")
+    try {
+      const chunk = Buffer.allocUnsafe(Math.min(65_536, length))
+      let offset = 0
+      while (offset < length) {
+        const toRead = Math.min(chunk.length, length - offset)
+        const n = readSync(fd, chunk, 0, toRead, offset)
+        if (n <= 0) break
+        hasher.update(chunk.subarray(0, n))
+        offset += n
+      }
+    } finally {
+      closeSync(fd)
+    }
+    return hasher.digest("hex")
+  }
 
   constructor(options: RecorderOptions) {
     this.file = path.join(options.directory, options.file ?? "evidence.jsonl")
@@ -401,14 +422,17 @@ export class EvidenceRecorder {
   private resumeLocked(): void {
     if (!existsSync(this.file)) {
       this.lastKnownSize = 0
+      this.lastKnownDigest = ""
       return
     }
-    const size = statSync(this.file).size
-    const text = readFileSync(this.file, "utf8")
+    const rawBytes = readFileSync(this.file)
+    const size = rawBytes.byteLength
+    const text = rawBytes.toString("utf8")
     const lines = text.split("\n").filter((line) => line.trim().length > 0)
     const last = lines.at(-1)
     if (!last) {
       this.lastKnownSize = size
+      this.lastKnownDigest = size > 0 ? createHash("sha256").update(rawBytes).digest("hex") : ""
       return
     }
     let parsed: EvidenceEntry
@@ -432,6 +456,7 @@ export class EvidenceRecorder {
     this.seq = parsed.seq
     this.prevHash = parsed.hash
     this.lastKnownSize = size
+    this.lastKnownDigest = createHash("sha256").update(rawBytes).digest("hex")
   }
 
   private syncHeadLocked(): void {
@@ -443,16 +468,32 @@ export class EvidenceRecorder {
       this.seq = 0
       this.prevHash = GENESIS
       this.lastKnownSize = 0
+      this.lastKnownDigest = ""
       return
     }
     const size = statSync(this.file).size
-    if (size === this.lastKnownSize) return
+    if (size === this.lastKnownSize) {
+      if (size === 0) return
+      const curDigest = this.digestRangeLocked(size)
+      if (curDigest !== this.lastKnownDigest) {
+        this.degraded = `existing log ${this.file} was modified in-place externally; refusing to extend tampered ledger`
+        throw new Error(this.degraded)
+      }
+      return
+    }
     if (size < this.lastKnownSize) {
       this.resumeLocked()
       if (this.degraded !== undefined) throw new Error(this.degraded)
       return
     }
-    // Another recorder instance or process appended entries: verify only the appended delta.
+    if (this.lastKnownSize > 0) {
+      const prefixDigest = this.digestRangeLocked(this.lastKnownSize)
+      if (prefixDigest !== this.lastKnownDigest) {
+        this.degraded = `existing log ${this.file} prefix was altered externally; refusing to extend tampered ledger`
+        throw new Error(this.degraded)
+      }
+    }
+    // Another recorder instance or process appended entries: verify the appended delta.
     const deltaLen = size - this.lastKnownSize
     const buf = Buffer.alloc(deltaLen)
     const fd = openSync(this.file, "r")
@@ -495,6 +536,7 @@ export class EvidenceRecorder {
     this.seq = seq
     this.prevHash = prev
     this.lastKnownSize = size
+    this.lastKnownDigest = this.digestRangeLocked(size)
   }
 
   /**
@@ -600,6 +642,7 @@ export class EvidenceRecorder {
       this.seq = entry.seq
       this.prevHash = entry.hash
       this.lastKnownSize = statSync(this.file).size
+      this.lastKnownDigest = this.digestRangeLocked(this.lastKnownSize)
       return entry
     })
   }

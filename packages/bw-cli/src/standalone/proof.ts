@@ -154,9 +154,13 @@ function looksLikeVerificationCommand(cmd: CommandOutcomeRecord): boolean {
 export function matchesCriterionCommand(
   declaredCommand: string,
   observedCmd: CommandOutcomeRecord,
+  expectedWorkspace?: string,
 ): boolean {
   const { tokens, hasShellMeta } = tokenizeCommandLine(declaredCommand.trim())
   if (tokens.length === 0 || hasShellMeta) return false
+  if (expectedWorkspace && path.resolve(observedCmd.cwd) !== path.resolve(expectedWorkspace)) {
+    return false
+  }
   const declExe = normalizeExeName(tokens[0]!)
   const obsExe = normalizeExeName(observedCmd.command)
   if (!declExe || obsExe !== declExe) return false
@@ -166,11 +170,15 @@ export function matchesCriterionCommand(
   for (let i = 0; i < declArgs.length; i += 1) {
     if (observedCmd.args[i] !== declArgs[i]) return false
   }
-  // Extra args (e.g. targeting a specific test file) cannot silently filter or skip tests.
+  // Extra args cannot silently filter/narrow tests via flags or positional target paths.
+  const SAFE_EXTRA_FLAGS = new Set(["--colors", "--no-colors", "--no-warnings"])
   const extraArgs = observedCmd.args.slice(declArgs.length)
   for (const extra of extraArgs) {
     const flagName = extra.split("=")[0]!
     if (TEST_FILTER_FLAGS.has(flagName)) return false
+    if (!SAFE_EXTRA_FLAGS.has(flagName) && !flagName.startsWith("--reporter")) {
+      return false
+    }
   }
   return true
 }
@@ -226,7 +234,8 @@ export function buildProofPack(input: BuildProofPackInput): ProofPackManifest {
       })
       continue
     }
-    const passed = !cmd.timedOut && cmd.signal === null && cmd.exitCode === 0
+    const passed =
+      !cmd.timedOut && cmd.signal === null && cmd.exitCode === 0 && !cmd.zeroTestsDetected
     const isStale =
       passed &&
       lastMutationOrder !== undefined &&
@@ -303,7 +312,9 @@ export function buildProofPack(input: BuildProofPackInput): ProofPackManifest {
       const matchingApproved = input.commands
         .map((cmd, idx) => ({ cmd, chk: checks[idx]! }))
         .filter(
-          ({ cmd }) => cmd.decision === "approved" && matchesCriterionCommand(declaredCmd, cmd),
+          ({ cmd }) =>
+            cmd.decision === "approved" &&
+            matchesCriterionCommand(declaredCmd, cmd, input.workspace),
         )
       const lastEntry = matchingApproved.at(-1)
       if (!lastEntry) {
@@ -451,6 +462,7 @@ export function verifyProofPack(manifest: ProofPackManifest): {
   if (manifest.version !== 1)
     issues.push(`Unsupported ProofPack version: ${String(manifest.version)}`)
   const entriesBySeq = new Map<number, EvidenceEntry>()
+  const beforeByCallId = new Map<string, EvidenceEntry>()
   if (!existsSync(manifest.evidenceFile)) {
     issues.push(`Missing evidence file: ${manifest.evidenceFile}`)
   } else {
@@ -470,6 +482,13 @@ export function verifyProofPack(manifest: ProofPackManifest): {
         for (const line of lines) {
           const parsed = JSON.parse(line) as EvidenceEntry
           entriesBySeq.set(parsed.seq, parsed)
+          if (
+            parsed.phase === "before" &&
+            parsed.call.tool === "run_command" &&
+            parsed.call.sessionID === manifest.runId
+          ) {
+            beforeByCallId.set(parsed.call.id, parsed)
+          }
         }
       } catch {
         issues.push(`Could not parse evidence entries from ${manifest.evidenceFile}`)
@@ -541,6 +560,53 @@ export function verifyProofPack(manifest: ProofPackManifest): {
         issues.push(
           `Passed check '${chk.id}' linked evidence seq ${chk.evidenceSeq} belongs to run '${evEntry.call.sessionID}', not '${manifest.runId}'.`,
         )
+      }
+      if (evEntry.call.tool !== "run_command") {
+        issues.push(
+          `Passed check '${chk.id}' linked evidence seq ${chk.evidenceSeq} has tool '${evEntry.call.tool}', expected 'run_command'.`,
+        )
+      }
+      const evBefore = beforeByCallId.get(evEntry.call.id)
+      if (!evBefore) {
+        issues.push(
+          `Passed check '${chk.id}' lacks matching 'before' run_command receipt for call '${evEntry.call.id}'.`,
+        )
+      } else if (chk.command) {
+        const inp = evBefore.payload.input
+        if (typeof inp !== "object" || inp === null || Array.isArray(inp)) {
+          issues.push(`Passed check '${chk.id}' before-receipt input is missing or invalid.`)
+        } else {
+          const recInput = inp as Record<string, unknown>
+          const { tokens } = tokenizeCommandLine(chk.command)
+          const declExe = tokens[0] ? normalizeExeName(tokens[0]) : ""
+          const declArgs = tokens.slice(1)
+          const evCmd =
+            typeof recInput["command"] === "string" ? normalizeExeName(recInput["command"]) : ""
+          const evArgs = Array.isArray(recInput["args"])
+            ? recInput["args"].map((a) => String(a))
+            : []
+          if (
+            !declExe ||
+            evCmd !== declExe ||
+            JSON.stringify(evArgs) !== JSON.stringify(declArgs)
+          ) {
+            issues.push(
+              `Passed check '${chk.id}' claims '${chk.command}' but before-receipt recorded '${String(recInput["command"] ?? "")} ${evArgs.join(" ")}'.`,
+            )
+          }
+          const evCwdRaw = recInput["resolvedCwd"] ?? recInput["cwd"]
+          if (typeof evCwdRaw === "string" && chk.cwd) {
+            const resolvedEvCwd =
+              manifest.workspace && !path.isAbsolute(evCwdRaw)
+                ? path.resolve(manifest.workspace, evCwdRaw)
+                : path.resolve(evCwdRaw)
+            if (resolvedEvCwd !== path.resolve(chk.cwd)) {
+              issues.push(
+                `Passed check '${chk.id}' claims cwd '${chk.cwd}' but before-receipt recorded '${resolvedEvCwd}'.`,
+              )
+            }
+          }
+        }
       }
     }
   }

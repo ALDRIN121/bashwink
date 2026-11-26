@@ -127,10 +127,13 @@ describe("refusals — every one must fail closed", () => {
 
   test("a manifest for another platform is refused on this host", () => {
     const binary = writeBinary(root)
+    const otherTarget = process.platform === "linux" ? "darwin-arm64" : "linux-x64"
+    const otherPlatform =
+      process.platform === "linux" ? { os: "darwin", arch: "arm64" } : { os: "linux", arch: "x64" }
     const manifest = manifestFor(binary, {
-      target: "linux-x64",
-      opencodeTarget: "linux-x64",
-      platform: { os: "linux", arch: "x64" },
+      target: otherTarget,
+      opencodeTarget: otherTarget,
+      platform: otherPlatform,
     })
     const manifestPath = writeManifest(manifest)
     expect(() => resolveEngineFromManifest(manifestPath, { root })).toThrow(/platform|target/i)

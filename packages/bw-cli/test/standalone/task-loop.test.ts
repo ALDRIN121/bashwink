@@ -502,7 +502,7 @@ test("cost-cap regression: accounts for input cost and remaining output allowanc
     const stopBeforeReq1 = await runTask(
       {
         workspace: f.workspace,
-        prompt: "inspect this codebase carefully",
+        prompt: `inspect this codebase carefully ${"details ".repeat(60)}`,
         trusted: true,
         config: highInputConfig,
         budgets: { maxOutputTokens: 200, maxCostUsd: 0.01 },

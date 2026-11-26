@@ -603,8 +603,23 @@ function renderCliHeader(
 function printConnectionTestResult(io: TerminalIO, res: TestConnectionResult, model: string): void {
   const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
   if (res.ok) {
-    io.write(style.green(`  ✓ Connection verified in ${res.latencyMs} ms`) + "\n")
+    const toolsVerified =
+      res.toolSupport === undefined ||
+      res.toolSupport === "untested" ||
+      res.toolSupport === "supported"
+    if (toolsVerified) {
+      io.write(style.green(`  ✓ Connection verified in ${res.latencyMs} ms`) + "\n")
+    } else {
+      io.write(
+        style.yellow(
+          `  ⚠ Chat reachable in ${res.latencyMs} ms, but tool calling is ${res.toolSupport}`,
+        ) + "\n",
+      )
+    }
     io.write(`    Sample reply: ${sanitizeTerminalText(res.replySnippet ?? "OK")}\n`)
+    if (res.toolSupport && res.toolSupport !== "untested") {
+      io.write(`    Tool support: ${res.toolSupport}\n`)
+    }
     if (res.discoveredModelsCount !== undefined) {
       const listed = res.modelListedInCatalog
         ? "model listed"
@@ -1001,16 +1016,24 @@ export async function runInteractiveSetup(
           signal: testAbort.signal,
           onProgress: (stage) => {
             if (stage === "tool_probe") {
-              io.write("  Verifying tool-call support...\n")
+              io.write("  Verifying tool-call capability...\n")
+            } else {
+              io.write(`  ${stage}\n`)
             }
           },
         })
       } finally {
         process.removeListener("SIGINT", onSig)
       }
-      if (testRes.ok) {
+      if (testRes.ok && testRes.toolSupport === "supported") {
         connectionStatus = "verified"
         lastVerifiedAt = new Date().toISOString()
+      } else if (testRes.ok) {
+        connectionStatus = "unverified"
+        lastVerifiedAt = undefined
+        io.write(
+          "  Note: Chat probe succeeded, but tool-call capability is unverified/unsupported; marking config unverified for agent execution.\n",
+        )
       } else {
         connectionStatus = "failed"
         lastVerifiedAt = undefined

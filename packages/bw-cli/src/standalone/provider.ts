@@ -670,9 +670,14 @@ async function parseOpenAISSE(
   let finishReason: FinishReason = "unknown"
   let usage: ModelUsage | undefined
   let sawEvent = false
+  let sawDone = false
+  let sawFinishReason = false
 
   for await (const ev of readSSEEvents(response, maxBytes, endpoint, signal)) {
-    if (ev.data === "[DONE]") break
+    if (ev.data === "[DONE]") {
+      sawDone = true
+      break
+    }
     let chunk: Record<string, unknown>
     try {
       chunk = JSON.parse(ev.data) as Record<string, unknown>
@@ -683,6 +688,20 @@ async function parseOpenAISSE(
       )
     }
     sawEvent = true
+    if (chunk["error"] !== undefined && chunk["error"] !== null) {
+      const errObj = chunk["error"] as Record<string, unknown>
+      const msg =
+        typeof errObj === "object" && typeof errObj["message"] === "string"
+          ? errObj["message"]
+          : "stream error"
+      throw new ProviderRequestError(
+        "http_error",
+        `Provider at ${endpoint} streamed error: ${msg}`,
+        {
+          retryable: true,
+        },
+      )
+    }
     if (chunk["usage"]) {
       const parsedUsage = parseUsage(chunk["usage"])
       if (parsedUsage) usage = parsedUsage
@@ -692,6 +711,7 @@ async function parseOpenAISSE(
     const ch = choices[0] as Record<string, unknown>
     if (ch["finish_reason"] !== undefined && ch["finish_reason"] !== null) {
       finishReason = normalizeFinishReason(ch["finish_reason"])
+      sawFinishReason = true
     }
     const delta = ch["delta"]
     if (typeof delta === "object" && delta !== null) {
@@ -718,10 +738,10 @@ async function parseOpenAISSE(
     }
   }
 
-  if (!sawEvent) {
+  if (!sawEvent || (!sawDone && !sawFinishReason) || (toolAcc.size > 0 && !sawFinishReason)) {
     throw new ProviderRequestError(
       "malformed_response",
-      `Provider at ${endpoint} ended stream without returning any completion events.`,
+      `Provider at ${endpoint} ended stream prematurely without terminal completion.`,
     )
   }
 
@@ -773,6 +793,7 @@ async function parseAnthropicSSE(
   let finishReason: FinishReason = "unknown"
   let usage: ModelUsage | undefined
   let sawEvent = false
+  let sawMessageStop = false
 
   for await (const ev of readSSEEvents(response, maxBytes, endpoint, signal)) {
     if (!ev.data || ev.data === "[DONE]") continue
@@ -787,6 +808,24 @@ async function parseAnthropicSSE(
     }
     sawEvent = true
     const type = typeof chunk["type"] === "string" ? chunk["type"] : ev.event
+    if (type === "error" || (chunk["error"] !== undefined && chunk["error"] !== null)) {
+      const errObj = chunk["error"] as Record<string, unknown> | undefined
+      const msg =
+        errObj && typeof errObj["message"] === "string"
+          ? errObj["message"]
+          : "Anthropic stream error"
+      throw new ProviderRequestError(
+        "http_error",
+        `Provider at ${endpoint} streamed error: ${msg}`,
+        {
+          retryable: true,
+        },
+      )
+    }
+    if (type === "message_stop") {
+      sawMessageStop = true
+      continue
+    }
     if (
       type === "message_start" &&
       typeof chunk["message"] === "object" &&
@@ -846,10 +885,14 @@ async function parseAnthropicSSE(
     }
   }
 
-  if (!sawEvent) {
+  if (
+    !sawEvent ||
+    (!sawMessageStop && finishReason === "unknown") ||
+    (toolBlocks.size > 0 && finishReason === "unknown")
+  ) {
     throw new ProviderRequestError(
       "malformed_response",
-      `Provider at ${endpoint} ended stream without returning any Anthropic events.`,
+      `Provider at ${endpoint} ended Anthropic stream prematurely without terminal completion.`,
     )
   }
 
@@ -1209,6 +1252,7 @@ export async function probeModels(req: ProbeModelsRequest): Promise<ProbeModelsR
   const fetchFn = req.fetchImpl ?? fetch
   const timeoutMs = req.timeoutMs ?? 6_000
   const maxResponseBytes = req.maxResponseBytes ?? 2 * 1024 * 1024
+  const deadline = Date.now() + timeoutMs
   let lastError: string | undefined
 
   for (const candidate of candidates) {
@@ -1221,12 +1265,17 @@ export async function probeModels(req: ProbeModelsRequest): Promise<ProbeModelsR
         error: "Model discovery cancelled by user.",
       }
     }
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) {
+      lastError ??= `Model discovery timed out after ${timeoutMs} ms.`
+      break
+    }
     const controller = new AbortController()
     let timedOut = false
     const timer = setTimeout(() => {
       timedOut = true
       controller.abort()
-    }, timeoutMs)
+    }, remainingMs)
     const onParentAbort = () => controller.abort()
     req.signal?.addEventListener("abort", onParentAbort, { once: true })
     try {
@@ -1394,15 +1443,13 @@ export async function testProviderConnection(
   }
 
   const checkTools = req.checkToolCapability !== false
-  req.onProgress?.(
-    `Testing sample completion${checkTools ? " & tool schema" : ""} (${remainingMs} ms remaining)...`,
-  )
+  req.onProgress?.(`Testing sample completion (${remainingMs} ms remaining)...`)
 
-  const runSample = async (withTools: boolean, timeoutMs: number) =>
+  const runTextSample = async (timeoutMs: number) =>
     await complete({
       config: req.config,
       messages: [{ role: "user", content: "Reply with OK." }],
-      tools: withTools ? [PROBE_TOOL_DEF] : [],
+      tools: [],
       ...(req.env ? { env: req.env } : {}),
       ...(req.apiKeyOverride !== undefined ? { apiKeyOverride: req.apiKeyOverride } : {}),
       ...(req.signal ? { signal: req.signal } : {}),
@@ -1411,30 +1458,83 @@ export async function testProviderConnection(
       ...(req.fetchImpl ? { fetchImpl: req.fetchImpl } : {}),
     })
 
+  const runToolProbe = async (timeoutMs: number): Promise<ToolSupportStatus> => {
+    req.onProgress?.("tool_probe")
+    const probePrompt: ChatMessage = {
+      role: "user",
+      content: `Call the '${PROBE_TOOL_DEF.name}' tool once with {"ok":true} and nothing else.`,
+    }
+    let toolReply: ProviderCompletion
+    try {
+      toolReply = await complete({
+        config: req.config,
+        messages: [probePrompt],
+        tools: [PROBE_TOOL_DEF],
+        ...(req.env ? { env: req.env } : {}),
+        ...(req.apiKeyOverride !== undefined ? { apiKeyOverride: req.apiKeyOverride } : {}),
+        ...(req.signal ? { signal: req.signal } : {}),
+        maxOutputTokens: 64,
+        timeoutMs,
+        ...(req.fetchImpl ? { fetchImpl: req.fetchImpl } : {}),
+      })
+    } catch (err) {
+      if (
+        err instanceof ProviderRequestError &&
+        err.kind === "http_error" &&
+        (err.status === 400 || err.status === 422)
+      ) {
+        return "unsupported"
+      }
+      throw err
+    }
+    const matchingCall = toolReply.toolCalls.find(
+      (c) =>
+        c.name === PROBE_TOOL_DEF.name &&
+        typeof c.input === "object" &&
+        c.input !== null &&
+        c.input["ok"] === true,
+    )
+    if (!matchingCall) {
+      return "accepted_text_only"
+    }
+    const afterProbeRem = deadline - Date.now()
+    if (afterProbeRem <= 50) return "supported"
+    try {
+      const followUp = await complete({
+        config: req.config,
+        messages: [
+          probePrompt,
+          { role: "assistant", content: toolReply.text, toolCalls: [matchingCall] },
+          {
+            role: "tool",
+            callId: matchingCall.id,
+            name: matchingCall.name,
+            content: '{"acknowledged":true}',
+          },
+        ],
+        tools: [PROBE_TOOL_DEF],
+        ...(req.env ? { env: req.env } : {}),
+        ...(req.apiKeyOverride !== undefined ? { apiKeyOverride: req.apiKeyOverride } : {}),
+        ...(req.signal ? { signal: req.signal } : {}),
+        maxOutputTokens: 32,
+        timeoutMs: afterProbeRem,
+        ...(req.fetchImpl ? { fetchImpl: req.fetchImpl } : {}),
+      })
+      return followUp.finishReason === "stop" || followUp.finishReason === "tool_calls"
+        ? "supported"
+        : "accepted_text_only"
+    } catch {
+      return "accepted_text_only"
+    }
+  }
+
   let toolSupport: ToolSupportStatus = checkTools ? "accepted_text_only" : "untested"
   try {
-    let completion: ProviderCompletion
-    try {
-      completion = await runSample(checkTools, remainingMs)
-      if (checkTools && completion.toolCalls.length > 0) {
-        toolSupport = "supported"
-      }
-    } catch (firstErr) {
-      if (
-        checkTools &&
-        firstErr instanceof ProviderRequestError &&
-        firstErr.kind === "http_error" &&
-        (firstErr.status === 400 || firstErr.status === 422)
-      ) {
-        const retryRemaining = deadline - Date.now()
-        if (retryRemaining > 100) {
-          toolSupport = "unsupported"
-          completion = await runSample(false, retryRemaining)
-        } else {
-          throw firstErr
-        }
-      } else {
-        throw firstErr
+    const completion = await runTextSample(remainingMs)
+    if (checkTools) {
+      const toolRem = deadline - Date.now()
+      if (toolRem > 50) {
+        toolSupport = await runToolProbe(toolRem)
       }
     }
 

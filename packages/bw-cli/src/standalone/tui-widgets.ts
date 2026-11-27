@@ -11,6 +11,7 @@
  * Pure Node 22+ built-ins only; zero external dependencies.
  */
 
+import { writeSync } from "node:fs"
 import path from "node:path"
 import {
   ALT_SCREEN_OFF,
@@ -30,6 +31,7 @@ import {
   getTerminalLayout,
   padPlainRight,
   paintPromptSurfaceRow,
+  terminalRestoreSequence,
   truncatePlain,
   visibleWidth,
   wrapComposerLines,
@@ -268,6 +270,8 @@ export class RawTerminalSession {
   private estRow = 1
   private estCol = 0
   private inAltScreen = false
+  private readonly disposeListeners = new Set<() => void>()
+  private exitGuardsRegistered = false
 
   constructor() {
     this.isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY)
@@ -383,8 +387,51 @@ export class RawTerminalSession {
     }
   }
 
+  /** Registers a callback for `dispose()`, so an open widget can settle instead of deadlocking. */
+  onDispose(listener: () => void): () => void {
+    this.disposeListeners.add(listener)
+    return () => {
+      this.disposeListeners.delete(listener)
+    }
+  }
+
+  /** Puts the terminal back into a usable state after an abnormal exit. */
+  restoreTerminal(): void {
+    try {
+      writeSync(1, terminalRestoreSequence(this.inAltScreen))
+    } catch {
+      // stdout may already be closed while the process is going down
+    }
+    try {
+      if (this.isTTY && this.rawActive) process.stdin.setRawMode(false)
+    } catch {
+      // stdin may already be closed while the process is going down
+    }
+    this.rawActive = false
+    this.inAltScreen = false
+  }
+
+  private registerExitGuards(): void {
+    if (!this.isTTY || this.exitGuardsRegistered) return
+    this.exitGuardsRegistered = true
+    process.once("exit", () => this.restoreTerminal())
+    process.once("uncaughtException", (error: unknown) => {
+      this.restoreTerminal()
+      const detail = error instanceof Error ? (error.stack ?? error.message) : String(error)
+      process.stderr.write(`bashwink: ${detail}\n`)
+      process.exit(1)
+    })
+    process.once("unhandledRejection", (reason: unknown) => {
+      this.restoreTerminal()
+      const detail = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)
+      process.stderr.write(`bashwink: ${detail}\n`)
+      process.exit(1)
+    })
+  }
+
   private ensureAttached(): void {
     if (this.attached) return
+    this.registerExitGuards()
     this.attached = true
     process.stdin.on("data", this.onData)
     process.stdout.on("resize", this.onResize)
@@ -512,6 +559,14 @@ export class RawTerminalSession {
   }
 
   dispose(): void {
+    for (const listener of Array.from(this.disposeListeners)) {
+      try {
+        listener()
+      } catch {
+        // A widget settling during shutdown must not block the rest of dispose
+      }
+    }
+    this.disposeListeners.clear()
     const activeListener = this.keyListener
     this.keyListener = undefined
     this.resizeListener = undefined
@@ -962,9 +1017,11 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
 
   return await new Promise<ComposerAction>((resolve) => {
     let settled = false
+    let offDispose: (() => void) | undefined
     const finish = (action: ComposerAction, commitText?: string) => {
       if (settled) return
       settled = true
+      offDispose?.()
       cleanup()
       const shouldCommit =
         commitText !== undefined &&
@@ -1050,12 +1107,13 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
             cursor = 0
             historyIndex = -1
             autoDismissedFor = undefined
-            statusMessage = "Cleared input (press Ctrl+D or /exit to quit)"
+            statusMessage = "Cleared input (press Ctrl+C again or Ctrl+D to quit)"
             render()
             return
           }
-          statusMessage = "Press Ctrl+D or type /exit to quit"
-          render()
+          // Ctrl+C on an empty prompt must leave the TUI instead of printing a hint: a hint
+          // looks identical to a frozen handler when the terminal has stopped delivering keys.
+          finish({ kind: "exit" })
           return
         }
         if (ev.key === "l") {
@@ -1362,6 +1420,9 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
     }
 
     const cleanup = raw.beginCapture(onKey, (info) => render(false, info.prevCols))
+    // A SIGINT/SIGTERM during the prompt disposes the session; settle with `exit` so the
+    // caller unwinds instead of waiting forever for a key listener that has been removed.
+    offDispose = raw.onDispose(() => finish({ kind: "exit" }))
     raw.write("\n")
     render(true)
   })

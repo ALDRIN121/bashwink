@@ -250,6 +250,7 @@ type PtyStep =
   | { readonly wait: string; readonly delay?: number; readonly send?: string }
   | { readonly resize: readonly [number, number]; readonly delay?: number }
   | { readonly delay?: number; readonly send: string }
+  | { readonly signal: string; readonly delay?: number }
 
 async function runPtyDriver(
   ws: string,
@@ -261,7 +262,7 @@ async function runPtyDriver(
 ): Promise<{ exitCode: number; output: string }> {
   const binPath = path.resolve("packages/bw-cli/src/standalone/bin.ts")
   const driver = `
-import fcntl, json, os, pty, select, struct, sys, termios, time
+import fcntl, json, os, pty, select, signal, struct, sys, termios, time
 spec = json.load(sys.stdin)
 m, s = pty.openpty()
 fcntl.ioctl(s, termios.TIOCSWINSZ, struct.pack("HHHH", spec["rows"], spec["cols"], 0, 0))
@@ -301,6 +302,7 @@ for step in spec["steps"]:
         r, c = step["resize"]
         fcntl.ioctl(m, termios.TIOCSWINSZ, struct.pack("HHHH", r, c, 0, 0))
     if "send" in step: os.write(m, step["send"].encode("utf-8"))
+    if "signal" in step: os.kill(pid, getattr(signal, step["signal"]))
 end = time.monotonic() + 10.0
 code = None
 while time.monotonic() < end:
@@ -1146,6 +1148,47 @@ test("real PTY untrusted session unlocks & switches to accept-edits on bare Ente
     assert.equal(readFileSync(path.join(ws, "hello.py"), "utf8"), "print('hi')\n")
   } finally {
     await new Promise<void>((resolve) => srv.close(() => resolve()))
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("SIGTERM ends the prompt and the transcript viewer instead of wedging the terminal", async (t) => {
+  const pyCheck = spawnSync("python3", ["-c", "import pty, termios"], { encoding: "utf8" })
+  if (pyCheck.status !== 0) {
+    t.skip("python3 pty module unavailable")
+    return
+  }
+
+  const root = mkdtempSync(path.join(tmpdir(), "bw-tui-signal-"))
+  const home = path.join(root, "home")
+  const ws = path.join(root, "ws")
+  mkdirSync(home, { recursive: true })
+  mkdirSync(ws, { recursive: true })
+
+  try {
+    // At the prompt: dispose() used to remove the key listener without settling the composer,
+    // so the process stayed alive with a dead prompt and Ctrl+C did nothing.
+    const prompt = await runPtyDriver(ws, home, 30, 100, [
+      { wait: "bashwink (no model)> " },
+      { signal: "SIGTERM" },
+    ])
+    assert.equal(prompt.exitCode, 130, prompt.output)
+    assert.ok(prompt.output.includes("Interrupted."), prompt.output)
+    assert.ok(
+      prompt.output.includes("\x1b[?25h\x1b[?2004l"),
+      "the terminal must be restored before exit",
+    )
+
+    // Inside a full-screen overlay: the alternate screen must be left behind.
+    const viewer = await runPtyDriver(ws, home, 30, 100, [
+      { wait: "bashwink (no model)> " },
+      { send: "/transcript\r" },
+      { wait: "Transcript" },
+      { signal: "SIGTERM" },
+    ])
+    assert.equal(viewer.exitCode, 130, viewer.output)
+    assert.ok(viewer.output.includes("\x1b[?1049l"), "the alternate screen must be left")
+  } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })

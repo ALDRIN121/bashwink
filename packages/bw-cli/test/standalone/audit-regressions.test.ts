@@ -1544,7 +1544,11 @@ test("Issues #99, #100, #101, #104: streaming UTF-8 boundaries, provider tool pr
     runGit(["init"])
     runGit(["config", "user.email", "test@bashwink.local"])
     runGit(["config", "user.name", "Test User"])
-    writeFileSync(path.join(f.workspace, ".gitignore"), "*.log\n!keep.log\n/rootonly.dat\n", "utf8")
+    writeFileSync(
+      path.join(f.workspace, ".gitignore"),
+      "*.log\n!keep.log\n/rootonly.dat\na/**/b\n**/logs\nsub/*.csv\n!sub/keep.csv\n",
+      "utf8",
+    )
     writeFileSync(path.join(f.workspace, "tracked.log"), "tracked\n", "utf8")
     runGit(["add", "-f", ".gitignore", "tracked.log"])
     runGit(["commit", "-m", "gitignore-base"])
@@ -1556,6 +1560,20 @@ test("Issues #99, #100, #101, #104: streaming UTF-8 boundaries, provider tool pr
     writeFileSync(path.join(f.workspace, "sub/rootonly.dat"), "kept\n", "utf8")
     writeFileSync(path.join(f.workspace, "sub/skip.tmp"), "skip\n", "utf8")
     writeFileSync(path.join(f.workspace, "sub/important.tmp"), "keep\n", "utf8")
+    for (const rel of [
+      "a/b",
+      "a/x/b",
+      "a/keep.txt",
+      "logs/deep.log",
+      "nested/logs/x.log",
+      "sub/x.csv",
+      "sub/keep.csv",
+      "sub/deep/x.csv",
+    ]) {
+      const abs = path.join(f.workspace, rel)
+      mkdirSync(path.dirname(abs), { recursive: true })
+      writeFileSync(abs, "x\n", "utf8")
+    }
 
     const listed = listWorkspaceFiles(f.workspace)
     assert.equal(listed.includes("tracked.log"), true)
@@ -1565,6 +1583,32 @@ test("Issues #99, #100, #101, #104: streaming UTF-8 boundaries, provider tool pr
     assert.equal(listed.includes("sub/rootonly.dat"), true)
     assert.equal(listed.includes("sub/important.tmp"), true)
     assert.equal(listed.includes("sub/skip.tmp"), false)
+    // `**` matches zero or more directories; `*` never crosses `/`.
+    assert.equal(listed.includes("a/b"), false)
+    assert.equal(listed.includes("a/x/b"), false)
+    assert.equal(listed.includes("a/keep.txt"), true)
+    assert.equal(listed.includes("logs/deep.log"), false)
+    assert.equal(listed.includes("nested/logs/x.log"), false)
+    assert.equal(listed.includes("sub/x.csv"), false)
+    assert.equal(listed.includes("sub/keep.csv"), true)
+    assert.equal(listed.includes("sub/deep/x.csv"), true)
+
+    // Exact parity with Git for untracked, non-ignored files.
+    const tracked = new Set(
+      spawnSync("git", ["ls-files", "-z"], { cwd: f.workspace, encoding: "utf8" })
+        .stdout.split("\0")
+        .filter(Boolean),
+    )
+    const gitVisible = new Set(
+      spawnSync("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
+        cwd: f.workspace,
+        encoding: "utf8",
+      })
+        .stdout.split("\0")
+        .filter(Boolean),
+    )
+    const toolVisible = listed.filter((p) => !tracked.has(p))
+    assert.deepEqual([...toolVisible].sort(), [...gitVisible].sort())
 
     const toolList = executeListFiles(boundary, {})
     assert.equal(toolList.ok, true)

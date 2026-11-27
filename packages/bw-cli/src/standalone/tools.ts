@@ -30,7 +30,6 @@ import {
   checkWorkspaceReadPath,
   checkWorkspaceWritePath,
   contains,
-  globMatch,
   physicalPath,
   sanitizeSecretText,
   scrubbedChildEnv,
@@ -178,6 +177,63 @@ function parseGitIgnoreFile(dirAbs: string, baseDirRel: string): GitIgnoreRule[]
   return rules
 }
 
+const REGEX_SPECIAL = /[.*+?^${}()|[\]\\]/g
+
+function escapeRegExpChar(ch: string): string {
+  return ch.replace(REGEX_SPECIAL, "\\$&")
+}
+
+/**
+ * Gitignore glob semantics (unlike `globMatch`, which permission rules use):
+ * `*` and `?` never cross `/`, and `**` matches zero or more directories.
+ */
+function gitIgnoreGlobToRegExp(pattern: string): RegExp {
+  let out = ""
+  let i = 0
+  while (i < pattern.length) {
+    const ch = pattern[i]!
+    if (ch === "*") {
+      if (pattern[i + 1] === "*") {
+        const atBoundary = i === 0 || pattern[i - 1] === "/"
+        const next = pattern[i + 2]
+        if (atBoundary && next === "/") {
+          out += "(?:.*/)?"
+          i += 3
+          continue
+        }
+        if (atBoundary && next === undefined) {
+          out += ".*"
+          i += 2
+          continue
+        }
+        out += "[^/]*"
+        i += 2
+        continue
+      }
+      out += "[^/]*"
+      i += 1
+      continue
+    }
+    if (ch === "?") {
+      out += "[^/]"
+      i += 1
+      continue
+    }
+    if (ch === "[") {
+      const close = pattern.indexOf("]", i + 1)
+      if (close !== -1) {
+        const body = pattern.slice(i + 1, close).replace(/\\/g, "\\\\")
+        out += `[${body}]`
+        i = close + 1
+        continue
+      }
+    }
+    out += escapeRegExpChar(ch)
+    i += 1
+  }
+  return new RegExp(`^${out}$`)
+}
+
 function matchesGitIgnoreRule(
   relFromWorkspace: string,
   name: string,
@@ -191,13 +247,12 @@ function matchesGitIgnoreRule(
     if (!relFromWorkspace.startsWith(prefix)) return false
     relInScope = relFromWorkspace.slice(prefix.length)
   }
+  const re = gitIgnoreGlobToRegExp(rule.pattern)
   if (!rule.anchored) {
-    return globMatch(rule.pattern, name) || globMatch(rule.pattern, relInScope)
+    // An unanchored pattern applies at any depth within this .gitignore's directory.
+    return re.test(name) || re.test(relInScope.split("/").pop() ?? relInScope)
   }
-  return (
-    globMatch(rule.pattern, relInScope) ||
-    (!rule.dirOnly && relInScope.startsWith(`${rule.pattern}/`))
-  )
+  return re.test(relInScope)
 }
 
 function isIgnoredByGitRules(

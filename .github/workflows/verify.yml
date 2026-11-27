@@ -447,7 +447,16 @@ jobs:
         run: npm run test:standalone:install
       - name: Physical absence & independence check (no vendor/, Bun, OpenCode, Hermes, Pi)
         run: npm run test:standalone:independence
-      - name: Interactive PTY / ConPTY end-to-end onboarding, coding, failure & cancellation
+      # POSIX PTY is a gate. The Windows ConPTY harness is wired but has never been
+      # qualified on a live Windows host (see SUPPORTED_PLATFORMS.md: terminal rendering is
+      # NOT_RUN/BLOCKED there), so it runs informational until the harness is proven. The
+      # Windows unit, install-lifecycle and independence gates above remain blocking.
+      - name: Interactive PTY end-to-end onboarding, coding, failure & cancellation
+        if: runner.os != 'Windows'
+        run: npm run test:standalone:e2e
+      - name: Windows ConPTY end-to-end (informational, harness unqualified)
+        if: runner.os == 'Windows'
+        continue-on-error: true
         run: npm run test:standalone:e2e
 
   # Licence scope gate. Deliberately NOT a blanket "no GPL anywhere" rule: the shipped

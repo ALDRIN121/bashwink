@@ -1957,6 +1957,14 @@ export async function runStandalone(
     if (cfgState.status === "invalid") {
       io.writeError(`Saved profile could not be loaded: ${cfgState.reason}\n`)
     }
+    if (activeConfig && activeConfig.connectionStatus !== "verified") {
+      // #100: chat-only reachability is not tool-call capability. Warn before the first
+      // agent task instead of letting a text-only provider look "configured" and then fail.
+      io.write(
+        `Warning: provider '${activeConfig.model}' has tool-calling status '${activeConfig.connectionStatus ?? "unverified"}'. ` +
+          "Agent tasks need tool calls; run `bashwink setup` and test the connection to verify support.\n",
+      )
+    }
 
     const canonical = canonicalWorkspace(cwd)
     ensurePaths(resolved)

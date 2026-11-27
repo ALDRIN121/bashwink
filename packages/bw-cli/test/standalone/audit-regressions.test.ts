@@ -1058,6 +1058,88 @@ test("Issues #92, #93, #105, #106, #107: budget bounds, incomplete SSE/finishRea
     assert.equal(preInRes.outcome, "budget_stopped")
     assert.equal(req1Called, 0)
 
+    // #92a-bis: maxTotalTokens below the estimated first request must not send it either.
+    let totalCalls = 0
+    const preTotalRes = await runTask(
+      {
+        workspace: f.workspace,
+        prompt: "oversized total relative to cap",
+        trusted: true,
+        config: f.config,
+        budgets: { maxRequests: 3, maxTotalTokens: 20 },
+      },
+      {
+        paths: f.paths,
+        env: f.env,
+        confirmAction: async () => "once",
+        completeImpl: async () => {
+          totalCalls += 1
+          return { text: "ok", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+        },
+      },
+    )
+    assert.equal(preTotalRes.outcome, "budget_stopped")
+    assert.equal(totalCalls, 0)
+
+    // #92c: a Guardian reply that overruns the output budget must stop before the approved edit.
+    writeFileSync(path.join(f.workspace, "guard-target.txt"), "before\n", "utf8")
+    let guardStep = 0
+    let guardBudgetCalls = 0
+    const guardBudgetRes = await runTask(
+      {
+        workspace: f.workspace,
+        prompt: "edit with a Guardian that overruns the cap",
+        trusted: true,
+        config: f.config,
+        permissionMode: "smart",
+        budgets: { maxRequests: 5, maxOutputTokens: 50 },
+      },
+      {
+        paths: f.paths,
+        env: f.env,
+        confirmAction: async () => "once",
+        completeImpl: async (req) => {
+          if (
+            req.messages.some(
+              (m) =>
+                m.role === "system" &&
+                typeof m.content === "string" &&
+                m.content.includes("runtime security reviewer"),
+            )
+          ) {
+            guardBudgetCalls += 1
+            return {
+              text: "APPROVE",
+              finishReason: "stop",
+              toolCalls: [],
+              toolInputErrors: [],
+              usage: { inputTokens: 10, outputTokens: 100, totalTokens: 110 },
+            }
+          }
+          guardStep += 1
+          if (guardStep === 1) {
+            return {
+              text: "",
+              finishReason: "tool_calls",
+              toolCalls: [
+                {
+                  id: "gb-1",
+                  name: "edit_file",
+                  input: { path: "guard-target.txt", oldText: "before", newText: "after" },
+                },
+              ],
+              toolInputErrors: [],
+              usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 },
+            }
+          }
+          return { text: "done", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+        },
+      },
+    )
+    assert.equal(guardBudgetCalls > 0, true)
+    assert.equal(guardBudgetRes.outcome, "budget_stopped")
+    assert.equal(readFileSync(path.join(f.workspace, "guard-target.txt"), "utf8"), "before\n")
+
     // #92b: final reply exceeding maxCostUsd must return budget_stopped, NOT completed
     const overCostFinal = await runTask(
       {

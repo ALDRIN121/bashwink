@@ -549,7 +549,7 @@ function renderCliHeader(
     ? `${config.providerId ? `${config.providerId} / ` : ""}${config.model} (${formatDestination(config.baseURL)})`
     : "none configured"
   const trustLine = trusted
-    ? style.green(layout.isCompact ? "trusted" : "trusted (edits & commands confirm)")
+    ? style.green(layout.isCompact ? "trusted" : "trusted (approvals follow the mode)")
     : style.yellow(layout.isCompact ? "read-only (/trust)" : "not trusted (read-only until /trust)")
   const branchTag = session?.gitBranch ? `, ${session.gitBranch}` : ""
   const sessionLine = session
@@ -792,6 +792,10 @@ export async function runInteractiveSetup(
       : ""
     const envLabel = `1) Environment variable name${envHint}`
     const pasteLabel = `4) Enter / paste API key (saved 0600 locally)`
+    const noneLabel =
+      preset.endpointType === "hosted"
+        ? "3) None (no credential — hosted endpoints reject this)"
+        : "3) None (no key needed)"
     if (canKeepExisting && existingCredCheck) {
       io.write(`\nCurrent credentials: ${existingCredCheck.summary}\n`)
     }
@@ -801,7 +805,7 @@ export async function runInteractiveSetup(
         ...(canKeepExisting ? [{ value: "k", display: "k) Keep existing credentials" }] : []),
         { value: "1", display: envLabel },
         { value: "2", display: "2) Key file path" },
-        { value: "3", display: "3) None (no key needed)" },
+        { value: "3", display: noneLabel },
         { value: "4", display: pasteLabel },
       ]
       mode = await io.askChoice("Choose [1/2/3/4] (or 'cancel'): ", authOpts)
@@ -810,7 +814,7 @@ export async function runInteractiveSetup(
       if (canKeepExisting) io.write("  k) Keep existing credentials\n")
       io.write(`  ${envLabel}\n`)
       io.write("  2) Key file path\n")
-      io.write("  3) None (no key needed)\n")
+      io.write(`  ${noneLabel}\n`)
       io.write(`  ${pasteLabel}\n`)
       mode = await io.ask("Choose [1/2/3/4] (or 'cancel'): ")
     }
@@ -841,6 +845,16 @@ export async function runInteractiveSetup(
         io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
       }
     } else if (m === "3" || m === "none") {
+      if (preset.endpointType === "hosted") {
+        // A hosted endpoint with no credential is a guaranteed 401 at the first request; the
+        // repair loop then re-enters this same wizard. Ask before saving such a config.
+        const proceed = await askYesNo(
+          io,
+          `${preset.name} is a hosted endpoint and will reject unauthenticated requests (401). Save it with no credential anyway? [y/N] `,
+        )
+        if (proceed === null) return { status: "cancelled" }
+        if (!isYes(proceed)) continue
+      }
       credential = { kind: "none" }
     } else if (m === "4" || m === "key" || m === "paste") {
       const promptFn = io.askSecret ? io.askSecret.bind(io) : io.ask.bind(io)

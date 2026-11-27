@@ -1192,3 +1192,42 @@ test("SIGTERM ends the prompt and the transcript viewer instead of wedging the t
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test("setup asks before saving a hosted provider with no credential", async (t) => {
+  const pyCheck = spawnSync("python3", ["-c", "import pty, termios"], { encoding: "utf8" })
+  if (pyCheck.status !== 0) {
+    t.skip("python3 pty module unavailable")
+    return
+  }
+
+  const root = mkdtempSync(path.join(tmpdir(), "bw-tui-setup-"))
+  const home = path.join(root, "home")
+  const ws = path.join(root, "ws")
+  mkdirSync(home, { recursive: true })
+  mkdirSync(ws, { recursive: true })
+
+  try {
+    const steps = [
+      { wait: "bashwink (no model)> ", delay: 0.05, send: "\r" },
+      { wait: "Select provider", delay: 0.05, send: "12\r" },
+      { wait: "Endpoint URL", delay: 0.05, send: "\r" },
+      { wait: "Authentication:", delay: 0.05, send: "3\r" },
+      { wait: "will reject unauthenticated requests", delay: 0.05, send: "n\r" },
+      { wait: "Authentication:", delay: 0.05, send: "cancel\r" },
+      { wait: "bashwink (no model)> ", delay: 0.05, send: "/exit\r" },
+    ]
+    const parsed = await runPtyDriver(ws, home, 31, 120, steps)
+    assert.equal(parsed.exitCode, 0, parsed.output)
+    assert.ok(
+      parsed.output.includes("hosted endpoints reject this"),
+      "the hosted auth menu must not offer a silent no-credential save",
+    )
+    assert.ok(
+      parsed.output.includes("will reject unauthenticated requests"),
+      "declining the warning must not save the config",
+    )
+    assert.ok(!existsSync(path.join(paths({ BASHWINK_HOME: home }).config, "standalone.json")))
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

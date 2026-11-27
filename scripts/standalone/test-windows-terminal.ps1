@@ -343,7 +343,12 @@ try {
   Set-Content -Path (Join-Path $RepoDir "sum.test.js") -Value "import test from 'node:test'; import assert from 'node:assert/strict'; import { sum } from './sum.js'; test('adds', () => assert.equal(sum(2, 3), 5));`n"
 
   # 1. Launch into CLI banner, open /model, cancel setup once (0 requests, no standalone.json), /exit
-  $s1 = New-Object ConPtySession ("`"$BashwinkCmd`""), $RepoDir, 100, 30
+  # Launch through cmd.exe: a .cmd shim started directly with CreateProcess does not
+  # reliably attach to the pseudoconsole, so the child sees no TTY and prints the
+  # non-interactive message instead of the TUI banner.
+  $CmdExe = if ($env:ComSpec) { $env:ComSpec } else { "cmd.exe" }
+  $BashwinkCmdLine = "$CmdExe /d /s /c `"`"$BashwinkCmd`"`""
+  $s1 = New-Object ConPtySession ($BashwinkCmdLine), $RepoDir, 100, 30
   try {
     $s1.WaitFor("Model    none configured", 15000)
     $s1.WaitFor("bashwink (no model)> ", 15000)
@@ -363,7 +368,7 @@ try {
   # 2. Launch -> /model -> custom local preset -> trust -> approve edit + command -> Ctrl+C cancel -> /exit
   $ServerState.Scenario = "fix"
   $ServerState.Turn = 0
-  $s2 = New-Object ConPtySession ("`"$BashwinkCmd`""), $RepoDir, 100, 30
+  $s2 = New-Object ConPtySession ($BashwinkCmdLine), $RepoDir, 100, 30
   try {
     $s2.WaitFor("bashwink (no model)> ", 15000)
     $s2.Send("`r`n")

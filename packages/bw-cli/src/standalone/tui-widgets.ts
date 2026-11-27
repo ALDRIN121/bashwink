@@ -896,11 +896,16 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
         const newTargetStartRow = Math.max(1, rows - outLines.length + 1)
         const nextSpacer = Math.max(0, newTargetStartRow - prePinRow)
         const deltaSpacer = nextSpacer - pinSpacerRows
+        // Reclaim spacer rows above the block before erasing, but when the block shrinks
+        // the abandoned top rows must be erased before moving down to the new target row,
+        // otherwise those rows stay on screen and the prompt renders twice (#112).
         if (deltaSpacer < 0) frame += `\x1b[${-deltaSpacer}A`
-        else if (deltaSpacer > 0) frame += "\n".repeat(deltaSpacer)
+        frame += "\x1b[J"
+        if (deltaSpacer > 0) frame += "\n".repeat(deltaSpacer)
         pinSpacerRows = nextSpacer
+      } else {
+        frame += "\x1b[J"
       }
-      frame += "\x1b[J"
     }
     frame += outLines.join("\n")
     // Move cursor back up from bottom line to active input cursor

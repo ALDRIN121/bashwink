@@ -46,18 +46,27 @@ export function fileSha256(filePath: string): string | undefined {
   }
 }
 
+function commandTokenForDisplay(token: string): string {
+  // Preserve argv boundaries for paths with spaces (common on Windows) when the
+  // command is later re-tokenized for ProofPack verification.
+  return /[\s"']/.test(token) ? `"${token.replace(/"/g, '\\"')}"` : token
+}
+
 function commandString(cmd: CommandOutcomeRecord): string {
-  return [cmd.command, ...cmd.args].join(" ").trim()
+  return [cmd.command, ...cmd.args].map(commandTokenForDisplay).join(" ").trim()
 }
 
 function normalizeExeName(exe: string): string {
-  return path
-    .basename(exe.trim())
-    .toLowerCase()
-    .replace(/\.(?:exe|cmd|bat)$/i, "")
+  const trimmed = exe.trim()
+  // Split on both separators: a ProofPack produced on Windows must verify anywhere.
+  const base = trimmed.split(/[\\/]/).pop() ?? trimmed
+  return base.toLowerCase().replace(/\.(?:exe|cmd|bat)$/i, "")
 }
 
-export function tokenizeCommandLine(commandLine: string): {
+export function tokenizeCommandLine(
+  commandLine: string,
+  platform: NodeJS.Platform = process.platform,
+): {
   readonly tokens: string[]
   readonly hasShellMeta: boolean
 } {
@@ -67,11 +76,20 @@ export function tokenizeCommandLine(commandLine: string): {
   let inDouble = false
   let hasToken = false
   let hasShellMeta = false
+  const windowsPathSyntax =
+    platform === "win32" || /^(?:[A-Za-z]:[\\/]|\\\\)/.test(commandLine.trim().replace(/^["']/, ""))
 
   for (let i = 0; i < commandLine.length; i += 1) {
     const ch = commandLine[i]!
     if (ch === "\\" && !inSingle && i + 1 < commandLine.length) {
-      current += commandLine[i + 1]!
+      const next = commandLine[i + 1]!
+      // Windows paths use `\` as a separator; only `\"` inside quotes is an escape there.
+      if (windowsPathSyntax && next !== '"') {
+        current += ch
+        hasToken = true
+        continue
+      }
+      current += next
       hasToken = true
       i += 1
       continue

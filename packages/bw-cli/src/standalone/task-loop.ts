@@ -11,7 +11,7 @@
 
 import { createHash, randomBytes } from "node:crypto"
 import { spawnSync } from "node:child_process"
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
+import { existsSync, openSync, readdirSync, readSync, closeSync, statSync } from "node:fs"
 import path from "node:path"
 import type { Paths } from "../paths.ts"
 import { LimitConfigError, parseLimits } from "../usage-guard.ts"
@@ -396,19 +396,74 @@ interface WorkspaceMutationSnapshot {
   readonly files: Map<string, string>
 }
 
-function fileContentSignature(absPath: string, size: number, mtimeMs: number): string {
-  const MAX_HASH_BYTES = 2 * 1024 * 1024
-  if (size <= MAX_HASH_BYTES) {
-    const hash = createHash("sha256").update(readFileSync(absPath)).digest("hex")
-    return `${size}:${hash}`
+const MUTATION_HASH_BUDGET_BYTES = 64 * 1024 * 1024
+
+// Sensitive files are hashed even when Git ignores them: a shell command rewriting `.env`
+// or a key file must still be visible to ScopeFence (#89 case 2).
+const MUTATION_SENSITIVE_BASENAME =
+  /^(?:\.env(?:\.[^/]*)?|\.envrc|\.npmrc|\.pypirc|\.netrc|\.git-credentials|credentials?(?:\.[^/]*)?|secrets?(?:\.[^/]*)?|id_[a-z0-9]+)$|\.(?:pem|key|p12|pfx|jks|keystore|asc|gpg)$/i
+
+function isSensitiveMutationPath(relPath: string): boolean {
+  const base = relPath.split("/").pop() ?? relPath
+  return MUTATION_SENSITIVE_BASENAME.test(base)
+}
+
+interface MutationHashBudget {
+  remaining: number
+}
+
+/** Content hashes a file with bounded memory/time; returns undefined when the budget is exhausted. */
+function hashFileWithinBudget(
+  absPath: string,
+  size: number,
+  budget: MutationHashBudget,
+): string | undefined {
+  if (size > budget.remaining) return undefined
+  let fd: number
+  try {
+    fd = openSync(absPath, "r")
+  } catch {
+    return undefined
   }
-  return `${size}:${mtimeMs}`
+  try {
+    const hasher = createHash("sha256")
+    const chunk = Buffer.allocUnsafe(Math.min(65_536, Math.max(1, size)))
+    let offset = 0
+    while (offset < size) {
+      const n = readSync(fd, chunk, 0, Math.min(chunk.length, size - offset), offset)
+      if (n <= 0) return undefined
+      hasher.update(chunk.subarray(0, n))
+      offset += n
+    }
+    budget.remaining -= size
+    return `${size}:${hasher.digest("hex")}`
+  } catch {
+    return undefined
+  } finally {
+    try {
+      closeSync(fd)
+    } catch {
+      // ignore close failure
+    }
+  }
+}
+
+function fileContentSignature(
+  absPath: string,
+  size: number,
+  mtimeMs: number,
+  budget: MutationHashBudget,
+): { readonly signature: string; readonly contentHashed: boolean } {
+  const hashed = hashFileWithinBudget(absPath, size, budget)
+  if (hashed !== undefined) return { signature: hashed, contentHashed: true }
+  return { signature: `${size}:${mtimeMs}`, contentHashed: false }
 }
 
 function captureWorkspaceMutationSnapshot(workspace: string): WorkspaceMutationSnapshot {
   const MAX_SNAPSHOT_MS = 300
   const MAX_TRACKED_FILES = 1500
   const started = Date.now()
+  const hashBudget: MutationHashBudget = { remaining: MUTATION_HASH_BUDGET_BYTES }
   if (existsSync(path.join(workspace, ".git"))) {
     for (const gitBin of [
       "git",
@@ -416,13 +471,18 @@ function captureWorkspaceMutationSnapshot(workspace: string): WorkspaceMutationS
       "/usr/bin/git",
     ]) {
       try {
-        const res = spawnSync(gitBin, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], {
-          cwd: workspace,
-          encoding: "utf8",
-          timeout: MAX_SNAPSHOT_MS,
-        })
+        const res = spawnSync(
+          gitBin,
+          ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching"],
+          {
+            cwd: workspace,
+            encoding: "utf8",
+            timeout: MAX_SNAPSHOT_MS,
+          },
+        )
         if (res.status === 0) {
           const files = new Map<string, string>()
+          let partial = false
           const entries = res.stdout.split("\0")
           for (let i = 0; i < entries.length; i += 1) {
             const entry = entries[i]
@@ -433,15 +493,21 @@ function captureWorkspaceMutationSnapshot(workspace: string): WorkspaceMutationS
               i += 1
             }
             if (rel.endsWith("/") || rel === ".git" || rel.startsWith(".git/")) continue
+            // Ignored paths appear as `!!` in the porcelain stream. Only sensitive ones are
+            // tracked, so a repo's build caches cannot flood the snapshot.
+            if (status.includes("!") && !isSensitiveMutationPath(rel)) continue
             const abs = path.join(workspace, rel)
             try {
               const st = statSync(abs)
-              files.set(rel, `${status}:${fileContentSignature(abs, st.size, st.mtimeMs)}`)
+              if (!st.isFile()) continue
+              const sig = fileContentSignature(abs, st.size, st.mtimeMs, hashBudget)
+              if (!sig.contentHashed) partial = true
+              files.set(rel, `${status}:${sig.signature}`)
             } catch {
               files.set(rel, `${status}:missing`)
             }
           }
-          return { mode: "git", partial: false, files }
+          return { mode: "git", partial, files }
         }
         if (res.status !== undefined) break
       } catch {
@@ -479,7 +545,9 @@ function captureWorkspaceMutationSnapshot(workspace: string): WorkspaceMutationS
         const rel = path.relative(workspace, abs).split(path.sep).join("/")
         try {
           const st = statSync(abs)
-          files.set(rel, `${st.size}:${st.mtimeMs}`)
+          const sig = fileContentSignature(abs, st.size, st.mtimeMs, hashBudget)
+          if (!sig.contentHashed) partial = true
+          files.set(rel, `${isSensitiveMutationPath(rel) ? "sensitive" : "file"}:${sig.signature}`)
         } catch {
           // Ignore unreadable
         }

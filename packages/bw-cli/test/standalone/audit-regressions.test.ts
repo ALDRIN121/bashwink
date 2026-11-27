@@ -24,6 +24,7 @@ import {
 } from "../../src/standalone/config.ts"
 import {
   ContractStoreError,
+  approveActiveContract,
   createStandaloneContract,
   evaluateContractGate,
   loadActiveContract,
@@ -31,6 +32,7 @@ import {
 import {
   buildProofPack,
   matchesCriterionCommand,
+  tokenizeCommandLine,
   verifyProofPack,
 } from "../../src/standalone/proof.ts"
 import {
@@ -870,6 +872,162 @@ test("Issues #89, #90, #91: same-size Git mutation detection, strict ProofPack c
   } finally {
     f.cleanup()
   }
+})
+
+test("Issue #89 follow-up: Git-ignored sensitive files and >2MiB same-size mutations are content-detected", async () => {
+  const f = tempFixture()
+  try {
+    // (A) A Git-ignored `.env` is outside ScopeFence: a same-length rewrite must still produce a finding.
+    const runGit = (args: string[]) => {
+      const r = spawnSync("git", args, { cwd: f.workspace, encoding: "utf8" })
+      if (r.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${r.stderr}`)
+    }
+    runGit(["init"])
+    runGit(["config", "user.email", "test@bashwink.local"])
+    runGit(["config", "user.name", "Test User"])
+    writeFileSync(path.join(f.workspace, ".gitignore"), "*.env\n", "utf8")
+    writeFileSync(path.join(f.workspace, ".env"), "AAAA\n", "utf8")
+    writeFileSync(path.join(f.workspace, "keep.txt"), "keep\n", "utf8")
+    runGit(["add", "-A"])
+    runGit(["commit", "-m", "init"])
+
+    createStandaloneContract(f.paths.data, f.workspace, {
+      objective: "stay in scope",
+      allowedPaths: ["allowed/**"],
+      criteria: [{ id: "c1", statement: "scope respected", command: "true" }],
+    })
+    const contract = approveActiveContract(f.paths.data, f.workspace, "tester")
+
+    const events: TaskEvent[] = []
+    let step = 0
+    const ignoredRes = await runTask(
+      {
+        workspace: f.workspace,
+        prompt: "rewrite the ignored env file",
+        trusted: true,
+        config: f.config,
+        contract,
+        budgets: { maxRequests: 4 },
+      },
+      {
+        paths: f.paths,
+        env: f.env,
+        confirmAction: async () => "once",
+        onEvent: (e) => events.push(e),
+        completeImpl: async () => {
+          step += 1
+          if (step === 1) {
+            return {
+              text: "",
+              finishReason: "tool_calls",
+              toolCalls: [
+                {
+                  id: "ignored-1",
+                  name: "run_command",
+                  input: {
+                    command: process.execPath,
+                    args: ["-e", "require('fs').writeFileSync('.env', 'BBBB\\n')"],
+                  },
+                },
+              ],
+              toolInputErrors: [],
+            }
+          }
+          return { text: "done", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+        },
+      },
+    )
+    assert.equal(ignoredRes.changedFiles.includes(".env"), true)
+    assert.equal(
+      events.some((e) => e.type === "test_guard_triggered" && e.path === ".env"),
+      true,
+    )
+
+    // (B) Non-Git workspace: a 3 MiB file rewritten in place with its mtime restored still changes bytes.
+    const plain = tempFixture()
+    try {
+      const bigPath = path.join(plain.workspace, "big.bin")
+      writeFileSync(bigPath, Buffer.alloc(3 * 1024 * 1024, 0x61))
+      const frozen = new Date("2026-01-01T00:00:00Z")
+      utimesSync(bigPath, frozen, frozen)
+      let bigStep = 0
+      const bigRes = await runTask(
+        {
+          workspace: plain.workspace,
+          prompt: "rewrite one byte of an oversized file",
+          trusted: true,
+          config: plain.config,
+          budgets: { maxRequests: 4 },
+        },
+        {
+          paths: plain.paths,
+          env: plain.env,
+          confirmAction: async () => "once",
+          completeImpl: async () => {
+            bigStep += 1
+            if (bigStep === 1) {
+              return {
+                text: "",
+                finishReason: "tool_calls",
+                toolCalls: [
+                  {
+                    id: "big-1",
+                    name: "run_command",
+                    input: {
+                      command: process.execPath,
+                      args: [
+                        "-e",
+                        "const fs=require('fs');const p='big.bin';const b=fs.readFileSync(p);b[b.length-1]=0x62;fs.writeFileSync(p,b);const d=new Date('2026-01-01T00:00:00Z');fs.utimesSync(p,d,d);",
+                      ],
+                    },
+                  },
+                ],
+                toolInputErrors: [],
+              }
+            }
+            return { text: "done", finishReason: "stop", toolCalls: [], toolInputErrors: [] }
+          },
+        },
+      )
+      assert.equal(bigRes.changedFiles.includes("big.bin"), true)
+    } finally {
+      plain.cleanup()
+    }
+  } finally {
+    f.cleanup()
+  }
+})
+
+test("Windows absolute command paths keep separators and argv boundaries when matched against receipts", () => {
+  const winExe = "C:\\Program Files\\nodejs\\node.exe"
+  const quoted = `"${winExe}" --test sum.test.js`
+  const tokenized = tokenizeCommandLine(quoted)
+  assert.deepEqual(tokenized.tokens, [winExe, "--test", "sum.test.js"])
+  assert.equal(tokenized.hasShellMeta, false)
+  const receipt = {
+    command: winExe,
+    args: ["--test", "sum.test.js"],
+    cwd: process.cwd(),
+    decision: "approved" as const,
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    actionOrder: 1,
+  }
+  assert.equal(matchesCriterionCommand(quoted, receipt, process.cwd()), true)
+
+  // Hosted Windows runners use a space-free node.exe path; backslashes must survive too.
+  const runnerExe = "C:\\hostedtoolcache\\windows\\node\\22.13.0\\x64\\node.exe"
+  const runnerLine = `${runnerExe} --test`
+  assert.deepEqual(tokenizeCommandLine(runnerLine).tokens, [runnerExe, "--test"])
+  assert.equal(
+    matchesCriterionCommand(
+      runnerLine,
+      { ...receipt, command: runnerExe, args: ["--test"] },
+      process.cwd(),
+    ),
+    true,
+  )
 })
 
 test("Issues #92, #93, #105, #106, #107: budget bounds, incomplete SSE/finishReason fail-closed, no-op loop, guardian invalidation & Retry-After", async () => {

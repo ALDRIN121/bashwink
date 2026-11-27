@@ -124,7 +124,7 @@ python3 scripts/verify_bashwink_docs.py --check-manifest
 
 ## Known limitations
 
-- **Not an OS sandbox:** Workspace trust, diff previews, command confirmations, symlink/`.git`/protected-root checks reduce accidents, but approved shell commands execute with your OS user permissions. `bashwink --sandbox` is not shipped in standalone `0.2.0-alpha.1` and fails closed with exit `3`.
+- **Not an OS sandbox:** Workspace trust, diff previews, command confirmations, symlink/`.git`/protected-root checks reduce accidents, but approved shell commands execute with your OS user permissions. `bashwink --sandbox` is not shipped in standalone `0.2.0-alpha.2` and fails closed with exit `3`.
 - **OpenAI-compatible endpoint scope:** Talks HTTPS (hosted) or loopback HTTP/HTTPS (local) Chat Completions; multi-agent workers and MCP servers remain out of scope for this foreground single-task alpha.
 - **Platform verification status:** Qualified locally on macOS Apple Silicon (`darwin-arm64`) on both Node `v22.13.0` and `v22.23.2`. Windows x64 (`win32-x64`), macOS Intel (`darwin-x64`), Linux x64/ARM64 (glibc & musl) remain **UNVERIFIED** until run on those hosts/runners; see [supported platforms](docs/bashwink/SUPPORTED_PLATFORMS.md).
 - **Historical fork baseline:** Legacy `v0.1.0-alpha.1` scripts and `vendor/engine/` are retained only as the documented rollback baseline ([ADR-015](docs/bashwink/ADR-015-STANDALONE-CODING-ALPHA.md), `e4d675111fc93906803dd638af4d36eaf6ad91f0`). Do not use `scripts/build_npm_package.py` on `main`; use `npm run install:local`.

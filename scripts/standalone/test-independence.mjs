@@ -47,6 +47,18 @@ function runNpmIn(cwd, npmArgs, env) {
 }
 
 function findGit() {
+  // Resolve an absolute path: the scrubbed PATH below must still contain Git so the
+  // product's own `git status`/`git ls-files` calls work on Windows, where `git` lives
+  // outside System32 (e.g. C:\Program Files\Git\cmd) and is not named `git` on PATH.
+  const lookup = process.platform === "win32" ? "where" : "which";
+  const located = spawnSync(lookup, ["git"], { encoding: "utf8" });
+  if (located.status === 0) {
+    const first = (located.stdout || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean);
+    if (first) return first;
+  }
   for (const candidate of ["git", "/Library/Developer/CommandLineTools/usr/bin/git", "/usr/bin/git"]) {
     const r = spawnSync(candidate, ["--version"], { encoding: "utf8" });
     if (r.status === 0) return candidate;

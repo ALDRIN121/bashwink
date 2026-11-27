@@ -6,6 +6,117 @@ have done.
 
 **Status:** Standalone alpha **`v0.2.0-alpha.2`** ([ADR-015](docs/bashwink/ADR-015-STANDALONE-CODING-ALPHA.md)) runs purely on Node.js 22+ and npm without OpenCode, Hermes, Pi, or Bun. Phase 0 and Phase 1 are gate-passed for the historical OpenCode substrate; the Phase 2 gate remains open. See [implementation status](docs/bashwink/IMPLEMENTATION_STATUS.md), [supported platforms](docs/bashwink/SUPPORTED_PLATFORMS.md), and [next steps](docs/bashwink/NEXT_STEPS.md).
 
+## Set up Bashwink with an AI agent
+
+Any assistant that can run commands on your computer can do the whole setup. Paste
+this one line:
+
+```text
+Read the "Set up Bashwink with an AI agent" section of https://github.com/ALDRIN121/bashwink and follow it to install and verify Bashwink on this computer.
+```
+
+Everything the assistant needs is below. You can follow it yourself too; the
+[manual quick start](#v020-alpha2-quick-start-standalone-checkout-install) is the
+shorter path if Git and Node.js are already installed.
+
+### Instructions for the assistant
+
+You are installing the standalone Bashwink CLI on the machine you are running on.
+Work through the steps in order, and do not report a step as done until its output
+confirms it.
+
+**Ground rules**
+
+- Confirm your terminal runs on the user's computer, not a remote sandbox. If you
+  cannot run commands there, give the user the commands for their OS one step at a
+  time and ask for the output before continuing.
+- Use only https://github.com/ALDRIN121/bashwink as the Bashwink source.
+- Before installing or upgrading anything, show what will change and wait for
+  approval. Keep tools that already meet the requirements.
+- Do not run anything with elevated privileges except the distro package-manager
+  install in step 2, and ask first.
+- Do not change security settings, and do not edit PATH permanently as a workaround.
+
+**1. Identify the platform**
+
+Windows → PowerShell. macOS → zsh or bash. Linux → bash. State which one you
+detected before continuing.
+
+**2. Check the prerequisites**
+
+Run `git --version`, `node --version`, and `npm --version` (`npm.cmd` in
+PowerShell). Bashwink needs Git, Node.js >= 22.13.0, and npm >= 10. Install only
+what is missing or too old, after approval:
+
+- **Windows, Git:** `winget install --id Git.Git -e --source winget` if WinGet is
+  available, otherwise https://git-scm.com/install/windows.
+- **macOS, Git:** `brew install git` if Homebrew is already installed, otherwise
+  `xcode-select --install` and let the user finish Apple's dialog.
+- **Linux, Git:** the distro package manager — `sudo apt install git`
+  (Debian/Ubuntu), `sudo dnf install git` (Fedora/RHEL), or `sudo pacman -S git`
+  (Arch). Do not guess a distro you could not detect.
+- **Node.js and npm:** use the user's existing version manager (nvm, fnm, Volta) to
+  select a compatible LTS. Otherwise point them at the official installer for their
+  OS and architecture: https://nodejs.org/en/download. On Linux, prefer nvm or the
+  official tarball over a distro package, which is often older than 22.13.0.
+
+Hand off installer dialogs and sudo password prompts. Recheck the three versions in
+a fresh terminal.
+
+**3. Clone the repository**
+
+Ask the user which parent folder to use, then run:
+
+```sh
+git clone https://github.com/ALDRIN121/bashwink.git bashwink
+```
+
+Enter the new `bashwink` folder. If it already exists, check its remote and status,
+and ask before reusing it. Do not overwrite, reset, or create a nested clone.
+
+**4. Install**
+
+Show the global npm prefix (`npm prefix -g`, or `npm.cmd prefix -g` in PowerShell)
+so the user knows where the command will land, then run this from the repository
+root:
+
+```sh
+npm run install:local
+```
+
+In PowerShell use `npm.cmd run install:local`. Use the checkout installer, not a
+package from the registry.
+
+On Linux or macOS, if the global install fails with a permission error, do not fall
+back to sudo: set a user-level prefix with `npm config set prefix ~/.npm-global`,
+add `~/.npm-global/bin` to PATH, and retry.
+
+**5. Verify**
+
+In a fresh terminal:
+
+```sh
+bashwink --version
+bashwink doctor
+```
+
+If `bashwink` is not on PATH, run the launcher by full path: `<prefix>\bashwink.cmd`
+on Windows, `<prefix>/bin/bashwink` on macOS and Linux. An unconfigured provider is
+expected at this point.
+
+**6. Hand off first-time setup**
+
+Start `bashwink setup` in the user's terminal, or tell them to run it. They choose
+the provider, model, and credential reference themselves. Do not ask for API keys in
+chat, and do not grant workspace trust on their behalf.
+
+**Report**
+
+List the OS, checkout path, installed version, and `doctor` result. Mark provider
+setup separately as complete, pending, or not verified. If a command fails, stop at
+that step and show the command, exit code, and relevant error without exposing
+secrets.
+
 ## v0.2.0-alpha.2 quick start (standalone checkout install)
 
 ### 1. Prerequisites

@@ -136,6 +136,7 @@ function startComposer(screen: Screen, history: readonly string[] = []) {
       onKey = handler
       return () => {}
     },
+    onDispose: () => () => {},
   } as unknown as RawTerminalSession
 
   const settled = runInteractiveComposer({
@@ -153,6 +154,12 @@ function startComposer(screen: Screen, history: readonly string[] = []) {
     },
     press(...names: KeyName[]): void {
       for (const name of names) onKey!({ kind: "key", name })
+    },
+    ctrlC(): void {
+      onKey!({ kind: "ctrl", key: "c" })
+    },
+    result(): Promise<string> {
+      return settled.then((action) => action.kind)
     },
     submit(): Promise<string> {
       onKey!({ kind: "key", name: "enter" })
@@ -213,3 +220,14 @@ test("growth and shrinkage of the menu never erases output above the prompt", as
 
   assert.equal(await composer.submit(), "command")
 })
+
+test(
+  "Ctrl+C on an empty prompt leaves the composer instead of printing a hint",
+  { timeout: 2000 },
+  async () => {
+    const screen = new Screen(100, 30)
+    const composer = startComposer(screen)
+    composer.ctrlC()
+    assert.equal(await composer.result(), "exit")
+  },
+)

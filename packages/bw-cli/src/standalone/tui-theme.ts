@@ -14,6 +14,16 @@ export const BRACKETED_PASTE_OFF = "\x1b[?2004l"
 export const CURSOR_HIDE = "\x1b[?25l"
 export const CURSOR_SHOW = "\x1b[?25h"
 
+/**
+ * Escape sequence that puts the terminal back into a usable state after an abnormal exit
+ * (uncaught exception, SIGTERM, or `process.exit` while a TUI surface is open). Without it
+ * the terminal keeps raw mode and the alternate screen, which looks like a frozen window
+ * that ignores Ctrl+C until it is closed.
+ */
+export function terminalRestoreSequence(inAltScreen: boolean): string {
+  return `${inAltScreen ? ALT_SCREEN_OFF : ""}${CURSOR_SHOW}${BRACKETED_PASTE_OFF}`
+}
+
 export function colorsEnabled(
   env: NodeJS.ProcessEnv = process.env,
   isTTY = Boolean(process.stdout.isTTY),

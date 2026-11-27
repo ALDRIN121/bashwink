@@ -6,26 +6,29 @@ have done.
 
 **Status:** Standalone alpha **`v0.2.0-alpha.2`** ([ADR-015](docs/bashwink/ADR-015-STANDALONE-CODING-ALPHA.md)) runs purely on Node.js 22+ and npm without OpenCode, Hermes, Pi, or Bun. Phase 0 and Phase 1 are gate-passed for the historical OpenCode substrate; the Phase 2 gate remains open. See [implementation status](docs/bashwink/IMPLEMENTATION_STATUS.md), [supported platforms](docs/bashwink/SUPPORTED_PLATFORMS.md), and [next steps](docs/bashwink/NEXT_STEPS.md).
 
-## Set up Bashwink with an AI agent (Windows or macOS)
+## Set up Bashwink with an AI agent (Windows, macOS, or Linux)
 
 Copy the prompt below into an assistant that can run commands **on the computer
 where you want Bashwink installed**. If you'd rather run the commands yourself,
 use the [manual quick start](#v020-alpha2-quick-start-standalone-checkout-install).
 
 ```text
-Goal: Install the standalone Bashwink CLI on my Windows or macOS computer,
-verify the installation, and help me finish first-time setup in my terminal.
+Goal: Install the standalone Bashwink CLI on my Windows, macOS, or Linux
+computer, verify the installation, and help me finish first-time setup in my
+terminal.
 
 Scope: Use only https://github.com/ALDRIN121/bashwink for Bashwink. Before
 installing or upgrading anything, show me what will change and wait for approval.
-Keep existing working tools and files. Do not elevate privileges, change security
-settings, or permanently edit PATH as a workaround.
+Keep existing working tools and files. Do not run anything with elevated
+privileges except the distro package-manager install in step 2, and ask me before
+doing so. Do not change security settings or permanently edit PATH as a
+workaround.
 
 Steps:
 1. Confirm your terminal runs on the target computer, not in a remote sandbox.
-   Detect my OS and use PowerShell on Windows or a local shell on macOS. If you
-   cannot run commands on my computer, ask which OS I use and give me its
-   commands one step at a time. Ask for the output before proceeding.
+   Detect my OS and use PowerShell on Windows, zsh or bash on macOS, and bash on
+   Linux. If you cannot run commands on my computer, ask which OS I use and give
+   me its commands one step at a time. Ask for the output before proceeding.
 2. Check `git --version`, `node --version`, and `npm --version` (use `npm.cmd`
    in PowerShell). The checkout needs Git, Node.js >= 22.13.0, and npm >= 10.
    Install only what's missing or too old, after approval:
@@ -34,10 +37,17 @@ Steps:
      https://git-scm.com/install/windows.
    - macOS Git: use `brew install git` if Homebrew is already installed;
      otherwise use `xcode-select --install` and let me finish Apple's dialog.
+   - Linux Git: use my distro's package manager — `sudo apt install git`
+     (Debian/Ubuntu), `sudo dnf install git` (Fedora/RHEL), or
+     `sudo pacman -S git` (Arch). Ask before anything with sudo, and do not
+     guess a distro you could not detect.
    - Node.js and npm: use my existing Node version manager, if available, to
      select a compatible LTS. Otherwise guide me to the official installer for
-     my OS and architecture at https://nodejs.org/en/download.
-   Hand off installer dialogs to me. Recheck versions in a fresh terminal.
+     my OS and architecture at https://nodejs.org/en/download. On Linux, prefer
+     a user-level install (nvm or the official tarball) over a distro package
+     that may be older than 22.13.0.
+   Hand off installer dialogs and sudo password prompts to me. Recheck versions
+   in a fresh terminal.
 3. Ask me to choose a parent folder. Run
    `git clone https://github.com/ALDRIN121/bashwink.git bashwink` there, then
    enter the `bashwink` folder. If the destination exists, check its Git remote
@@ -47,10 +57,14 @@ Steps:
    (`npm prefix -g`, or `npm.cmd prefix -g` in PowerShell). After approval, run
    `npm run install:local` from the repository root (`npm.cmd run install:local`
    in PowerShell). Use the checkout installer, not a package from the registry.
+   On Linux or macOS, if the global install fails with a permission error, do
+   not fall back to sudo: set a user-level prefix
+   (`npm config set prefix ~/.npm-global`), add `~/.npm-global/bin` to PATH, and
+   retry.
 5. Verify with `bashwink --version` and `bashwink doctor` (`bashwink.cmd` in
    PowerShell). If Bashwink isn't on PATH in a fresh terminal, use the full
-   launcher path: `<prefix>\bashwink.cmd` on Windows or `<prefix>/bin/bashwink`
-   on macOS. An unconfigured provider is expected on first install.
+   launcher path: `<prefix>\bashwink.cmd` on Windows, or `<prefix>/bin/bashwink`
+   on macOS and Linux. An unconfigured provider is expected on first install.
 6. Hand off `bashwink setup` to me in my terminal (use the verified launcher
    from step 5). Let me pick the provider and model, enter credentials locally,
    and decide whether to trust a workspace or run a provider connection test.

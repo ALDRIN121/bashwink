@@ -343,11 +343,14 @@ try {
   Set-Content -Path (Join-Path $RepoDir "sum.test.js") -Value "import test from 'node:test'; import assert from 'node:assert/strict'; import { sum } from './sum.js'; test('adds', () => assert.equal(sum(2, 3), 5));`n"
 
   # 1. Launch into CLI banner, open /model, cancel setup once (0 requests, no standalone.json), /exit
-  # Launch through cmd.exe: a .cmd shim started directly with CreateProcess does not
-  # reliably attach to the pseudoconsole, so the child sees no TTY and prints the
-  # non-interactive message instead of the TUI banner.
-  $CmdExe = if ($env:ComSpec) { $env:ComSpec } else { "cmd.exe" }
-  $BashwinkCmdLine = "$CmdExe /d /s /c `"`"$BashwinkCmd`"`""
+  # Launch node directly: CreateProcessW on the .cmd shim did not attach the child to
+  # the pseudoconsole (its output leaked to the host console and the transcript stayed
+  # empty), so the TUI saw no TTY. The .cmd shim itself is covered by the install and
+  # independence checks; this harness is about the interactive screen.
+  $NodeExe = (Get-Command node).Source
+  $BashwinkJs = Join-Path $Prefix "node_modules\bashwink\bin\bashwink.js"
+  if (-not (Test-Path $BashwinkJs)) { throw "Missing $BashwinkJs" }
+  $BashwinkCmdLine = "`"$NodeExe`" `"$BashwinkJs`""
   $s1 = New-Object ConPtySession ($BashwinkCmdLine), $RepoDir, 100, 30
   try {
     $s1.WaitFor("Model    none configured", 15000)

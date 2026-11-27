@@ -549,7 +549,7 @@ function renderCliHeader(
     ? `${config.providerId ? `${config.providerId} / ` : ""}${config.model} (${formatDestination(config.baseURL)})`
     : "none configured"
   const trustLine = trusted
-    ? style.green(layout.isCompact ? "trusted" : "trusted (edits & commands confirm)")
+    ? style.green(layout.isCompact ? "trusted" : "trusted (approvals follow the mode)")
     : style.yellow(layout.isCompact ? "read-only (/trust)" : "not trusted (read-only until /trust)")
   const branchTag = session?.gitBranch ? `, ${session.gitBranch}` : ""
   const sessionLine = session

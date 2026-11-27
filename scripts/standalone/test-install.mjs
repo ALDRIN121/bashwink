@@ -35,12 +35,21 @@ function installedBin(prefix) {
     : path.join(prefix, "bin", "bashwink");
 }
 
+function quoteCmdArg(value) {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
 function runInstalled(binPath, args, env, cwd) {
   if (process.platform === "win32") {
-    return spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", binPath, ...args], {
+    // A .cmd shim must run through cmd.exe. Build one quoted command line and pass it
+    // verbatim: Node's default MSVCRT escaping turns the path quotes into `\"`, which
+    // cmd.exe does not unescape, so a prefix containing a space loses its boundary.
+    const inner = [binPath, ...args].map(quoteCmdArg).join(" ");
+    return spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"${inner}"`], {
       cwd,
       env,
       encoding: "utf8",
+      windowsVerbatimArguments: true,
     });
   }
   return spawnSync(binPath, args, { cwd, env, encoding: "utf8" });

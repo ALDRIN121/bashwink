@@ -210,16 +210,138 @@ export function alignRight(left: string, right: string, cols: number): string {
   return `${left}${" ".repeat(Math.max(1, cols - visibleWidth(left) - visibleWidth(right)))}${right}`
 }
 
+/**
+ * One-row activity line for an operation that owns the terminal (model wait, discovery,
+ * sample test). The cancel shortcut is reserved *before* the label is truncated, so a
+ * 40- or 50-column terminal still tells the user how to stop the work (TUI-12).
+ */
+export function renderActivityLine(
+  label: string,
+  elapsedMs: number | undefined,
+  cols: number,
+  style: TuiStyle,
+  options: { readonly frame?: string; readonly hint?: string } = {},
+): string {
+  const frame = options.frame ?? "⠋"
+  const hint = options.hint ?? (cols >= 46 ? "esc/ctrl+c cancel" : "esc cancel")
+  const time = elapsedMs === undefined ? "" : `${(Math.max(0, elapsedMs) / 1000).toFixed(1)}s`
+  const suffix = [time, hint].filter((part) => part !== "").join(" · ")
+  const prefix = `  ${frame}  `
+  const room = Math.max(4, cols - visibleWidth(prefix) - visibleWidth(suffix) - 2)
+  const fitted = truncatePlain(label, room)
+  return `${style.violet(`${prefix}${fitted}`)}${" ".repeat(
+    Math.max(1, cols - visibleWidth(prefix) - visibleWidth(fitted) - visibleWidth(suffix)),
+  )}${style.muted(suffix)}`
+}
+
+/**
+ * Grapheme-aware cursor movement. Backspace/Delete must remove a whole user-perceived
+ * character (emoji, ZWJ sequence, combining mark) instead of one UTF-16 code unit, which
+ * would leave half a surrogate pair behind (TUI-10).
+ */
+const graphemeSegmenter: Intl.Segmenter | undefined =
+  typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : undefined
+
+/** Fallback for runtimes without Intl.Segmenter: step over surrogates and combining marks. */
+function fallbackPreviousGraphemeStart(text: string, cursor: number): number {
+  let i = cursor - 1
+  if (i < 0) return 0
+  const code = text.charCodeAt(i)
+  if (code >= 0xdc00 && code <= 0xdfff && i > 0) {
+    const prev = text.charCodeAt(i - 1)
+    if (prev >= 0xd800 && prev <= 0xdbff) i -= 1
+  }
+  while (i > 0) {
+    const prevCh = text.slice(i - 1, i + 1)
+    const prevCode = text.charCodeAt(i - 1)
+    const isVariationOrJoiner = (prevCode >= 0xfe00 && prevCode <= 0xfe0f) || prevCode === 0x200d
+    const isCombining = charDisplayWidth(String.fromCodePoint(prevCode)) === 0
+    if (!isVariationOrJoiner && !isCombining && ![...prevCh].some((c) => c === "\u200d")) break
+    i -= 1
+  }
+  return Math.max(0, i)
+}
+
+/** Start offset of the grapheme that ends at `cursor` (Backspace target). */
+export function previousGraphemeBoundary(text: string, cursor: number): number {
+  if (cursor <= 0) return 0
+  if (cursor > text.length) return text.length
+  if (!graphemeSegmenter) return fallbackPreviousGraphemeStart(text, cursor)
+  let start = 0
+  for (const segment of graphemeSegmenter.segment(text.slice(0, cursor))) {
+    if (segment.index >= cursor) break
+    start = segment.index
+  }
+  return start
+}
+
+/** End offset of the grapheme that starts at `cursor` (Delete target). */
+export function nextGraphemeBoundary(text: string, cursor: number): number {
+  if (cursor >= text.length) return text.length
+  if (cursor < 0) return 0
+  if (!graphemeSegmenter) {
+    let i = cursor + 1
+    const code = text.charCodeAt(cursor)
+    if (code >= 0xd800 && code <= 0xdbff && i < text.length) i += 1
+    return i
+  }
+  for (const segment of graphemeSegmenter.segment(text.slice(cursor))) {
+    if (segment.index === 0) return cursor + segment.segment.length
+  }
+  return Math.min(text.length, cursor + 1)
+}
+
+export interface FieldView {
+  readonly rows: readonly string[]
+  readonly cursorRow: number
+  readonly cursorCol: number
+}
+
+/**
+ * A single-line form field laid out as label-row + value-row. The value is horizontally
+ * scrolled so the cursor stays visible, and the block is a known number of rows, which is
+ * what lets the caller erase it without leaving a duplicate prompt behind (TUI-04).
+ */
+export function renderFieldView(
+  prompt: string,
+  value: string,
+  cursor: number,
+  cols: number,
+  style: TuiStyle,
+  hint?: string,
+): FieldView {
+  const label = truncatePlain(prompt.replace(/:\s*$/, ""), cols)
+  const room = Math.max(4, cols - 2)
+  const start = cursor > room - 1 ? cursor - (room - 1) : 0
+  const shown = value.slice(start, start + room)
+  const rows = [style.muted(label), `${style.accentBold("❯ ")}${shown}`]
+  if (hint !== undefined) rows.push(style.dim(truncatePlain(hint, cols)))
+  return {
+    rows,
+    cursorRow: 1,
+    cursorCol: 2 + Math.min(room - 1, Math.max(0, cursor - start)),
+  }
+}
+
 export const ACTIVITY_CARD_INSET = 8
 
-export function renderActivityCard(rows: readonly string[], cols: number, style: TuiStyle): string[] {
+export function renderActivityCard(
+  rows: readonly string[],
+  cols: number,
+  style: TuiStyle,
+): string[] {
   const inset = `  ${style.rule("│")} `
   const width = cols - ACTIVITY_CARD_INSET
   const border = (left: string, right: string) =>
     `${inset}${style.rule(`${left}${"─".repeat(width + 2)}${right}`)}`
   return [
     border("╭", "╮"),
-    ...rows.map((line) => `${inset}${style.rule("│")} ${line}${" ".repeat(width - visibleWidth(line))} ${style.rule("│")}`),
+    ...rows.map(
+      (line) =>
+        `${inset}${style.rule("│")} ${line}${" ".repeat(width - visibleWidth(line))} ${style.rule("│")}`,
+    ),
     border("╰", "╯"),
   ]
 }
@@ -245,7 +367,11 @@ export function renderWelcomeScreen(
   if (full) {
     const mascot = [" ■■■■■■■ ", "■ ›   − ■", "■       ■", " ■■■■■■■ ", "  ■   ■  "]
     const message = [style.bold(title), style.muted(tagline)]
-    lines.push("", ...mascot.map((line, i) => `${style.accentBold(line)}   ${message[i] ?? ""}`), "")
+    lines.push(
+      "",
+      ...mascot.map((line, i) => `${style.accentBold(line)}   ${message[i] ?? ""}`),
+      "",
+    )
   } else {
     lines.push(style.bold(truncatePlain(title, width)))
     if (rows >= 12) lines.push(style.muted(truncatePlain(tagline, width)))
@@ -258,20 +384,37 @@ export function renderWelcomeScreen(
   if (session.model) lines.push(value("Model", session.model))
   else if (rows < 12) lines.push(style.violet(truncatePlain("/model to set up", width)))
   else lines.push(value("Model", "No model configured"))
-  if (rows >= 12) lines.push(value("Trust", `${session.trusted ? "Trusted" : "Read-only"} · ${mode}`))
+  if (rows >= 12)
+    lines.push(value("Trust", `${session.trusted ? "Trusted" : "Read-only"} · ${mode}`))
 
   if (!session.model && rows >= 12) {
-    lines.push(style.violet(truncatePlain(width >= visibleWidth(configure) ? configure : "/model to set up", width)))
+    lines.push(
+      style.violet(
+        truncatePlain(width >= visibleWidth(configure) ? configure : "/model to set up", width),
+      ),
+    )
   } else if (full) {
     const suggestions = ["Fix a failing test", "Explain this repository", "Review my changes"]
-    lines.push("", style.violet("Get started:"), ...suggestions.map((text) => `${style.accent("›")}  ${text}`))
+    lines.push(
+      "",
+      style.violet("Get started:"),
+      ...suggestions.map((text) => `${style.accent("›")}  ${text}`),
+    )
   }
   if (full) {
-    const commands = [["/model", "switch model"], ["/sessions", "resume session"], ["/help", "commands"]]
-    lines.push("", commands.map(([command, description]) =>
-      `${style.violet(command!)}  ${style.muted(description!)}`).join("   "))
+    const commands = [
+      ["/model", "switch model"],
+      ["/sessions", "resume session"],
+      ["/help", "commands"],
+    ]
+    lines.push(
+      "",
+      commands
+        .map(([command, description]) => `${style.violet(command!)}  ${style.muted(description!)}`)
+        .join("   "),
+    )
   }
-  return lines.map((line) => line.trim() === "" ? "" : `${indent}${line}`)
+  return lines.map((line) => (line.trim() === "" ? "" : `${indent}${line}`))
 }
 
 export interface SessionStatus {
@@ -285,35 +428,50 @@ export interface SessionStatus {
 
 export function renderSessionStatus(status: SessionStatus, cols: number, style: TuiStyle): string {
   const sep = style.rule(cols < 100 ? " │ " : "  │  ")
-  const mode = cols < 40
-    ? status.mode === "accept-edits" ? "EDITS" : status.mode.toUpperCase()
-    : `${status.mode.toUpperCase()} MODE`
+  const mode =
+    cols < 40
+      ? status.mode === "accept-edits"
+        ? "EDITS"
+        : status.mode.toUpperCase()
+      : `${status.mode.toUpperCase()} MODE`
   const access = status.readOnly ? style.yellow("Read-only") : ""
-  const modeColor = status.mode === "auto" ? style.yellow
-    : status.mode === "accept-edits" ? style.cyan : style.accent
+  const modeColor =
+    status.mode === "auto"
+      ? style.yellow
+      : status.mode === "accept-edits"
+        ? style.cyan
+        : style.accent
   const permission = [modeColor(mode), access].filter(Boolean).join(" · ")
   const requests = `Requests ${status.requests}${status.requestLimit === undefined ? "" : `/${status.requestLimit}`}`
   const context = status.context
   const percent = context ? Math.round((context.tokens / context.limit) * 100) : 0
-  const filled = Math.min(16, Math.round(percent * 16 / 100))
+  const filled = Math.min(16, Math.round((percent * 16) / 100))
   const meterColor = percent >= 100 ? style.red : percent >= 80 ? style.yellow : style.green
   const meter = `${meterColor("█".repeat(filled))}${style.rule("░".repeat(16 - filled))}`
   const contextText = context
-    ? `Context ~${formatTokenCount(context.tokens)}/${formatTokenCount(context.limit)} target (${percent}%)` : ""
+    ? `Context ~${formatTokenCount(context.tokens)}/${formatTokenCount(context.limit)} target (${percent}%)`
+    : ""
   const fullContext = context ? `${contextText}  [${meter}]` : ""
   const fullWidth = (parts: string[]) => visibleWidth(parts.join(sep))
   const availableModelWidth = cols - fullWidth(["", permission])
-  if (availableModelWidth < 4) return style.yellow(truncatePlain(stripAnsiSequences(permission), cols))
-  const minModelWidth = Math.min(visibleWidth(status.model), cols < 100 ? 8 : 16, availableModelWidth)
-  const telemetry = [[fullContext, requests], [contextText, requests], [requests]]
-    .map((parts) => parts.filter(Boolean))
-    .find((parts) => fullWidth([...parts, "", permission]) + minModelWidth <= cols) ?? []
+  if (availableModelWidth < 4)
+    return style.yellow(truncatePlain(stripAnsiSequences(permission), cols))
+  const minModelWidth = Math.min(
+    visibleWidth(status.model),
+    cols < 100 ? 8 : 16,
+    availableModelWidth,
+  )
+  const telemetry =
+    [[fullContext, requests], [contextText, requests], [requests]]
+      .map((parts) => parts.filter(Boolean))
+      .find((parts) => fullWidth([...parts, "", permission]) + minModelWidth <= cols) ?? []
   const modelWidth = cols - fullWidth([...telemetry, "", permission])
   const model = truncatePlain(status.model, modelWidth)
   const left = [...telemetry, model, permission].join(sep)
 
   const hints = ["ctrl+p commands", "ctrl+o sessions", "shift+tab mode"]
-  while (hints.length > 0 && visibleWidth(left) + 3 + visibleWidth(hints.join(" · ")) > cols) hints.pop()
+  while (hints.length > 0 && visibleWidth(left) + 3 + visibleWidth(hints.join(" · ")) > cols)
+    hints.pop()
   return alignRight(left, style.muted(hints.join(" · ")), cols)
 }
 
@@ -328,7 +486,8 @@ export function renderActivityRow(
   const fitTarget = action === "Run" ? truncatePlain : truncatePathMiddle
   const targetWidth = cols - visibleWidth(prefix) - (detail ? visibleWidth(detail) + 1 : 0)
   if (targetWidth < 4) {
-    const separateDetail = visibleWidth(detail) <= cols - 5 ? detail : truncatePlain(detail, cols - 5)
+    const separateDetail =
+      visibleWidth(detail) <= cols - 5 ? detail : truncatePlain(detail, cols - 5)
     return `${prefix}${style.muted(fitTarget(target, cols - visibleWidth(prefix)))}${detail ? `\n     ${separateDetail}` : ""}`
   }
   const left = `${prefix}${style.muted(fitTarget(target, targetWidth))}`
@@ -771,14 +930,16 @@ function parsePatchRows(patch: string): ParsedDiffRow[] {
 export function renderTranscriptDiff(patch: string, cols: number, style: TuiStyle): string[] {
   const indent = "     "
   const width = Math.max(8, cols - indent.length - 2)
-  const border = (left: string, right: string) => `${indent}${style.rule(`${left}${"─".repeat(width)}${right}`)}`
+  const border = (left: string, right: string) =>
+    `${indent}${style.rule(`${left}${"─".repeat(width)}${right}`)}`
   const lines = parsePatchRows(patch).map(({ kind, text }) => {
     const sign = kind === "added" ? "+" : kind === "removed" ? "-" : " "
     const marker = sign === "+" ? style.green(sign) : sign === "-" ? style.red(sign) : sign
     const code = text.replace(/\t/g, "    ")
-    const row = kind === "hunk" || kind === "note"
-      ? style.muted(` ${padPlainRight(code, width - 1)}`)
-      : ` ${marker}  ${padPlainRight(code, width - 4)}`
+    const row =
+      kind === "hunk" || kind === "note"
+        ? style.muted(` ${padPlainRight(code, width - 1)}`)
+        : ` ${marker}  ${padPlainRight(code, width - 4)}`
     const background = kind === "added" ? "22" : kind === "removed" ? "52" : "235"
     return `${indent}${style.rule("│")}${wrapAnsi(`\x1b[48;5;${background}m`, "\x1b[49m", row, style.enabled)}${style.rule("│")}`
   })

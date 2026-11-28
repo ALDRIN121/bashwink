@@ -17,6 +17,8 @@ Remaining actions before external distribution or starting Phase 3:
 2. Run a bounded authorized live-provider interactive session against the Phase 2 standalone build and record real endpoint evidence.
 3. Explicitly authorize if/when to start Phase 3 (Execution isolation & review/verify stack) or publish packages (`do not publish or push` without explicit approval).
 
+The [28 November TUI retest](reports/TUI_UX_AUDIT_2026-11-28.md#retest-of-the-current-build) confirms the composer stays visible in the tested paste and clear scenarios. Diagnostic cancellation, draft retention, narrow setup rendering, and a model-only switcher are open UX follow-ups. The Phase 2 qualification items above remain open.
+
 The standalone TUI refresh bounds the composer and updates the transcript and footer. Draft
 retention across overlays, diagnostic cancellation, and a model-only switcher remain eligible UX
 follow-ups. [Refresh evidence](TEST_EVIDENCE.md#2026-11-28--standalone-tui-refresh).

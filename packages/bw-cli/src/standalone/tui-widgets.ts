@@ -27,7 +27,10 @@ import {
   flushPendingEscape,
   flushStuckPaste,
   getTerminalLayout,
+  nextGraphemeBoundary,
   padPlainRight,
+  previousGraphemeBoundary,
+  renderActivityLine,
   terminalRestoreSequence,
   truncatePlain,
   visibleWidth,
@@ -260,6 +263,7 @@ export class RawTerminalSession {
   private pasteTimer: ReturnType<typeof setTimeout> | undefined
   private rawActive = false
   private attached = false
+  private captureDepth = 0
   private lastCols: number
   private lastRows: number
   private estRow = 1
@@ -494,6 +498,11 @@ export class RawTerminalSession {
     }
   }
 
+  /**
+   * Claims keyboard input. Captures nest (an approval prompt inside a running composer turn),
+   * so the cleanup restores the previous listener instead of leaving the terminal deaf and
+   * echoing. Raw mode is only released when the outermost capture ends.
+   */
   beginCapture(
     onKey: (ev: ParsedKeyEvent) => void,
     onResize?: (info: TerminalResizeInfo) => void,
@@ -502,6 +511,8 @@ export class RawTerminalSession {
     const cur = this.readTerminalSize()
     this.lastCols = cur.cols
     this.lastRows = cur.rows
+    const previous = { key: this.keyListener, resize: this.resizeListener }
+    this.captureDepth += 1
     this.keyListener = onKey
     this.resizeListener = onResize
     if (this.isTTY && !this.rawActive) {
@@ -514,9 +525,11 @@ export class RawTerminalSession {
         // Ignore if stdin closed
       }
     }
+    let released = false
     return () => {
-      if (this.keyListener === onKey) this.keyListener = undefined
-      if (this.resizeListener === onResize) this.resizeListener = undefined
+      if (released) return
+      released = true
+      this.captureDepth = Math.max(0, this.captureDepth - 1)
       if (this.escTimer) {
         clearTimeout(this.escTimer)
         this.escTimer = undefined
@@ -525,11 +538,21 @@ export class RawTerminalSession {
         clearTimeout(this.pasteTimer)
         this.pasteTimer = undefined
       }
-      this.endCapture()
+      this.parserState.pending = ""
+      if (this.captureDepth === 0) {
+        this.keyListener = undefined
+        this.resizeListener = undefined
+        this.endCapture()
+        return
+      }
+      // Hand input back to the widget that was active before this one.
+      this.keyListener = previous.key
+      this.resizeListener = previous.resize
     }
   }
 
   endCapture(): void {
+    this.captureDepth = 0
     if (this.escTimer) {
       clearTimeout(this.escTimer)
       this.escTimer = undefined
@@ -590,16 +613,55 @@ export class RawTerminalSession {
   }
 }
 
+/** A turn the composer runs itself, so the prompt box stays painted while it works (TUI-13). */
+export interface ComposerTurnContext {
+  /** The submitted text (a prompt, or an in-place command such as `/test`). */
+  readonly text: string
+  /** Appends transcript output above the pinned composer without corrupting it. */
+  write(text: string): void
+  /** Sets the one-line activity label shown in place of the status row. */
+  setActivity(label: string | undefined): void
+  /** Temporarily removes the composer block so a modal or field owns the screen. */
+  suspend(): void
+  /** Re-pins the composer block after `suspend()`. */
+  resume(): void
+  /** Aborted by Esc / Ctrl+C while the turn is running. */
+  readonly signal: AbortSignal
+}
+
+export interface ComposerTurnOutcome {
+  /** Draft text to put back in the composer (e.g. a first prompt whose setup was cancelled). */
+  readonly restoreDraft?: string
+  /** Cursor for the restored draft; defaults to the end of the text. */
+  readonly restoreCursor?: number
+}
+
 export type ComposerAction =
-  | { readonly kind: "submit"; readonly text: string }
-  | { readonly kind: "command"; readonly name: string; readonly args: string; readonly raw: string }
-  | { readonly kind: "palette" }
-  | { readonly kind: "sessions" }
-  | { readonly kind: "timeline" }
-  | { readonly kind: "transcript" }
-  | { readonly kind: "cycle_mode"; readonly draft: string }
-  | { readonly kind: "clear_screen" }
-  | { readonly kind: "exit" }
+  | {
+      readonly kind: "submit"
+      readonly text: string
+      readonly draft: string
+      readonly cursor: number
+    }
+  | {
+      readonly kind: "command"
+      readonly name: string
+      readonly args: string
+      readonly raw: string
+      readonly draft: string
+      readonly cursor: number
+    }
+  | { readonly kind: "palette"; readonly draft: string; readonly cursor: number }
+  | { readonly kind: "sessions"; readonly draft: string; readonly cursor: number }
+  | { readonly kind: "timeline"; readonly draft: string; readonly cursor: number }
+  | { readonly kind: "transcript"; readonly draft: string; readonly cursor: number }
+  | {
+      readonly kind: "cycle_mode"
+      readonly draft: string
+      readonly cursor: number
+    }
+  | { readonly kind: "clear_screen"; readonly draft: string; readonly cursor: number }
+  | { readonly kind: "exit"; readonly draft: string; readonly cursor: number }
 
 export interface ComposerOptions {
   readonly raw: RawTerminalSession
@@ -613,6 +675,18 @@ export interface ComposerOptions {
   readonly workspace: string
   readonly history: readonly string[]
   readonly initialDraft?: string
+  readonly initialCursor?: number
+  /**
+   * Slash commands that run inside the composer like a prompt (progress row, cancel,
+   * prompt box stays). Everything else resolves the composer so the host can run it.
+   */
+  readonly turnCommands?: readonly string[]
+  /**
+   * Runs a submitted prompt inside the composer: the prompt box stays visible, shows a busy
+   * activity row, and returns to editing when the promise settles. Without it the composer
+   * resolves per submit (the plain one-shot contract used by simple hosts and tests).
+   */
+  readonly runTurn?: (ctx: ComposerTurnContext) => Promise<ComposerTurnOutcome | void>
 }
 
 interface AutocompleteItem {
@@ -669,9 +743,18 @@ function wordBoundaryRight(text: string, cursor: number): number {
 export async function runInteractiveComposer(opts: ComposerOptions): Promise<ComposerAction> {
   const { raw, style } = opts
   let buffer = opts.initialDraft ?? ""
-  let cursor = buffer.length
+  let cursor = Math.max(0, Math.min(buffer.length, opts.initialCursor ?? buffer.length))
   let historyIndex = -1
   let savedDraft = ""
+
+  // Busy turn state: the composer stays painted and keeps ownership of the terminal.
+  let busy = false
+  let suspended = false
+  let activity: string | undefined
+  let turnAbort: AbortController | undefined
+  let spinnerTimer: ReturnType<typeof setInterval> | undefined
+  let spinnerFrame = 0
+  let turnStartMs = 0
 
   // Ctrl+R reverse search state
   let searchingHistory = false
@@ -681,6 +764,7 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
   // Autocomplete state
   let autoDismissedFor: string | undefined
   let autoIndex = 0
+  let autoScroll = 0
   let workspaceFilesCache: string[] | undefined
 
   // Double-Esc rewind arming
@@ -694,8 +778,13 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
   let prePinRow = Math.max(1, raw.cursorRow())
   let pinSpacerRows = 0
 
+  /**
+   * Returns *every* match plus the token position. The renderer decides how many rows fit;
+   * slicing here made matches unreachable on a short terminal where only one row is visible
+   * (TUI-11).
+   */
   const getAutocomplete = (
-    maxItems = 7,
+    maxItems = 200,
   ): { mode: "slash" | "file"; tokenStart: number; items: AutocompleteItem[] } | undefined => {
     if (searchingHistory) return undefined
     const beforeCursor = buffer.slice(0, cursor)
@@ -803,6 +892,8 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
   }
 
   const render = (firstPaint = false, reflowFromCols?: number) => {
+    // A nested widget owns the screen while the turn is suspended; painting would fight it.
+    if (suspended) return
     if (reflowFromCols !== undefined) {
       clearRenderedBlock(true)
       firstPaint = true
@@ -838,20 +929,28 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
     const firstDraftRow = Math.max(0, wrapped.visualCursorRow - draftHeight + 1)
     outLines.push(...wrapped.visualRows.slice(firstDraftRow, firstDraftRow + draftHeight), rule)
 
-    const maxAuto = Math.max(0, Math.min(7, rows - draftHeight - 5))
-    const auto = maxAuto > 0 ? getAutocomplete(maxAuto) : undefined
+    // Always keep at least one menu row: a short terminal must not hide every match (TUI-11).
+    const maxAuto = Math.max(1, Math.min(7, rows - draftHeight - 5))
+    const auto = busy ? undefined : getAutocomplete()
 
     if (auto) {
       if (autoIndex >= auto.items.length) autoIndex = Math.max(0, auto.items.length - 1)
+      const itemRows = Math.max(1, Math.min(maxAuto, auto.items.length))
+      if (autoIndex < autoScroll) autoScroll = autoIndex
+      if (autoIndex >= autoScroll + itemRows) autoScroll = autoIndex - itemRows + 1
+      autoScroll = Math.max(0, Math.min(autoScroll, Math.max(0, auto.items.length - itemRows)))
+      const first = autoScroll
+      const last = Math.min(auto.items.length, first + itemRows)
+      const counter = auto.items.length > itemRows ? `  ${autoIndex + 1}/${auto.items.length}` : ""
       const autoHint = layout.isCompact
         ? auto.mode === "slash"
-          ? "  Commands (Tab/Enter):"
-          : "  Files (Tab/Enter):"
+          ? `  Commands (Tab/Enter)${counter}:`
+          : `  Files (Tab/Enter)${counter}:`
         : auto.mode === "slash"
-          ? "  Commands (Tab complete · Enter run · Esc dismiss):"
-          : "  Files (Tab/Enter insert · Esc dismiss):"
+          ? `  Commands (Tab complete · Enter run · Esc dismiss):`
+          : `  Files (Tab/Enter insert · Esc dismiss):`
       outLines.push(style.dim(truncatePlain(autoHint, cols)))
-      for (let i = 0; i < auto.items.length; i += 1) {
+      for (let i = first; i < last; i += 1) {
         const item = auto.items[i]!
         const selected = i === autoIndex
         const pointer = selected ? style.accentBold("❯ ") : "  "
@@ -886,15 +985,34 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
       )
     }
 
-    outLines.push(statusMessage !== ""
-      ? style.yellow(truncatePlain(statusMessage, cols))
-      : opts.renderStatus?.(cols) ?? style.muted(truncatePlain(opts.statusSummary, cols)))
+    if (busy) {
+      const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"]
+      outLines.push(
+        statusMessage !== ""
+          ? style.yellow(truncatePlain(statusMessage, cols))
+          : renderActivityLine(activity ?? "Working", Date.now() - turnStartMs, cols, style, {
+              frame: frames[spinnerFrame % frames.length]!,
+            }),
+      )
+    } else {
+      outLines.push(
+        statusMessage !== ""
+          ? style.yellow(truncatePlain(statusMessage, cols))
+          : (opts.renderStatus?.(cols) ?? style.muted(truncatePlain(opts.statusSummary, cols))),
+      )
+    }
 
     const targetCursorRow = promptLinesStart + wrapped.visualCursorRow - firstDraftRow
     const targetCursorCol = Math.min(cols, wrapped.visualCursorCol)
 
+    // Re-pin from scratch on every frame. Growing in place needs scroll arithmetic that
+    // drifts by a row whenever the new block does not fit below the current pin row, which
+    // left stale prompt rows above the composer (the TUI-11 / duplicate-prompt class).
+    const pinFresh = firstPaint || renderedTotalLines > 0
+    if (!firstPaint && pinFresh) clearRenderedBlock(true)
+
     let frame = SYNC_START
-    if (firstPaint) {
+    if (pinFresh) {
       prePinRow = Math.min(rows, Math.max(1, raw.cursorRow()))
       const targetStartRow = Math.max(1, rows - outLines.length + 1)
       if (prePinRow <= targetStartRow) {
@@ -902,10 +1020,12 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
         if (gap > 0) frame += "\n".repeat(gap)
         pinSpacerRows = gap
       } else {
-        const scrollDown = Math.max(0, outLines.length - 1)
+        // Only scroll the rows we are actually short of; scrolling a fixed amount pushed the
+        // block past the bottom row and left stale rows above the prompt.
+        const scrollDown = Math.max(0, prePinRow - targetStartRow)
         if (scrollDown > 0) frame += `${"\n".repeat(scrollDown)}\x1b[${scrollDown}A`
         pinSpacerRows = 0
-        prePinRow = targetStartRow
+        prePinRow = Math.max(1, prePinRow - scrollDown)
       }
     } else if (renderedTotalLines > 0) {
       frame += "\r"
@@ -953,9 +1073,7 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
     if (isPrompt) opts.beforeSubmit?.(submittedText)
     const preview = submittedText
       .split("\n")
-      .map(
-        (l, idx) => `${idx === 0 ? style.accentBold("  ❯ ") : "    "}${l}`,
-      )
+      .map((l, idx) => `${idx === 0 ? style.accentBold("  ❯ ") : "    "}${l}`)
       .join("\n")
     raw.write(`${preview}\n`)
   }
@@ -989,9 +1107,52 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
   return await new Promise<ComposerAction>((resolve) => {
     let settled = false
     let offDispose: (() => void) | undefined
-    const finish = (action: ComposerAction, commitText?: string) => {
+
+    const stopSpinner = () => {
+      if (spinnerTimer) {
+        clearInterval(spinnerTimer)
+        spinnerTimer = undefined
+      }
+    }
+
+    /**
+     * Appends output above the pinned composer. While a turn runs the block is bottom-pinned,
+     * so transcript output has to erase it, print, and re-pin — otherwise streamed text lands
+     * inside the prompt rows.
+     */
+    const writeAbove = (text: string) => {
+      if (settled) return
+      if (!busy || suspended) {
+        raw.write(text)
+        if (busy) render(true)
+        return
+      }
+      clearRenderedBlock(true)
+      raw.write(text)
+      render(true)
+    }
+
+    type ComposerExitAction =
+      | { readonly kind: "submit"; readonly text: string }
+      | {
+          readonly kind: "command"
+          readonly name: string
+          readonly args: string
+          readonly raw: string
+        }
+      | { readonly kind: "palette" }
+      | { readonly kind: "sessions" }
+      | { readonly kind: "timeline" }
+      | { readonly kind: "transcript" }
+      | { readonly kind: "cycle_mode"; readonly draft: string }
+      | { readonly kind: "clear_screen" }
+      | { readonly kind: "exit" }
+
+    const finish = (action: ComposerExitAction, commitText?: string) => {
       if (settled) return
       settled = true
+      stopSpinner()
+      turnAbort?.abort()
       offDispose?.()
       cleanup()
       const shouldCommit =
@@ -999,7 +1160,86 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
         !(action.kind === "command" && SILENT_CLEAR_COMMANDS.has(action.name))
       if (shouldCommit) commitFinalPromptLine(commitText, action.kind === "submit")
       else clearRenderedBlock(true)
-      resolve(action)
+      // A submitted prompt/command is consumed; every other exit keeps the draft for re-entry.
+      const draft =
+        action.kind === "submit" || action.kind === "command"
+          ? ""
+          : "draft" in action
+            ? action.draft
+            : buffer
+      resolve({ ...action, draft, cursor } as ComposerAction)
+    }
+
+    /**
+     * Runs a submitted prompt without giving up the prompt box: the composer stays visible,
+     * shows a busy activity row, swallows input, and hands editing back when the turn ends.
+     */
+    const runTurnInPlace = async (text: string) => {
+      const runTurn = opts.runTurn
+      if (!runTurn) return
+      const controller = new AbortController()
+      turnAbort = controller
+      busy = true
+      activity = "Starting…"
+      turnStartMs = Date.now()
+      spinnerFrame = 0
+      let outcome: ComposerTurnOutcome | void = undefined
+      try {
+        stopSpinner()
+        spinnerTimer = setInterval(() => {
+          spinnerFrame += 1
+          if (settled || !busy) return
+          render()
+        }, 120)
+        // Never hold the process open for a spinner frame.
+        spinnerTimer.unref?.()
+        outcome = await runTurn({
+          text,
+          write: writeAbove,
+          setActivity: (label: string | undefined) => {
+            activity = label
+            if (!settled && busy) render()
+          },
+          suspend: () => {
+            if (suspended || !busy) return
+            suspended = true
+            clearRenderedBlock(true)
+          },
+          resume: () => {
+            if (!suspended) return
+            suspended = false
+            if (!settled && busy) render(true)
+          },
+          signal: controller.signal,
+        })
+      } catch (err) {
+        const reason = (err instanceof Error ? err.message : String(err))
+          .split("")
+          .filter((ch) => ch >= " ")
+          .join("")
+          .slice(0, 300)
+        writeAbove(`\n  ${style.red("✗")} Turn failed: ${reason}\n`)
+      } finally {
+        stopSpinner()
+        busy = false
+        suspended = false
+        turnAbort = undefined
+        activity = undefined
+        if (!settled) {
+          // Re-claim keyboard input: widgets opened during the turn (approvals, setup) nest
+          // captures, and the composer must own the keys again once they close.
+          cleanup()
+          cleanup = raw.beginCapture(onKey, (info) => render(false, info.prevCols))
+          buffer = outcome?.restoreDraft ?? ""
+          cursor = Math.max(0, Math.min(buffer.length, outcome?.restoreCursor ?? buffer.length))
+          historyIndex = -1
+          autoDismissedFor = undefined
+          autoIndex = 0
+          autoScroll = 0
+          clearRenderedBlock(true)
+          render(true)
+        }
+      }
     }
 
     const applyAutocomplete = (
@@ -1024,6 +1264,7 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
         buffer = buffer.slice(0, tokenStart) + item.insertText + buffer.slice(cursor)
         cursor = tokenStart + item.insertText.length
         autoIndex = 0
+        autoScroll = 0
       }
       render()
     }
@@ -1042,16 +1283,54 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
         ).toLowerCase()
         const cmdArgs = spaceIdx === -1 ? "" : withoutSlash.slice(spaceIdx + 1).trim()
         const matched = findSlashCommand(cmdName)
-        if (matched) {
+        if (matched && !(opts.runTurn && opts.turnCommands?.includes(matched.name))) {
           finish({ kind: "command", name: matched.name, args: cmdArgs, raw: trimmed }, trimmed)
           return
         }
+        if (matched) {
+          // An in-place command: the composer keeps ownership and shows its activity row.
+          commitFinalPromptLine(trimmed, false)
+          buffer = ""
+          cursor = 0
+          historyIndex = -1
+          autoDismissedFor = undefined
+          render(true)
+          void runTurnInPlace(trimmed)
+          return
+        }
+      }
+      if (opts.runTurn) {
+        // Consume the draft and keep the composer: the turn runs in place under the prompt.
+        commitFinalPromptLine(trimmed, true)
+        buffer = ""
+        cursor = 0
+        historyIndex = -1
+        autoDismissedFor = undefined
+        autoIndex = 0
+        autoScroll = 0
+        render(true)
+        void runTurnInPlace(trimmed)
+        return
       }
       finish({ kind: "submit", text: trimmed }, trimmed)
     }
 
     const onKey = (ev: ParsedKeyEvent) => {
       statusMessage = ""
+
+      // While a turn owns the terminal the composer only accepts cancellation.
+      if (busy) {
+        const wantsCancel =
+          (ev.kind === "ctrl" && (ev.key === "c" || ev.key === "d")) ||
+          (ev.kind === "key" && ev.name === "escape")
+        if (!wantsCancel) return
+        if (turnAbort && !turnAbort.signal.aborted) {
+          statusMessage = "Cancelling current task…"
+          render()
+          turnAbort.abort()
+        }
+        return
+      }
 
       if (ev.kind === "ctrl") {
         if (ev.key === "d") {
@@ -1061,7 +1340,8 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
           }
           // Delete char at cursor if non-empty
           if (cursor < buffer.length) {
-            buffer = buffer.slice(0, cursor) + buffer.slice(cursor + 1)
+            const next = nextGraphemeBoundary(buffer, cursor)
+            buffer = buffer.slice(0, cursor) + buffer.slice(next)
             render()
           }
           return
@@ -1300,15 +1580,18 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
             buffer = buffer.slice(0, left) + buffer.slice(cursor)
             cursor = left
           } else if (cursor > 0) {
-            buffer = buffer.slice(0, cursor - 1) + buffer.slice(cursor)
-            cursor -= 1
+            // Remove a whole grapheme: slicing one UTF-16 unit tore emoji in half (TUI-10).
+            const left = previousGraphemeBoundary(buffer, cursor)
+            buffer = buffer.slice(0, left) + buffer.slice(cursor)
+            cursor = left
             autoDismissedFor = undefined
           }
           render()
           return
         case "delete":
           if (cursor < buffer.length) {
-            buffer = buffer.slice(0, cursor) + buffer.slice(cursor + 1)
+            const next = nextGraphemeBoundary(buffer, cursor)
+            buffer = buffer.slice(0, cursor) + buffer.slice(next)
             autoDismissedFor = undefined
             render()
           }
@@ -1390,7 +1673,7 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
       }
     }
 
-    const cleanup = raw.beginCapture(onKey, (info) => render(false, info.prevCols))
+    let cleanup = raw.beginCapture(onKey, (info) => render(false, info.prevCols))
     // A SIGINT/SIGTERM during the prompt disposes the session; settle with `exit` so the
     // caller unwinds instead of waiting forever for a key listener that has been removed.
     offDispose = raw.onDispose(() => finish({ kind: "exit" }))
@@ -1404,47 +1687,108 @@ export interface HybridChoiceOption {
   readonly display: string
 }
 
+export interface HybridChoiceOptions {
+  /** Option value that starts selected (Enter accepts it immediately). */
+  readonly initialValue?: string
+  /** Filter the rows as the user types (default true). */
+  readonly filter?: boolean
+  /**
+   * Enter on a filtered match returns that option's value instead of the raw typed text.
+   * Default false, because callers like setup accept free-form ids and numbers.
+   */
+  readonly selectHighlighted?: boolean
+  /** Muted hint shown on the input row when nothing is typed. */
+  readonly inputHint?: string
+}
+
 /**
  * Renders a prompt with interactive arrow-key selection AND accepts direct typed input
  * (e.g. `10\n`, `openai\n`, `cancel\n`) for seamless human & scripted PTY compatibility.
+ *
+ * Typing filters the visible rows live (TUI-06) and the typed value is always painted on its
+ * own row (TUI-04), so a long provider list can never hide what the user is typing.
  */
 export async function askHybridChoice(
   raw: RawTerminalSession,
   style: TuiStyle,
   promptText: string,
   options: readonly HybridChoiceOption[],
+  choiceOptions: HybridChoiceOptions = {},
 ): Promise<string | null> {
   if (!raw.isTTY || options.length === 0) return null
-  let selected = 0
+  const filterLive = choiceOptions.filter !== false
+  const initialIndex = choiceOptions.initialValue
+    ? options.findIndex((o) => o.value === choiceOptions.initialValue)
+    : -1
+  let selected = initialIndex >= 0 ? initialIndex : 0
   let scrollTop = 0
   let typed = ""
   let renderedRows = 0
   let lastCols = raw.cols()
 
-  const getMaxVisible = () => Math.min(options.length, Math.max(4, raw.rows() - 5))
+  const getMaxVisible = () => Math.min(Math.max(3, raw.rows() - 6), 12)
+
+  /** Options matching the typed filter, in their original order. */
+  const matches = (): readonly HybridChoiceOption[] => {
+    if (!filterLive || typed === "") return options
+    const needle = typed.toLowerCase()
+    const hit = options.filter(
+      (o) => o.value.toLowerCase().includes(needle) || o.display.toLowerCase().includes(needle),
+    )
+    return hit
+  }
 
   const render = (first = false, reflowFromCols?: number) => {
     const cols = raw.cols()
     const maxVisible = getMaxVisible()
+    const visible = matches()
+    if (selected >= visible.length) selected = Math.max(0, visible.length - 1)
+    if (selected < 0) selected = 0
     if (selected < scrollTop) scrollTop = selected
     if (selected >= scrollTop + maxVisible) scrollTop = selected - maxVisible + 1
-    scrollTop = Math.max(0, Math.min(scrollTop, Math.max(0, options.length - maxVisible)))
-    const end = Math.min(options.length, scrollTop + maxVisible)
+    scrollTop = Math.max(0, Math.min(scrollTop, Math.max(0, visible.length - maxVisible)))
+    const end = Math.min(visible.length, scrollTop + maxVisible)
 
     const lines: string[] = []
+    if (visible.length === 0) {
+      lines.push(style.muted(truncatePlain(`  no option matches '${typed}'`, cols)))
+    }
     for (let i = scrollTop; i < end; i += 1) {
-      const opt = options[i]!
-      const active = typed === "" && i === selected
+      const opt = visible[i]!
+      const active = i === selected
       const prefix = active ? style.accentBold("❯ ") : "  "
       const body = truncatePlain(opt.display, Math.max(10, cols - 3))
       const line = `${prefix}${body}`
       lines.push(active ? style.selectedRow(padPlainRight(line, Math.min(cols, 84))) : line)
     }
-    if (options.length > maxVisible) {
-      const hint = `  Showing ${scrollTop + 1}-${end} of ${options.length} (↑/↓ scroll, or type number/id)`
-      lines.push(style.dim(truncatePlain(hint, cols)))
+    if (visible.length !== options.length) {
+      lines.push(
+        style.dim(
+          truncatePlain(
+            `  ${visible.length} of ${options.length} shown${visible.length > maxVisible ? ` · ${scrollTop + 1}-${end}` : ""}`,
+            cols,
+          ),
+        ),
+      )
+    } else if (options.length > maxVisible) {
+      lines.push(
+        style.dim(
+          truncatePlain(
+            `  Showing ${scrollTop + 1}-${end} of ${options.length} (↑/↓ scroll)`,
+            cols,
+          ),
+        ),
+      )
     }
-    lines.push(truncatePlain(`${promptText}${typed}`, Math.max(16, cols)))
+    lines.push(style.muted(truncatePlain(promptText, cols)))
+    // The input row keeps the *tail* of a long value visible so the cursor is never off-screen.
+    const room = Math.max(4, cols - 2)
+    const shown = typed.length > room ? typed.slice(typed.length - room) : typed
+    lines.push(
+      typed === ""
+        ? `${style.accentBold("❯ ")}${style.dim(truncatePlain(choiceOptions.inputHint ?? "type to filter", Math.max(4, cols - 2)))}`
+        : `${style.accentBold("❯ ")}${shown}`,
+    )
     let frame = SYNC_START
     if (!first && renderedRows > 0) {
       const prevRows =
@@ -1480,11 +1824,15 @@ export async function askHybridChoice(
       }
       if (ev.kind === "char") {
         typed += ev.text
+        selected = 0
+        scrollTop = 0
         render()
         return
       }
       if (ev.kind === "paste") {
         typed += ev.text.replace(/[\r\n]+/g, "")
+        selected = 0
+        scrollTop = 0
         render()
         return
       }
@@ -1493,36 +1841,51 @@ export async function askHybridChoice(
           finish(null)
           return
         }
-        if (ev.name === "up" && typed === "") {
-          selected = (selected - 1 + options.length) % options.length
+        const visible = matches()
+        if (ev.name === "up" && visible.length > 0) {
+          selected = (selected - 1 + visible.length) % visible.length
           render()
           return
         }
-        if (ev.name === "down" && typed === "") {
-          selected = (selected + 1) % options.length
+        if (ev.name === "down" && visible.length > 0) {
+          selected = (selected + 1) % visible.length
           render()
           return
         }
-        if (ev.name === "pageup" && typed === "") {
+        if (ev.name === "pageup" && visible.length > 0) {
           selected = Math.max(0, selected - Math.max(1, getMaxVisible() - 1))
           render()
           return
         }
-        if (ev.name === "pagedown" && typed === "") {
-          selected = Math.min(options.length - 1, selected + Math.max(1, getMaxVisible() - 1))
+        if (ev.name === "pagedown" && visible.length > 0) {
+          selected = Math.min(visible.length - 1, selected + Math.max(1, getMaxVisible() - 1))
           render()
           return
         }
         if (ev.name === "backspace") {
           if (typed.length > 0) {
             typed = typed.slice(0, -1)
+            selected = 0
+            scrollTop = 0
             render()
           }
           return
         }
         if (ev.name === "enter") {
-          if (typed !== "") finish(typed)
-          else finish(options[selected]?.value ?? "")
+          if (typed === "") {
+            finish(options[selected]?.value ?? "")
+            return
+          }
+          const hit = visible[selected]
+          if (
+            choiceOptions.selectHighlighted &&
+            hit !== undefined &&
+            typed.toLowerCase() !== hit.value.toLowerCase()
+          ) {
+            finish(hit.value)
+            return
+          }
+          finish(typed)
         }
       }
     }
@@ -1533,6 +1896,8 @@ export async function askHybridChoice(
 
 /**
  * Interactive `[y/N]` confirmation supporting `y`/`n` typing, `Left`/`Right`/`Tab` toggle, and `Enter`.
+ * The question gets its own row when the choices do not fit beside it, so a 50-column
+ * terminal never shows a clipped question (TUI-04).
  */
 export async function askHybridConfirm(
   raw: RawTerminalSession,
@@ -1542,7 +1907,7 @@ export async function askHybridConfirm(
 ): Promise<string | null> {
   let typed = ""
   let highlighted: "no" | "yes" = "no"
-  let rendered = false
+  let renderedRows = 0
 
   const render = () => {
     const layout = raw.layout()
@@ -1553,13 +1918,24 @@ export async function askHybridConfirm(
     const noTag =
       highlighted === "no" && typed === "" ? style.selectedRow(" ▸ No (n) ") : style.muted("No (n)")
     const hint = `${style.dim("  [")}${yesTag}${style.dim(" / ")}${noTag}${style.dim("]")} `
-    const safePrompt = truncatePlain(
-      promptText,
-      Math.max(12, layout.cols - (typed === "" ? 27 : typed.length + 2)),
-    )
-    const line = `${safePrompt}${typed === "" ? hint : ` ${typed}`}`
-    raw.write(`${SYNC_START}${rendered ? "\r\x1b[2K" : ""}${line}${CURSOR_SHOW}${SYNC_END}`)
-    rendered = true
+    const hintPlainW = visibleWidth("  [ ▸ Yes (y)  /  ▸ No (n) ] ")
+    const inline = typed === "" && visibleWidth(promptText) + hintPlainW <= layout.cols
+    const lines: string[] = []
+    if (inline) {
+      lines.push(`${promptText}${hint}`)
+    } else {
+      lines.push(truncatePlain(promptText, layout.cols))
+      lines.push(typed === "" ? hint.trimEnd() : ` ${typed}`)
+    }
+    let frame = SYNC_START
+    if (renderedRows > 0) {
+      frame += "\r"
+      if (renderedRows > 1) frame += `\x1b[${renderedRows - 1}A`
+      frame += "\x1b[J"
+    }
+    frame += `${lines.join("\n")}${CURSOR_SHOW}${SYNC_END}`
+    raw.write(frame)
+    renderedRows = lines.length
   }
 
   return await new Promise<string | null>((resolve) => {
@@ -1802,6 +2178,123 @@ export async function askHybridPermission(
     const cleanup = raw.beginCapture(onKey, () => render())
     render()
   })
+}
+
+export interface CancellableActivityResult<T> {
+  readonly status: "completed" | "cancelled"
+  readonly value?: T
+}
+
+/**
+ * Runs a network/CPU operation with a single visible activity row and a working cancel
+ * shortcut (`esc` / `ctrl+c`). It keeps a widget capture alive for the whole operation, so
+ * Ctrl+C is handled here instead of reaching the process SIGINT handler, which used to end
+ * the coding session (TUI-01, TUI-02).
+ */
+export async function runCancellableActivity<T>(
+  raw: RawTerminalSession,
+  style: TuiStyle,
+  label: string,
+  run: (controller: AbortController, setLabel: (text: string) => void) => Promise<T>,
+  externalSignal?: AbortSignal,
+): Promise<CancellableActivityResult<T>> {
+  if (!raw.isTTY) {
+    const controller = new AbortController()
+    const onAbort = () => controller.abort()
+    externalSignal?.addEventListener("abort", onAbort, { once: true })
+    try {
+      const value = await run(controller, () => {})
+      return { status: "completed", value }
+    } catch {
+      return { status: controller.signal.aborted ? "cancelled" : "completed" }
+    } finally {
+      externalSignal?.removeEventListener("abort", onAbort)
+    }
+  }
+
+  let current = label
+  let frame = 0
+  let timer: ReturnType<typeof setInterval> | undefined
+  const started = Date.now()
+  let cleanup: () => void = () => {}
+  let offDispose: () => void = () => {}
+
+  const paint = () => {
+    const cols = raw.cols()
+    const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"]
+    const row = renderActivityLine(current, Date.now() - started, cols, style, {
+      frame: frames[frame % frames.length]!,
+    })
+    raw.write(`${SYNC_START}\r\x1b[2K${row}${CURSOR_SHOW}${SYNC_END}`)
+  }
+
+  const activity = new Promise<CancellableActivityResult<T>>((resolve) => {
+    let done = false
+    const stop = () => {
+      if (timer) {
+        clearInterval(timer)
+        timer = undefined
+      }
+    }
+    const finish = (result: CancellableActivityResult<T>) => {
+      if (done) return
+      done = true
+      stop()
+      cleanup()
+      offDispose()
+      raw.write(`${SYNC_START}\r\x1b[2K${SYNC_END}`)
+      resolve(result)
+    }
+    const controller = new AbortController()
+    const setLabel = (text: string) => {
+      current = text
+    }
+    const onKey = (ev: ParsedKeyEvent) => {
+      const wantsCancel =
+        (ev.kind === "ctrl" && (ev.key === "c" || ev.key === "d")) ||
+        (ev.kind === "key" && ev.name === "escape")
+      if (!wantsCancel || controller.signal.aborted) return
+      current = "Cancelling…"
+      paint()
+      controller.abort()
+    }
+    cleanup = raw.beginCapture(onKey, () => paint())
+    offDispose = raw.onDispose(() => {
+      controller.abort()
+      finish({ status: "cancelled" })
+    })
+    const onExternalAbort = () => {
+      current = "Cancelling…"
+      paint()
+      controller.abort()
+    }
+    externalSignal?.addEventListener("abort", onExternalAbort, { once: true })
+    if (externalSignal?.aborted) onExternalAbort()
+    timer = setInterval(() => {
+      frame += 1
+      paint()
+    }, 120)
+    timer.unref?.()
+    paint()
+    void run(controller, setLabel).then(
+      (value) => {
+        externalSignal?.removeEventListener("abort", onExternalAbort)
+        finish(controller.signal.aborted ? { status: "cancelled" } : { status: "completed", value })
+      },
+      (err: unknown) => {
+        externalSignal?.removeEventListener("abort", onExternalAbort)
+        if (controller.signal.aborted) {
+          finish({ status: "cancelled" })
+          return
+        }
+        // Surface the failure to the caller by completing without a value; the operation's
+        // own result object carries the error message.
+        finish({ status: "completed" })
+        void err
+      },
+    )
+  })
+  return await activity
 }
 
 export interface PaletteCommandItem {

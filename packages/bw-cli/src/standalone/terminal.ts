@@ -33,7 +33,12 @@ import {
   reviseActiveContract,
 } from "./contract-store.ts"
 import { exportProofBundle, renderProofSummary, verifyProofPack } from "./proof.ts"
-import { probeModels, testProviderConnection, type TestConnectionResult } from "./provider.ts"
+import {
+  probeModels,
+  testProviderConnection,
+  type ProbeModelsResult,
+  type TestConnectionResult,
+} from "./provider.ts"
 import {
   PERMISSION_MODES,
   canonicalWorkspace,
@@ -79,8 +84,11 @@ import {
   colorsEnabled,
   countDiffChanges,
   getTerminalLayout,
+  nextGraphemeBoundary,
   padPlainRight,
+  previousGraphemeBoundary,
   createStyle,
+  renderFieldView,
   alignRight,
   ACTIVITY_CARD_INSET,
   formatTokenCount,
@@ -115,14 +123,19 @@ import {
   openSessionBrowser,
   openTimelineRewind,
   openTranscriptViewer,
+  runCancellableActivity,
   runInteractiveComposer,
   type ComposerAction,
+  type ComposerTurnContext,
+  type ComposerTurnOutcome,
   type HybridChoiceOption,
+  type HybridChoiceOptions,
   type HybridPermissionOptions,
   type PaletteCommandItem,
 } from "./tui-widgets.ts"
 import type {
   ApprovalDecision,
+  ConnectionTestSummary,
   CredentialConfig,
   PermissionMode,
   ProofPackManifest,
@@ -135,8 +148,6 @@ import type {
 } from "./types.ts"
 
 export const STANDALONE_VERSION = "0.2.0-alpha.2"
-
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const
 
 /** Strip ANSI escape sequences and unsafe control characters from untrusted model/file/command text. */
 export function sanitizeTerminalText(text: string): string {
@@ -198,8 +209,15 @@ export interface TerminalIO {
   writeError(text: string): void
   ask(prompt: string, signal?: AbortSignal): Promise<string | null>
   askSecret?(prompt: string, signal?: AbortSignal): Promise<string | null>
+  askChoice?(prompt: string, options: readonly HybridChoiceOption[]): Promise<string | null>
   close(): void
 }
+
+/** Result of a single editable field: a value, or the user stepping back / cancelling. */
+export type PromptOutcome =
+  | { readonly kind: "value"; readonly value: string }
+  | { readonly kind: "back" }
+  | { readonly kind: "cancel" }
 
 function terminalCols(io: TerminalIO): number {
   const v = io.cols?.() ?? process.stdout.columns ?? 100
@@ -274,6 +292,11 @@ class RawTerminalIO implements TerminalIO {
   readonly isTTY = true
   readonly raw: RawTerminalSession
   readonly style: TuiStyle
+  /**
+   * While a turn owns the pinned composer, all transcript output has to go through the
+   * composer's erase/write/re-pin path instead of landing inside the prompt rows.
+   */
+  private writeSink: ((text: string) => void) | undefined
 
   constructor(env: NodeJS.ProcessEnv) {
     this.homeDirectory = env["HOME"] ?? env["USERPROFILE"] ?? ""
@@ -290,47 +313,93 @@ class RawTerminalIO implements TerminalIO {
   }
 
   write(text: string): void {
+    if (this.writeSink) {
+      this.writeSink(text)
+      return
+    }
     this.raw.write(text)
   }
 
   writeError(text: string): void {
+    if (this.writeSink) {
+      this.writeSink(text)
+      return
+    }
     process.stderr.write(text)
   }
 
+  /** Routes transcript output through the active composer turn (or back to the terminal). */
+  setWriteSink(sink: ((text: string) => void) | undefined): void {
+    this.writeSink = sink
+  }
+
   async ask(prompt: string, signal?: AbortSignal): Promise<string | null> {
-    return await this.askLine(prompt, false, signal)
+    const res = await this.askLineOutcome(prompt, signal === undefined ? {} : { signal })
+    return res.kind === "value" ? res.value : null
   }
 
   async askSecret(prompt: string, signal?: AbortSignal): Promise<string | null> {
-    return await this.askLine(prompt, true, signal)
+    const res = await this.askLineOutcome(
+      prompt,
+      signal === undefined ? { secret: true } : { secret: true, signal },
+    )
+    return res.kind === "value" ? res.value : null
   }
 
-  private async askLine(
+  /**
+   * A single-line field that renders the label on its own row and the value below it, so a
+   * long prompt can never push the typed text off screen or leave a duplicate row behind
+   * (TUI-04). Esc reports `back` and Ctrl+C reports `cancel` so setup can offer both.
+   */
+  async askLineOutcome(
     prompt: string,
-    maskSecret: boolean,
-    signal?: AbortSignal,
-  ): Promise<string | null> {
+    opts: {
+      readonly secret?: boolean
+      readonly signal?: AbortSignal
+      readonly backOnEscape?: boolean
+    } = {},
+  ): Promise<PromptOutcome> {
+    const maskSecret = opts.secret === true
+    const signal = opts.signal
     let buffer = ""
     let cursor = 0
-    let rendered = false
+    let renderedRows = 0
+    let cursorRowInBlock = 0
 
-    const redraw = () => {
+    const render = () => {
+      const style = this.style
+      const cols = Math.max(20, this.raw.cols())
+      const layout = this.raw.layout()
       const display = maskSecret ? "•".repeat(buffer.length) : buffer
+      const hint =
+        layout.rows >= 10
+          ? opts.backOnEscape
+            ? "  enter accepts · esc back · ctrl+c cancel"
+            : "  enter accepts · ctrl+c cancel"
+          : undefined
+      const view = renderFieldView(prompt, display, cursor, cols, style, hint)
       let frame = SYNC_START
-      if (rendered) frame += "\r\x1b[2K"
-      frame += prompt + display
-      const back = (maskSecret ? display.length : buffer.length) - cursor
-      if (back > 0) frame += `\x1b[${back}D`
+      if (renderedRows > 0) {
+        frame += "\r"
+        if (cursorRowInBlock > 0) frame += `\x1b[${cursorRowInBlock}A`
+        frame += "\x1b[J"
+      }
+      frame += view.rows.join("\n")
+      const below = view.rows.length - 1 - view.cursorRow
+      if (below > 0) frame += `\x1b[${below}A`
+      frame += "\r"
+      if (view.cursorCol > 0) frame += `\x1b[${view.cursorCol}C`
       frame += CURSOR_SHOW + SYNC_END
       this.raw.write(frame)
-      rendered = true
+      renderedRows = view.rows.length
+      cursorRowInBlock = view.cursorRow
     }
 
-    return await new Promise<string | null>((resolve) => {
+    return await new Promise<PromptOutcome>((resolve) => {
       let done = false
       let cleanup = () => {}
-      const onAbort = () => finish(null)
-      const finish = (val: string | null) => {
+      const onAbort = () => finish({ kind: "cancel" })
+      const finish = (val: PromptOutcome) => {
         if (done) return
         done = true
         signal?.removeEventListener("abort", onAbort)
@@ -339,26 +408,26 @@ class RawTerminalIO implements TerminalIO {
         resolve(val)
       }
       if (signal?.aborted) {
-        finish(null)
+        finish({ kind: "cancel" })
         return
       }
       signal?.addEventListener("abort", onAbort, { once: true })
 
       const onKey = (ev: ParsedKeyEvent) => {
         if (ev.kind === "ctrl") {
-          if (ev.key === "c" || ev.key === "d") return finish(null)
+          if (ev.key === "c" || ev.key === "d") return finish({ kind: "cancel" })
           if (ev.key === "u") {
             buffer = buffer.slice(cursor)
             cursor = 0
-            return redraw()
+            return render()
           }
           if (ev.key === "a") {
             cursor = 0
-            return redraw()
+            return render()
           }
           if (ev.key === "e") {
             cursor = buffer.length
-            return redraw()
+            return render()
           }
           return
         }
@@ -366,56 +435,64 @@ class RawTerminalIO implements TerminalIO {
           const clean = ev.text.replace(/[\r\n]+/g, "")
           buffer = buffer.slice(0, cursor) + clean + buffer.slice(cursor)
           cursor += clean.length
-          return redraw()
+          return render()
         }
         if (ev.kind === "char") {
           buffer = buffer.slice(0, cursor) + ev.text + buffer.slice(cursor)
           cursor += ev.text.length
-          return redraw()
+          return render()
         }
         if (ev.kind === "key") {
-          if (ev.name === "escape") return finish(null)
-          if (ev.name === "enter") return finish(buffer)
+          if (ev.name === "escape") {
+            return finish(opts.backOnEscape ? { kind: "back" } : { kind: "cancel" })
+          }
+          if (ev.name === "enter") return finish({ kind: "value", value: buffer })
           if (ev.name === "backspace") {
             if (cursor > 0) {
-              buffer = buffer.slice(0, cursor - 1) + buffer.slice(cursor)
-              cursor -= 1
-              redraw()
+              const left = previousGraphemeBoundary(buffer, cursor)
+              buffer = buffer.slice(0, left) + buffer.slice(cursor)
+              cursor = left
+              render()
             }
             return
           }
           if (ev.name === "delete") {
             if (cursor < buffer.length) {
-              buffer = buffer.slice(0, cursor) + buffer.slice(cursor + 1)
-              redraw()
+              const next = nextGraphemeBoundary(buffer, cursor)
+              buffer = buffer.slice(0, cursor) + buffer.slice(next)
+              render()
             }
             return
           }
           if (ev.name === "left" && cursor > 0) {
-            cursor -= 1
-            return redraw()
+            cursor = previousGraphemeBoundary(buffer, cursor)
+            return render()
           }
           if (ev.name === "right" && cursor < buffer.length) {
-            cursor += 1
-            return redraw()
+            cursor = nextGraphemeBoundary(buffer, cursor)
+            return render()
           }
           if (ev.name === "home") {
             cursor = 0
-            return redraw()
+            return render()
           }
           if (ev.name === "end") {
             cursor = buffer.length
-            return redraw()
+            return render()
           }
         }
       }
-      cleanup = this.raw.beginCapture(onKey, redraw)
-      redraw()
+      cleanup = this.raw.beginCapture(onKey, render)
+      render()
     })
   }
 
-  async askChoice(prompt: string, options: readonly HybridChoiceOption[]): Promise<string | null> {
-    return await askHybridChoice(this.raw, this.style, prompt, options)
+  async askChoice(
+    prompt: string,
+    options: readonly HybridChoiceOption[],
+    choiceOptions: HybridChoiceOptions = {},
+  ): Promise<string | null> {
+    return await askHybridChoice(this.raw, this.style, prompt, options, choiceOptions)
   }
 
   async askConfirm(prompt: string, signal?: AbortSignal): Promise<string | null> {
@@ -519,6 +596,83 @@ async function askYesNo(
   return await io.ask(prompt, signal)
 }
 
+/**
+ * Review-step action bar: `y` saves, `t` runs the sample test, `b` steps back to the model
+ * list, `esc` cancels. The shortcut row is a fixed, short string so it stays readable at
+ * 40 columns where the review block itself is clipped (TUI-04).
+ */
+/** Shortcut row for the review step; exported so the compact layout stays regression-tested. */
+export function reviewShortcutHint(backAvailable: boolean): string {
+  return backAvailable ? "t test · y save · b back · esc cancel" : "t test · y save · esc cancel"
+}
+
+async function askReviewAction(
+  raw: RawTerminalSession,
+  style: TuiStyle,
+  opts: { readonly prompt: string; readonly backAvailable?: boolean },
+): Promise<"save" | "test" | "back" | "cancel"> {
+  let typed = ""
+  let renderedRows = 0
+  const shortcut = reviewShortcutHint(opts.backAvailable !== false)
+
+  const render = () => {
+    const cols = raw.cols()
+    const promptLine = `${opts.prompt}${typed === "" ? "" : ` ${typed}`}`
+    const lines = [truncatePlain(promptLine, cols), style.dim(truncatePlain(`  ${shortcut}`, cols))]
+    let frame = SYNC_START
+    if (renderedRows > 0) {
+      frame += "\r"
+      if (renderedRows > 1) frame += `\x1b[${renderedRows - 1}A`
+      frame += "\x1b[J"
+    }
+    frame += `${lines.join("\n")}${CURSOR_SHOW}${SYNC_END}`
+    raw.write(frame)
+    renderedRows = lines.length
+  }
+
+  return await new Promise<"save" | "test" | "back" | "cancel">((resolve) => {
+    let done = false
+    const finish = (val: "save" | "test" | "back" | "cancel") => {
+      if (done) return
+      done = true
+      cleanup()
+      raw.write("\n")
+      resolve(val)
+    }
+    const onKey = (ev: ParsedKeyEvent) => {
+      if (ev.kind === "ctrl" && (ev.key === "c" || ev.key === "d")) {
+        finish("cancel")
+        return
+      }
+      if (ev.kind === "key" && ev.name === "escape") {
+        finish("cancel")
+        return
+      }
+      if (ev.kind === "char") {
+        typed += ev.text
+        render()
+        return
+      }
+      if (ev.kind === "key" && ev.name === "backspace") {
+        if (typed.length > 0) {
+          typed = typed.slice(0, -1)
+          render()
+        }
+        return
+      }
+      if (ev.kind === "key" && ev.name === "enter") {
+        const ans = typed.trim().toLowerCase()
+        if (ans === "t" || ans === "test") finish("test")
+        else if (ans === "b" || ans === "back") finish("back")
+        else if (ans === "y" || ans === "yes" || ans === "save") finish("save")
+        else finish("cancel")
+      }
+    }
+    const cleanup = raw.beginCapture(onKey, () => render())
+    render()
+  })
+}
+
 async function askPermissionDecision(
   io: TerminalIO,
   prompt: string,
@@ -541,6 +695,55 @@ async function askPermissionDecision(
   }
   if ((clean === "a" || clean === "always") && opts.allowAlways) return "always"
   return "reject"
+}
+
+/**
+ * `/status` body. Connection verification is reported from the persisted config so a test run
+ * earlier in the session (or a previous session) is still visible afterwards (TUI-09), and
+ * chat reachability is listed apart from tool support.
+ */
+export function renderStatusReport(input: {
+  readonly session: SessionRecord
+  readonly workspace: string
+  readonly trusted: boolean
+  readonly permissionMode: PermissionMode
+  readonly savedRules: number
+  readonly config?: StandaloneConfig
+}): string[] {
+  const { session, config } = input
+  const lines: string[] = ["--- Status ---"]
+  lines.push(`Session   ${session.title} (${session.id})`)
+  lines.push(`Turns     ${session.turns.length} (${session.messages.length} context messages)`)
+  lines.push(`Workspace ${input.workspace} (${input.trusted ? "trusted" : "read-only"})`)
+  lines.push(`Mode      ${input.permissionMode} (${input.savedRules} saved Always-allow rule(s))`)
+  lines.push(
+    `Model     ${config ? `${config.model} at ${formatDestination(config.baseURL)}` : "none"}`,
+  )
+  if (config) {
+    const status = config.connectionStatus ?? "unverified"
+    const at = config.lastVerifiedAt ?? config.lastTest?.at
+    lines.push(
+      `Connection ${status}${at === undefined ? " (never tested — run /test)" : ` (last test ${at})`}`,
+    )
+    if (config.lastTest) {
+      const latency =
+        config.lastTest.latencyMs === undefined ? "" : ` (${config.lastTest.latencyMs} ms)`
+      lines.push(
+        `Chat      ${config.lastTest.chatReachable ? `reachable${latency}` : "unreachable"}`,
+      )
+      lines.push(`Tools     ${config.lastTest.toolSupport}`)
+    } else {
+      lines.push("Chat      untested")
+      lines.push("Tools     untested")
+    }
+  }
+  lines.push(
+    `Usage     ${session.usageTotals.requests} reqs, ${session.usageTotals.totalTokens} tokens` +
+      (session.usageTotals.costUsd !== undefined
+        ? `, est. $${session.usageTotals.costUsd.toFixed(6)}`
+        : ""),
+  )
+  return lines
 }
 
 function parseCredentialChoice(cred: CredentialConfig): string {
@@ -569,18 +772,28 @@ function renderCliHeader(
   const displayPath = workspaceDisplayPath(io, workspace)
   const branch = session?.gitBranch ? cleanTerminalLine(session.gitBranch) : ""
   const avail = cols - visibleWidth(title) - 3
-  const branchTag = branch && avail >= 12 ? style.violet(`⑂ ${truncatePlain(branch, Math.floor(avail / 2))}`) : ""
-  const location = avail >= 8
-    ? style.muted(truncatePathMiddle(cleanTerminalLine(displayPath), avail - (branchTag ? visibleWidth(branchTag) + 3 : 0)))
-    : ""
+  const branchTag =
+    branch && avail >= 12 ? style.violet(`⑂ ${truncatePlain(branch, Math.floor(avail / 2))}`) : ""
+  const location =
+    avail >= 8
+      ? style.muted(
+          truncatePathMiddle(
+            cleanTerminalLine(displayPath),
+            avail - (branchTag ? visibleWidth(branchTag) + 3 : 0),
+          ),
+        )
+      : ""
   const right = [location, branchTag].filter(Boolean).join(style.rule(" · "))
   io.write(`${alignRight(title, right, cols)}\n${style.rule("─".repeat(cols))}\n`)
 }
 
 function workspaceDisplayPath(io: RawTerminalIO, workspace: string): string {
   const home = io.homeDirectory
-  return workspace === home ? "~" : home && workspace.startsWith(home + path.sep)
-    ? `~${workspace.slice(home.length)}` : workspace
+  return workspace === home
+    ? "~"
+    : home && workspace.startsWith(home + path.sep)
+      ? `~${workspace.slice(home.length)}`
+      : workspace
 }
 
 function renderPlainCliHeader(
@@ -675,7 +888,9 @@ function renderEditPreview(
   const cleanPatch = sanitizeTerminalText(patch)
   const target = cleanTerminalLine(file)
   if (!(io instanceof RawTerminalIO)) {
-    io.write(`\n${renderOpenCodeDiff(cleanPatch, { path: target, create, maxWidth: cols, view: "auto" }, style).join("\n")}\n`)
+    io.write(
+      `\n${renderOpenCodeDiff(cleanPatch, { path: target, create, maxWidth: cols, view: "auto" }, style).join("\n")}\n`,
+    )
     return
   }
   const counts = countDiffChanges(cleanPatch)
@@ -688,7 +903,9 @@ function renderEditPreview(
   const changed = counts.additions + counts.deletions
   if (!approval && changed >= 4 && cols >= 48) {
     const clipped = /^\.\.\. \(/m.test(cleanPatch)
-    const detail = style.muted(`${changed} ${clipped ? "changed lines shown" : "lines changed"} · /diff`)
+    const detail = style.muted(
+      `${changed} ${clipped ? "changed lines shown" : "lines changed"} · /diff`,
+    )
     const width = cols - ACTIVITY_CARD_INSET
     const fileLabel = `▫ ${truncatePathMiddle(target, width - visibleWidth(detail) - 3)}`
     const cardRow = alignRight(fileLabel, detail, width)
@@ -701,7 +918,8 @@ function renderEditPreview(
 function renderRunActivity(io: RawTerminalIO, run: ToolDispatchResult): void {
   const style = io.style
   const cols = terminalCols(io) - 1
-  const elapsed = run.durationMs === undefined ? "" : style.muted(`(${(run.durationMs / 1000).toFixed(1)}s)  `)
+  const elapsed =
+    run.durationMs === undefined ? "" : style.muted(`(${(run.durationMs / 1000).toFixed(1)}s)  `)
   let status: string
   if (run.status === "denied") status = style.yellow("declined")
   else if (run.timedOut) status = style.red("timed out")
@@ -709,22 +927,68 @@ function renderRunActivity(io: RawTerminalIO, run: ToolDispatchResult): void {
   else if (run.exitCode == null) status = style.red("failed")
   else status = (run.status === "ok" ? style.green : style.red)(`exit ${run.exitCode}`)
 
-  const row = renderActivityRow("Run", cleanTerminalLine(run.target ?? "command"), elapsed + status, cols, style)
+  const row = renderActivityRow(
+    "Run",
+    cleanTerminalLine(run.target ?? "command"),
+    elapsed + status,
+    cols,
+    style,
+  )
   io.write(`${row}\n`)
   const text = sanitizeTerminalText(run.output)
-  const results = run.exitCode != null && !run.signal && !run.timedOut && !run.outputTruncated
-    ? renderTapResults(text, cols, style) : undefined
+  const results =
+    run.exitCode != null && !run.signal && !run.timedOut && !run.outputTruncated
+      ? renderTapResults(text, cols, style)
+      : undefined
   if (results) {
     io.write(`${results.join("\n")}\n`)
     return
   }
-  const output = text.split("\n")
+  const output = text
+    .split("\n")
     .filter((line, index) => line.trim() && !(index === 0 && line.startsWith("exitCode:")))
   for (const line of output.slice(0, 6)) {
     io.write(`     ${style.muted(truncatePlain(cleanTerminalLine(line), cols - 5))}\n`)
   }
   if (output.length > 6) {
     io.write(`     ${style.muted(`… (${output.length - 6} more lines)`)}\n`)
+  }
+}
+
+/**
+ * Normalizes a connection-test result into persisted config fields. Chat reachability and
+ * tool support stay separate observations: a model can answer chat prompts and still fail
+ * the tool-call probe, and the config must say so rather than claiming "verified".
+ */
+export function applyConnectionTestResult(
+  res: TestConnectionResult,
+  at: string = new Date().toISOString(),
+): {
+  readonly connectionStatus: "unverified" | "verified" | "failed"
+  readonly lastVerifiedAt?: string
+  readonly lastTest: ConnectionTestSummary
+} {
+  const toolSupport: ConnectionTestSummary["toolSupport"] =
+    res.toolSupport === "supported"
+      ? "supported"
+      : res.toolSupport === undefined || res.toolSupport === "untested"
+        ? "untested"
+        : "unsupported"
+  const connectionStatus: "unverified" | "verified" | "failed" = !res.ok
+    ? "failed"
+    : toolSupport === "supported"
+      ? "verified"
+      : "unverified"
+  return {
+    connectionStatus,
+    ...(connectionStatus === "verified" ? { lastVerifiedAt: at } : {}),
+    lastTest: {
+      at,
+      ok: res.ok,
+      chatReachable: res.ok,
+      toolSupport,
+      ...(res.latencyMs === undefined ? {} : { latencyMs: res.latencyMs }),
+    },
   }
 }
 
@@ -776,7 +1040,7 @@ export async function runInteractiveSetup(
   configDirectory: string,
   env: NodeJS.ProcessEnv,
   existing?: StandaloneConfig,
-  opts: { readonly fetchImpl?: typeof fetch } = {},
+  opts: { readonly fetchImpl?: typeof fetch; readonly signal?: AbortSignal } = {},
 ): Promise<
   { readonly status: "saved"; readonly config: StandaloneConfig } | { readonly status: "cancelled" }
 > {
@@ -836,99 +1100,244 @@ export async function runInteractiveSetup(
     }
   }
 
-  let preset: ProviderPreset | undefined
-  while (preset === undefined) {
-    let choice: string | null
-    const rangeHint = `1-${PROVIDER_CATALOG.length}`
+  const signal = opts.signal
+  const cancelled = { status: "cancelled" as const }
+
+  /** One editable field. Esc / "back" steps back one field, Ctrl+C cancels the wizard. */
+  const promptField = async (
+    promptText: string,
+    fieldOpts: {
+      readonly secret?: boolean
+      readonly allowBack?: boolean
+    } = {},
+  ): Promise<PromptOutcome> => {
     if (io instanceof RawTerminalIO) {
-      io.write("\nProviders (Hosted HTTPS & Local loopback):\n")
-      const opts: HybridChoiceOption[] = PROVIDER_CATALOG.map((p) => ({
-        value: String(p.index),
-        display: `${String(p.index).padStart(2, " ")}) ${p.name.padEnd(25, " ")} ${p.endpointType === "hosted" ? "HTTPS" : "local"}  ${p.defaultBaseURL ?? p.note}`,
-      }))
-      choice = await io.askChoice(`Select provider [${rangeHint} or id] (or 'cancel'): `, opts)
-    } else {
-      io.write("\nHosted providers (HTTPS):\n")
-      for (const p of PROVIDER_CATALOG.filter((c) => c.endpointType === "hosted")) {
-        const tag = p.defaultBaseURL ?? p.note
-        io.write(`  ${String(p.index).padStart(2, " ")}) ${p.name.padEnd(25, " ")} ${tag}\n`)
-      }
-      io.write("\nLocal servers (loopback HTTP/HTTPS):\n")
-      for (const p of PROVIDER_CATALOG.filter((c) => c.endpointType === "local")) {
-        const tag = p.defaultBaseURL ?? p.note
-        io.write(`  ${String(p.index).padStart(2, " ")}) ${p.name.padEnd(25, " ")} ${tag}\n`)
-      }
-      choice = await io.ask(`Select provider [${rangeHint} or id] (or 'cancel'): `)
+      return await io.askLineOutcome(promptText, {
+        ...(fieldOpts.secret ? { secret: true } : {}),
+        ...(fieldOpts.allowBack ? { backOnEscape: true } : {}),
+        ...(signal ? { signal } : {}),
+      })
     }
-    if (choice === null) return { status: "cancelled" }
-    const t = choice.trim().toLowerCase()
-    if (t === "cancel" || t === "q" || t === "quit") return { status: "cancelled" }
-    const matched = findProviderPreset(t)
-    if (matched) {
-      preset = matched
-    } else {
-      io.write(
-        `  Please enter a number ${rangeHint}, a provider id/alias (e.g. openai, anthropic, nvidia, ollama), or 'cancel'.\n`,
-      )
-    }
+    const answer = fieldOpts.secret
+      ? await (io.askSecret?.(promptText, signal) ?? io.ask(promptText, signal))
+      : await io.ask(promptText, signal)
+    if (answer === null) return { kind: "cancel" }
+    const clean = answer.trim().toLowerCase()
+    if (clean === "cancel" || clean === "q" || clean === "quit") return { kind: "cancel" }
+    if (fieldOpts.allowBack && clean === "back") return { kind: "back" }
+    return { kind: "value", value: answer }
   }
 
-  const endpointType = preset.endpointType
+  type SetupStep =
+    "provider" | "endpoint" | "auth" | "auth-env" | "auth-file" | "auth-key" | "model" | "review"
+
+  let preset: ProviderPreset | undefined
+  let endpointType: "local" | "hosted" = "local"
   let baseURL: string | undefined
-  while (baseURL === undefined) {
-    const promptText = preset.defaultBaseURL
-      ? `Endpoint URL [Enter for ${preset.defaultBaseURL}]: `
-      : endpointType === "local"
-        ? "Endpoint URL (e.g. http://127.0.0.1:8080/v1): "
-        : "Endpoint URL (https://...): "
-    const rawUrl = await io.ask(promptText)
-    if (rawUrl === null) return { status: "cancelled" }
-    const trimmed = rawUrl.trim()
-    if (trimmed.toLowerCase() === "cancel") return { status: "cancelled" }
-    const effectiveRaw = trimmed === "" && preset.defaultBaseURL ? preset.defaultBaseURL : trimmed
-    try {
-      baseURL = normalizeBaseURL(effectiveRaw, endpointType)
-    } catch (err) {
-      io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
-    }
-  }
-
-  // Hermes-style order: Provider -> Endpoint URL -> API Key / Auth -> Model (curated or /models fetch) -> Sample Test & Save
   let credential: CredentialConfig | undefined
   let pendingSecret: string | undefined
-  const endpointHostChanged =
-    existing !== undefined && formatDestination(existing.baseURL) !== formatDestination(baseURL)
-  if (endpointHostChanged && existing && existing.credential.kind !== "none") {
-    io.write(
-      `\n  Destination host changed (${formatDestination(existing.baseURL)} -> ${formatDestination(baseURL)}); existing credentials will not be reused automatically.\n`,
-    )
-  }
-  const canKeepExisting =
-    existing !== undefined &&
-    (!existing.providerId || existing.providerId === preset.id) &&
-    !endpointHostChanged
-  const existingCredCheck = canKeepExisting
-    ? resolveCredentialSecret(existing.credential, env)
-    : undefined
+  let model: string | undefined
+  let detectedModels: string[] = []
+  let discoveryRequests = 0
+  let connectionStatus: StandaloneConfig["connectionStatus"] = "unverified"
+  let lastVerifiedAt: string | undefined
+  let lastTest: ConnectionTestSummary | undefined
+  let step: SetupStep = "provider"
 
-  while (credential === undefined) {
-    let mode: string | null
-    const envHint = preset.defaultEnvVar
-      ? preset.alternateEnvVars && preset.alternateEnvVars.length > 0
-        ? ` (e.g. ${preset.defaultEnvVar}; alt: ${preset.alternateEnvVars.join(", ")})`
-        : ` (e.g. ${preset.defaultEnvVar})`
-      : ""
-    const envLabel = `1) Environment variable name${envHint}`
-    const pasteLabel = `4) Enter / paste API key (saved 0600 locally)`
-    const noneLabel =
-      preset.endpointType === "hosted"
-        ? "3) None (no credential — hosted endpoints reject this)"
-        : "3) None (no key needed)"
-    if (canKeepExisting && existingCredCheck) {
-      io.write(`\nCurrent credentials: ${existingCredCheck.summary}\n`)
+  const runSampleTest = async (): Promise<void> => {
+    if (!preset || !baseURL || !model || !credential) return
+    const testModel = model
+    const testBaseURL = baseURL
+    const draft: StandaloneConfig = {
+      version: 1,
+      providerId: preset.id,
+      endpointType,
+      ...(preset.wireProtocol && preset.wireProtocol !== "openai-chat"
+        ? { wireProtocol: preset.wireProtocol }
+        : {}),
+      baseURL: testBaseURL,
+      model: testModel,
+      credential,
+      ...(preset.defaultHeaders ? { headers: preset.defaultHeaders } : {}),
+      updatedAt: new Date().toISOString(),
+    }
+    const testOpts = {
+      config: draft,
+      env,
+      ...(pendingSecret !== undefined ? { apiKeyOverride: pendingSecret } : {}),
+      ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+    }
+    const startedAt = new Date().toISOString()
+    let testRes: TestConnectionResult | undefined
+    const paintProgress = (stage: string) => {
+      if (!(io instanceof RawTerminalIO)) io.write(`  ${stage}\n`)
     }
     if (io instanceof RawTerminalIO) {
-      io.write("\nAuthentication:\n")
+      const activity = await runCancellableActivity(
+        io.raw,
+        io.style,
+        `Testing ${testModel} at ${formatDestination(testBaseURL)}`,
+        async (controller, setLabel) => {
+          setLabel(`Testing ${testModel} at ${formatDestination(testBaseURL)}`)
+          return await testProviderConnection({
+            ...testOpts,
+            signal: controller.signal,
+            onProgress: (stage: string) => {
+              setLabel(stage === "tool_probe" ? "Verifying tool-call capability…" : stage)
+            },
+          })
+        },
+        signal,
+      )
+      if (activity.status === "cancelled") {
+        io.write("  Sample test cancelled; nothing saved. Back to review.\n")
+        return
+      }
+      testRes = activity.value as TestConnectionResult | undefined
+    } else {
+      testRes = await testProviderConnection({
+        ...testOpts,
+        ...(signal === undefined ? {} : { signal }),
+        onProgress: paintProgress,
+      })
+    }
+    if (!testRes) return
+    if (testRes.cancelled) {
+      io.write("  Sample test cancelled; nothing saved. Back to review.\n")
+      return
+    }
+    if (testRes.ok && testRes.toolSupport === "supported") {
+      connectionStatus = "verified"
+      lastVerifiedAt = new Date().toISOString()
+    } else if (testRes.ok) {
+      connectionStatus = "unverified"
+      lastVerifiedAt = undefined
+      io.write(
+        "  Note: Chat probe succeeded, but tool-call capability is unverified/unsupported; marking config unverified for agent execution.\n",
+      )
+    } else {
+      connectionStatus = "failed"
+      lastVerifiedAt = undefined
+    }
+    lastTest = {
+      at: startedAt,
+      ok: testRes.ok,
+      chatReachable: testRes.ok,
+      toolSupport:
+        testRes.toolSupport === "supported"
+          ? "supported"
+          : testRes.toolSupport === "untested"
+            ? "untested"
+            : "unsupported",
+      ...(testRes.latencyMs === undefined ? {} : { latencyMs: testRes.latencyMs }),
+    }
+    printConnectionTestResult(io, testRes, testModel)
+  }
+
+  while (true) {
+    if (signal?.aborted) return cancelled
+
+    if (step === "provider") {
+      const rangeHint = `1-${PROVIDER_CATALOG.length}`
+      let choice: string | null
+      if (io instanceof RawTerminalIO) {
+        io.write("\nProviders (Hosted HTTPS & Local loopback):\n")
+        const providerOpts: HybridChoiceOption[] = PROVIDER_CATALOG.map((p) => ({
+          value: String(p.index),
+          display: `${String(p.index).padStart(2, " ")}) ${p.name.padEnd(25, " ")} ${p.endpointType === "hosted" ? "HTTPS" : "local"}  ${p.defaultBaseURL ?? p.note}`,
+        }))
+        choice = await io.askChoice(
+          `Select provider [${rangeHint} or id] (or 'cancel'): `,
+          providerOpts,
+          { inputHint: "type to filter · ↑/↓ select" },
+        )
+      } else {
+        io.write("\nHosted providers (HTTPS):\n")
+        for (const p of PROVIDER_CATALOG.filter((c) => c.endpointType === "hosted")) {
+          const tag = p.defaultBaseURL ?? p.note
+          io.write(`  ${String(p.index).padStart(2, " ")}) ${p.name.padEnd(25, " ")} ${tag}\n`)
+        }
+        io.write("\nLocal servers (loopback HTTP/HTTPS):\n")
+        for (const p of PROVIDER_CATALOG.filter((c) => c.endpointType === "local")) {
+          const tag = p.defaultBaseURL ?? p.note
+          io.write(`  ${String(p.index).padStart(2, " ")}) ${p.name.padEnd(25, " ")} ${tag}\n`)
+        }
+        choice = await io.ask(`Select provider [${rangeHint} or id] (or 'cancel'): `, signal)
+      }
+      if (choice === null) return cancelled
+      const t = choice.trim().toLowerCase()
+      if (t === "cancel" || t === "q" || t === "quit") return cancelled
+      const matched = findProviderPreset(t)
+      if (!matched) {
+        io.write(
+          `  Please enter a number ${rangeHint}, a provider id/alias (e.g. openai, anthropic, nvidia, ollama), or 'cancel'.\n`,
+        )
+        continue
+      }
+      preset = matched
+      endpointType = matched.endpointType
+      baseURL = undefined
+      credential = undefined
+      pendingSecret = undefined
+      model = undefined
+      detectedModels = []
+      step = "endpoint"
+      continue
+    }
+
+    if (step === "endpoint" && preset) {
+      const promptText = preset.defaultBaseURL
+        ? `Endpoint URL [Enter for ${preset.defaultBaseURL}]: `
+        : endpointType === "local"
+          ? "Endpoint URL (e.g. http://127.0.0.1:8080/v1): "
+          : "Endpoint URL (https://...): "
+      const res = await promptField(promptText, { allowBack: true })
+      if (res.kind === "cancel") return cancelled
+      if (res.kind === "back") {
+        step = "provider"
+        continue
+      }
+      const trimmed = res.value.trim()
+      const effectiveRaw = trimmed === "" && preset.defaultBaseURL ? preset.defaultBaseURL : trimmed
+      try {
+        baseURL = normalizeBaseURL(effectiveRaw, endpointType)
+      } catch (err) {
+        io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
+        continue
+      }
+      step = "auth"
+      continue
+    }
+
+    if (step === "auth" && preset && baseURL) {
+      const endpointHostChanged =
+        existing !== undefined && formatDestination(existing.baseURL) !== formatDestination(baseURL)
+      if (endpointHostChanged && existing && existing.credential.kind !== "none") {
+        io.write(
+          `\n  Destination host changed (${formatDestination(existing.baseURL)} -> ${formatDestination(baseURL)}); existing credentials will not be reused automatically.\n`,
+        )
+      }
+      const canKeepExisting =
+        existing !== undefined &&
+        (!existing.providerId || existing.providerId === preset.id) &&
+        !endpointHostChanged
+      const existingCredCheck = canKeepExisting
+        ? resolveCredentialSecret(existing.credential, env)
+        : undefined
+      if (canKeepExisting && existingCredCheck) {
+        io.write(`\nCurrent credentials: ${existingCredCheck.summary}\n`)
+      }
+      const envHint = preset.defaultEnvVar
+        ? preset.alternateEnvVars && preset.alternateEnvVars.length > 0
+          ? ` (e.g. ${preset.defaultEnvVar}; alt: ${preset.alternateEnvVars.join(", ")})`
+          : ` (e.g. ${preset.defaultEnvVar})`
+        : ""
+      const envLabel = `1) Environment variable name${envHint}`
+      const pasteLabel = `4) Enter / paste API key (saved 0600 locally)`
+      const noneLabel =
+        preset.endpointType === "hosted"
+          ? "3) None (no credential — hosted endpoints reject this)"
+          : "3) None (no key needed)"
       const authOpts: HybridChoiceOption[] = [
         ...(canKeepExisting ? [{ value: "k", display: "k) Keep existing credentials" }] : []),
         { value: "1", display: envLabel },
@@ -936,59 +1345,118 @@ export async function runInteractiveSetup(
         { value: "3", display: noneLabel },
         { value: "4", display: pasteLabel },
       ]
-      mode = await io.askChoice("Choose [1/2/3/4] (or 'cancel'): ", authOpts)
-    } else {
-      io.write("\nAuthentication:\n")
-      if (canKeepExisting) io.write("  k) Keep existing credentials\n")
-      io.write(`  ${envLabel}\n`)
-      io.write("  2) Key file path\n")
-      io.write(`  ${noneLabel}\n`)
-      io.write(`  ${pasteLabel}\n`)
-      mode = await io.ask("Choose [1/2/3/4] (or 'cancel'): ")
+      // Local presets that need no key start on "None" so Enter accepts the natural default (TUI-07).
+      const preferred = canKeepExisting ? "k" : preset.defaultCredentialKind === "none" ? "3" : "1"
+      let mode: string | null
+      if (io instanceof RawTerminalIO) {
+        io.write("\nAuthentication:\n")
+        mode = await io.askChoice(`Choose [1/2/3/4] (or 'cancel'): `, authOpts, {
+          initialValue: preferred,
+          inputHint: "1 env · 2 file · 3 none · 4 paste key",
+        })
+      } else {
+        io.write("\nAuthentication:\n")
+        if (canKeepExisting) io.write("  k) Keep existing credentials\n")
+        io.write(`  ${envLabel}\n`)
+        io.write("  2) Key file path\n")
+        io.write(`  ${noneLabel}\n`)
+        io.write(`  ${pasteLabel}\n`)
+        mode = await io.ask("Choose [1/2/3/4] (or 'cancel'): ", signal)
+      }
+      if (mode === null) return cancelled
+      // An empty answer accepts the natural default (no-key for local presets), matching the
+      // arrow-key widget where Enter selects the highlighted row (TUI-07).
+      const m = mode.trim().toLowerCase() === "" ? preferred : mode.trim().toLowerCase()
+      if (m === "cancel") return cancelled
+      if (m === "b" || m === "back") {
+        step = "endpoint"
+        continue
+      }
+      if ((m === "k" || m === "keep" || m === "") && canKeepExisting && existing) {
+        credential = existing.credential
+        step = "model"
+        continue
+      }
+      if (m === "1" || m === "env") {
+        step = "auth-env"
+        continue
+      }
+      if (m === "2" || m === "file") {
+        step = "auth-file"
+        continue
+      }
+      if (m === "3" || m === "none") {
+        if (preset.endpointType === "hosted") {
+          // A hosted endpoint with no credential is a guaranteed 401 at the first request; the
+          // repair loop then re-enters this same wizard. Ask before saving such a config.
+          const proceed = await askYesNo(
+            io,
+            `${preset.name} is a hosted endpoint and will reject unauthenticated requests (401). Save it with no credential anyway? [y/N] `,
+            signal,
+          )
+          if (proceed === null) return cancelled
+          if (!isYes(proceed)) continue
+        }
+        credential = { kind: "none" }
+        step = "model"
+        continue
+      }
+      if (m === "4" || m === "key" || m === "paste") {
+        step = "auth-key"
+        continue
+      }
+      io.write("  Please enter 1, 2, 3, or 4.\n")
+      continue
     }
-    if (mode === null) return { status: "cancelled" }
-    const m = mode.trim().toLowerCase()
-    if (m === "cancel") return { status: "cancelled" }
-    if ((m === "k" || m === "keep" || m === "") && canKeepExisting && existing) {
-      credential = existing.credential
-    } else if (m === "1" || m === "env") {
+
+    if (step === "auth-env" && preset) {
       const envPrompt = preset.defaultEnvVar
         ? `Environment variable name [Enter for ${preset.defaultEnvVar}]: `
         : "Environment variable name (e.g. MY_API_KEY): "
-      const varName = await io.ask(envPrompt)
-      if (varName === null) return { status: "cancelled" }
+      const res = await promptField(envPrompt, { allowBack: true })
+      if (res.kind === "cancel") return cancelled
+      if (res.kind === "back") {
+        step = "auth"
+        continue
+      }
       const effectiveVar =
-        varName.trim() === "" && preset.defaultEnvVar ? preset.defaultEnvVar : varName
+        res.value.trim() === "" && preset.defaultEnvVar ? preset.defaultEnvVar : res.value
       try {
         credential = { kind: "env", variable: validateEnvVarName(effectiveVar) }
+        step = "model"
       } catch (err) {
         io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
       }
-    } else if (m === "2" || m === "file") {
-      const keyFile = await io.ask("Key file path: ")
-      if (keyFile === null) return { status: "cancelled" }
+      continue
+    }
+
+    if (step === "auth-file") {
+      const res = await promptField("Key file path: ", { allowBack: true })
+      if (res.kind === "cancel") return cancelled
+      if (res.kind === "back") {
+        step = "auth"
+        continue
+      }
       try {
-        credential = { kind: "file", path: validateKeyFilePath(keyFile) }
+        credential = { kind: "file", path: validateKeyFilePath(res.value) }
+        step = "model"
       } catch (err) {
         io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
       }
-    } else if (m === "3" || m === "none") {
-      if (preset.endpointType === "hosted") {
-        // A hosted endpoint with no credential is a guaranteed 401 at the first request; the
-        // repair loop then re-enters this same wizard. Ask before saving such a config.
-        const proceed = await askYesNo(
-          io,
-          `${preset.name} is a hosted endpoint and will reject unauthenticated requests (401). Save it with no credential anyway? [y/N] `,
-        )
-        if (proceed === null) return { status: "cancelled" }
-        if (!isYes(proceed)) continue
+      continue
+    }
+
+    if (step === "auth-key" && preset) {
+      const res = await promptField(`Paste ${preset.name} API key (masked; Enter to go back): `, {
+        secret: true,
+        allowBack: true,
+      })
+      if (res.kind === "cancel") return cancelled
+      if (res.kind === "back") {
+        step = "auth"
+        continue
       }
-      credential = { kind: "none" }
-    } else if (m === "4" || m === "key" || m === "paste") {
-      const promptFn = io.askSecret ? io.askSecret.bind(io) : io.ask.bind(io)
-      const entered = await promptFn(`Paste ${preset.name} API key (masked; Enter to go back): `)
-      if (entered === null) return { status: "cancelled" }
-      const secretTrimmed = entered.trim()
+      const secretTrimmed = res.value.trim()
       if (secretTrimmed === "" || /[\r\n\0]/.test(secretTrimmed)) {
         io.writeError("  API key cannot be empty or multi-line.\n")
         continue
@@ -999,111 +1467,236 @@ export async function runInteractiveSetup(
         kind: "file",
         path: path.resolve(path.join(configDirectory, "keys", `${slug}.key`)),
       }
-    } else {
-      io.write("  Please enter 1, 2, 3, or 4.\n")
+      step = "model"
+      continue
     }
-  }
 
-  let availableModels: string[] = [...preset.defaultModels]
-  let model: string | undefined
-  while (model === undefined) {
-    let rawModel: string | null
-    if (io instanceof RawTerminalIO && (availableModels.length > 0 || baseURL)) {
-      io.write(`\n${preset.name} models (type id, number, or 'f' to fetch /models):\n`)
-      const modelOpts: HybridChoiceOption[] = [
-        ...availableModels.map((m, idx) => ({ value: m, display: `${idx + 1}) ${m}` })),
-        { value: "f", display: `f) Fetch live models from ${baseURL}/models` },
+    if (step === "model" && preset) {
+      const suggested = preset.defaultModels.filter((m) => !detectedModels.includes(m))
+      const entries: Array<{ readonly id: string; readonly tag: "detected" | "suggested" }> = [
+        ...detectedModels.map((id) => ({ id, tag: "detected" as const })),
+        ...suggested.map((id) => ({ id, tag: "suggested" as const })),
       ]
-      rawModel = await io.askChoice(
-        availableModels.length > 0
-          ? `Model ID, number, or 'f' [Enter for ${availableModels[0]}]: `
-          : "Model ID or 'f' to fetch /models: ",
-        modelOpts,
-      )
-    } else {
-      if (availableModels.length > 0) {
-        io.write(`\nSuggested ${preset.name} models:\n`)
-        availableModels.forEach((m, idx) => {
-          io.write(`  ${idx + 1}) ${m}\n`)
-        })
-      }
-      io.write(`  f) Fetch live models from ${baseURL}/models\n`)
+      const modelChoices: HybridChoiceOption[] = [
+        ...entries.map((entry, idx) => ({
+          value: entry.id,
+          display: `${idx + 1}) ${entry.id}  · ${entry.tag}`,
+        })),
+        { value: "f", display: `f) Fetch live models from ${baseURL}/models (sends 1 request)` },
+        { value: "m", display: "m) Enter a model ID manually" },
+      ]
       const modelPrompt =
-        availableModels.length > 0
-          ? `Model ID, number, or 'f' [Enter for ${availableModels[0]}]: `
-          : "Model ID (for example gpt-4o-mini or qwen-coder, or 'f' to fetch): "
-      rawModel = await io.ask(modelPrompt)
-    }
-    if (rawModel === null) return { status: "cancelled" }
-    const trimmed = rawModel.trim()
-    if (trimmed.toLowerCase() === "cancel") return { status: "cancelled" }
-    if (trimmed.toLowerCase() === "f" || trimmed.toLowerCase() === "fetch") {
-      io.write(`  Probing ${baseURL} /models (Ctrl+C to cancel)...\n`)
-      const probeAbort = new AbortController()
-      const onSig = () => probeAbort.abort()
-      process.once("SIGINT", onSig)
-      let probe
-      try {
-        probe = await probeModels({
-          baseURL,
+        entries.length > 0
+          ? `Model ID, number, or 'f' [Enter for ${entries[0]!.id}]: `
+          : "Model ID or 'f' to fetch /models: "
+      let rawModel: string | null
+      if (io instanceof RawTerminalIO) {
+        const detectedCount = detectedModels.length
+        const header =
+          detectedCount > 0
+            ? `${preset.name} models — ${detectedCount} detected, ${suggested.length} suggested (not yet verified):`
+            : `${preset.name} models — ${suggested.length} suggested by the catalog (not detected):`
+        io.write(`\n${header}\n`)
+        rawModel = await io.askChoice(modelPrompt, modelChoices, {
+          inputHint: "type an id to filter · ↑/↓ select",
+        })
+      } else {
+        if (entries.length > 0) {
+          io.write(`\nSuggested ${preset.name} models:\n`)
+          entries.forEach((entry, idx) => {
+            io.write(`  ${idx + 1}) ${entry.id}  · ${entry.tag}\n`)
+          })
+        }
+        io.write(`  f) Fetch live models from ${baseURL}/models\n`)
+        io.write("  m) Enter a model ID manually\n")
+        const askPrompt =
+          entries.length > 0
+            ? `Model ID, number, or 'f' [Enter for ${entries[0]!.id}]: `
+            : "Model ID (for example gpt-4o-mini or qwen-coder, or 'f' to fetch): "
+        rawModel = await io.ask(askPrompt, signal)
+      }
+      if (rawModel === null) return cancelled
+      const trimmed = rawModel.trim()
+      const lower = trimmed.toLowerCase()
+      if (lower === "cancel") return cancelled
+      if (lower === "b" || lower === "back") {
+        step = "auth"
+        continue
+      }
+      if (lower === "m" || lower === "manual") {
+        const manual = await promptField("Model ID (manual entry): ", { allowBack: true })
+        if (manual.kind === "cancel") return cancelled
+        if (manual.kind === "back") continue
+        try {
+          model = validateModelID(manual.value.trim())
+          step = "review"
+        } catch (err) {
+          io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
+        }
+        continue
+      }
+      if (lower === "f" || lower === "fetch") {
+        const probeBase = baseURL
+        if (!probeBase || !credential) continue
+        const probeArgs = {
+          baseURL: probeBase,
           credential,
           ...(preset.wireProtocol ? { wireProtocol: preset.wireProtocol } : {}),
           ...(preset.defaultHeaders ? { headers: preset.defaultHeaders } : {}),
           env,
           ...(pendingSecret !== undefined ? { apiKeyOverride: pendingSecret } : {}),
           ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
-          signal: probeAbort.signal,
-        })
-      } finally {
-        process.removeListener("SIGINT", onSig)
-      }
-      if (probe.ok && probe.models.length > 0) {
-        if (probe.usedFallback && probe.resolvedBaseURL) {
-          io.write(
-            `  Note: /models responded at ${probe.resolvedBaseURL}; updating endpoint URL.\n`,
+        }
+        let probe: ProbeModelsResult | undefined
+        if (io instanceof RawTerminalIO) {
+          const activity = await runCancellableActivity(
+            io.raw,
+            io.style,
+            `Discovering models at ${formatDestination(probeBase)}`,
+            async (controller, setLabel) => {
+              setLabel(`GET ${probeBase}/models`)
+              return await probeModels({ ...probeArgs, signal: controller.signal })
+            },
+            signal,
           )
-          baseURL = normalizeBaseURL(probe.resolvedBaseURL, endpointType)
+          if (activity.status === "cancelled") {
+            io.write("  Model discovery cancelled; the model list is unchanged.\n")
+            continue
+          }
+          probe = activity.value as ProbeModelsResult | undefined
+        } else {
+          io.write(`  Probing ${probeBase} /models (Ctrl+C to cancel)...\n`)
+          probe = await probeModels({
+            ...probeArgs,
+            ...(signal === undefined ? {} : { signal }),
+          })
         }
-        const merged = [...probe.models]
-        for (const curated of preset.defaultModels) {
-          if (!merged.includes(curated)) merged.push(curated)
+        if (!probe) continue
+        const sent = probe.usedFallback ? 2 : 1
+        discoveryRequests += sent
+        if (probe.cancelled) {
+          io.write("  Model discovery cancelled; the model list is unchanged.\n")
+          continue
         }
-        availableModels = merged
-        io.write(`  ✓ Found ${probe.models.length} live model(s) from ${probe.probedURL}.\n`)
-      } else {
-        io.writeError(
-          `  ! Could not fetch /models (${probe.error ?? "no models listed"}). Enter a model ID directly.\n`,
-        )
+        if (probe.ok && probe.models.length > 0) {
+          if (probe.usedFallback && probe.resolvedBaseURL) {
+            io.write(
+              `  Note: /models responded at ${probe.resolvedBaseURL}; updating endpoint URL.\n`,
+            )
+            baseURL = normalizeBaseURL(probe.resolvedBaseURL, endpointType)
+          }
+          detectedModels = [...probe.models]
+          io.write(
+            `  ✓ Found ${probe.models.length} live model(s) from ${probe.probedURL} (${sent} GET /models request sent).\n`,
+          )
+        } else {
+          io.write(
+            `  ! Discovery sent ${sent} GET /models request(s) to ${probe.probedURL} and failed: ${probe.error ?? "no models listed"}. Enter a model ID directly.\n`,
+          )
+        }
+        continue
+      }
+      let candidate = trimmed
+      if (candidate === "" && entries.length > 0) {
+        candidate = entries[0]!.id
+      } else if (/^\d+$/.test(candidate) && entries.length > 0) {
+        const idx = Number(candidate) - 1
+        if (idx >= 0 && idx < entries.length) candidate = entries[idx]!.id
+      }
+      try {
+        model = validateModelID(candidate)
+        step = "review"
+      } catch (err) {
+        io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
       }
       continue
     }
 
-    let candidate = trimmed
-    if (candidate === "" && availableModels.length > 0) {
-      candidate = availableModels[0]!
-    } else if (/^\d+$/.test(candidate) && availableModels.length > 0) {
-      const idx = Number(candidate) - 1
-      if (idx >= 0 && idx < availableModels.length) {
-        candidate = availableModels[idx]!
+    if (step === "review" && preset && baseURL && model && credential) {
+      const credCheck =
+        pendingSecret !== undefined
+          ? {
+              ok: true,
+              summary: `paste -> ${credential.kind === "file" ? credential.path : ""} (${pendingSecret.length} chars, saved 0600 on save)`,
+              warning: undefined,
+            }
+          : resolveCredentialSecret(credential, env)
+      const compact = terminalRows(io) <= 14 || terminalCols(io) < 60
+      const reviewLines: string[] = compact
+        ? [
+            `  Provider  ${preset.name}`,
+            `  Endpoint  ${truncatePlain(baseURL, Math.max(10, terminalCols(io) - 12))}`,
+            `  Model     ${model}`,
+            `  Status    ${connectionStatus}${lastTest?.ok ? " (chat reachable)" : ""}`,
+          ]
+        : [
+            "  Provider    " + preset.name + ` (${preset.id})`,
+            `  Type        ${endpointType}`,
+            ...(preset.wireProtocol && preset.wireProtocol !== "openai-chat"
+              ? [`  Protocol    ${preset.wireProtocol}`]
+              : []),
+            `  Endpoint    ${baseURL}`,
+            `  Model       ${model}`,
+            `  Credentials ${credCheck.summary}`,
+            `  Status      ${connectionStatus}`,
+            ...(lastTest
+              ? [
+                  `  Last test   ${lastTest.ok ? "chat reachable" : "failed"} · tools ${lastTest.toolSupport} · ${lastTest.at}`,
+                ]
+              : []),
+          ]
+      io.write("\nReview connection:\n")
+      for (const line of reviewLines) io.write(`${line}\n`)
+      io.write(
+        `  Requests    ${discoveryRequests === 0 ? "0 discovery requests sent (nothing is sent until you test or save)" : `${discoveryRequests} discovery request(s) sent for GET /models`}\n`,
+      )
+      if (credCheck.warning) io.write(`  Warning     ${credCheck.warning}\n`)
+
+      let action: "save" | "test" | "back" | "cancel"
+      if (io instanceof RawTerminalIO) {
+        action = await askReviewAction(io.raw, io.style, {
+          prompt: "Save and use this model? [y/N]",
+          backAvailable: true,
+        })
+      } else {
+        const confirm = await io.ask(
+          "Save and use this model? [y/N] (or 't' to run sample test): ",
+          signal,
+        )
+        if (confirm === null) return cancelled
+        const ans = confirm.trim().toLowerCase()
+        if (ans === "t" || ans === "test") action = "test"
+        else if (ans === "b" || ans === "back") action = "back"
+        else if (isYes(confirm)) action = "save"
+        else action = "cancel"
       }
+      if (action === "cancel") {
+        io.write("Setup cancelled; profile unchanged.\n")
+        return cancelled
+      }
+      if (action === "back") {
+        step = "model"
+        continue
+      }
+      if (action === "test") {
+        await runSampleTest()
+        continue
+      }
+      break
     }
-    try {
-      model = validateModelID(candidate)
-    } catch (err) {
-      io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
-    }
+
+    // A step that lost its prerequisites (e.g. a state reset) falls back to the provider list.
+    step = "provider"
   }
 
-  const credCheck =
-    pendingSecret !== undefined
-      ? {
-          ok: true,
-          summary: `paste -> ${credential.kind === "file" ? credential.path : ""} (${pendingSecret.length} chars, saved 0600 on save)`,
-          warning: undefined,
-        }
-      : resolveCredentialSecret(credential, env)
+  if (!preset || !baseURL || !model || !credential) return cancelled
 
-  const draftConfig: StandaloneConfig = {
+  let finalCredential = credential
+  if (pendingSecret !== undefined) {
+    const savedKeyPath = saveProviderKeyFile(configDirectory, preset.id, pendingSecret)
+    finalCredential = { kind: "file", path: savedKeyPath }
+  }
+  const config: StandaloneConfig = {
     version: 1,
     providerId: preset.id,
     endpointType,
@@ -1112,94 +1705,11 @@ export async function runInteractiveSetup(
       : {}),
     baseURL,
     model,
-    credential,
-    ...(preset.defaultHeaders ? { headers: preset.defaultHeaders } : {}),
-    updatedAt: new Date().toISOString(),
-  }
-
-  let connectionStatus: StandaloneConfig["connectionStatus"] = "unverified"
-  let lastVerifiedAt: string | undefined
-
-  while (true) {
-    io.write("\nReview connection (0 requests sent until you test or submit):\n")
-    io.write(`  Provider    ${preset.name} (${preset.id})\n`)
-    io.write(`  Type        ${endpointType}\n`)
-    if (preset.wireProtocol && preset.wireProtocol !== "openai-chat") {
-      io.write(`  Protocol    ${preset.wireProtocol}\n`)
-    }
-    io.write(`  Endpoint    ${baseURL}\n`)
-    io.write(`  Model       ${model}\n`)
-    io.write(`  Credentials ${credCheck.summary}\n`)
-    io.write(`  Status      ${connectionStatus}\n`)
-    if (credCheck.warning) {
-      io.write(`  Warning     ${credCheck.warning}\n`)
-    }
-    const confirm = await askYesNo(
-      io,
-      "Save and use this model? [y/N] (or 't' to run sample test): ",
-    )
-    if (confirm === null) {
-      io.write("Setup cancelled; profile unchanged.\n")
-      return { status: "cancelled" }
-    }
-    const ans = confirm.trim().toLowerCase()
-    if (ans === "t" || ans === "test") {
-      io.write(`  Running sample test against ${baseURL} (${model})...\n`)
-      const testAbort = new AbortController()
-      const onSig = () => testAbort.abort()
-      process.once("SIGINT", onSig)
-      let testRes
-      try {
-        testRes = await testProviderConnection({
-          config: draftConfig,
-          env,
-          ...(pendingSecret !== undefined ? { apiKeyOverride: pendingSecret } : {}),
-          ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
-          signal: testAbort.signal,
-          onProgress: (stage) => {
-            if (stage === "tool_probe") {
-              io.write("  Verifying tool-call capability...\n")
-            } else {
-              io.write(`  ${stage}\n`)
-            }
-          },
-        })
-      } finally {
-        process.removeListener("SIGINT", onSig)
-      }
-      if (testRes.ok && testRes.toolSupport === "supported") {
-        connectionStatus = "verified"
-        lastVerifiedAt = new Date().toISOString()
-      } else if (testRes.ok) {
-        connectionStatus = "unverified"
-        lastVerifiedAt = undefined
-        io.write(
-          "  Note: Chat probe succeeded, but tool-call capability is unverified/unsupported; marking config unverified for agent execution.\n",
-        )
-      } else {
-        connectionStatus = "failed"
-        lastVerifiedAt = undefined
-      }
-      printConnectionTestResult(io, testRes, model)
-      continue
-    }
-    if (!isYes(confirm)) {
-      io.write("Setup cancelled; profile unchanged.\n")
-      return { status: "cancelled" }
-    }
-    break
-  }
-
-  let finalCredential = credential
-  if (pendingSecret !== undefined) {
-    const savedKeyPath = saveProviderKeyFile(configDirectory, preset.id, pendingSecret)
-    finalCredential = { kind: "file", path: savedKeyPath }
-  }
-  const config: StandaloneConfig = {
-    ...draftConfig,
     credential: finalCredential,
+    ...(preset.defaultHeaders ? { headers: preset.defaultHeaders } : {}),
     connectionStatus,
     ...(lastVerifiedAt === undefined ? {} : { lastVerifiedAt }),
+    ...(lastTest === undefined ? {} : { lastTest }),
     updatedAt: new Date().toISOString(),
   }
   saveStandaloneConfig(configDirectory, config)
@@ -1207,6 +1717,178 @@ export async function runInteractiveSetup(
     `Saved model configuration to ${standaloneConfigFile(configDirectory)} (status: ${connectionStatus}).\n`,
   )
   return { status: "saved", config }
+}
+
+export type ModelPickerResult =
+  | { readonly status: "saved"; readonly config: StandaloneConfig }
+  | { readonly status: "cancelled" }
+  | { readonly status: "switch" }
+
+/**
+ * `/model` switches the model for the provider that is already configured. Endpoint,
+ * credentials and headers are preserved, so changing only the model no longer restarts
+ * provider setup (TUI-05). Full provider setup stays behind `/setup` and `/connect`.
+ */
+export async function runModelPicker(
+  io: TerminalIO,
+  configDirectory: string,
+  env: NodeJS.ProcessEnv,
+  existing: StandaloneConfig,
+  opts: { readonly fetchImpl?: typeof fetch; readonly signal?: AbortSignal } = {},
+): Promise<ModelPickerResult> {
+  const signal = opts.signal
+  const preset = existing.providerId ? findProviderPreset(existing.providerId) : undefined
+  const curated = preset ? [...preset.defaultModels] : []
+  let detected: string[] = []
+  let discoveryRequests = 0
+  io.write(`\nModel for ${preset ? `${preset.name} (${preset.id})` : "the active provider"}\n`)
+  io.write(`  Endpoint ${formatDestination(existing.baseURL)} (kept unchanged)\n`)
+  io.write(`  Current  ${existing.model}\n`)
+
+  const save = (model: string): ModelPickerResult => {
+    // A different model invalidates the previous verification; chat/tool status must be
+    // re-probed, so the old test summary is dropped rather than carried over.
+    const cleaned: StandaloneConfig = {
+      version: existing.version,
+      ...(existing.providerId === undefined ? {} : { providerId: existing.providerId }),
+      endpointType: existing.endpointType,
+      ...(existing.wireProtocol === undefined ? {} : { wireProtocol: existing.wireProtocol }),
+      baseURL: existing.baseURL,
+      model: validateModelID(model),
+      credential: existing.credential,
+      ...(existing.headers === undefined ? {} : { headers: existing.headers }),
+      ...(existing.price === undefined ? {} : { price: existing.price }),
+      connectionStatus: "unverified",
+      updatedAt: new Date().toISOString(),
+    }
+    saveStandaloneConfig(configDirectory, cleaned)
+    io.write(
+      `Model set to ${cleaned.model} (endpoint and credentials unchanged; run /test to verify).\n`,
+    )
+    return { status: "saved", config: cleaned }
+  }
+
+  while (true) {
+    if (signal?.aborted) return { status: "cancelled" }
+    const entries: Array<{
+      readonly id: string
+      readonly tag: "current" | "detected" | "suggested"
+    }> = []
+    if (!entries.some((e) => e.id === existing.model))
+      entries.push({ id: existing.model, tag: "current" })
+    for (const id of detected) {
+      if (!entries.some((e) => e.id === id)) entries.push({ id, tag: "detected" })
+    }
+    for (const id of curated) {
+      if (!entries.some((e) => e.id === id)) entries.push({ id, tag: "suggested" })
+    }
+    const options: HybridChoiceOption[] = [
+      ...entries.map((entry, idx) => ({
+        value: entry.id,
+        display: `${idx + 1}) ${entry.id}  · ${entry.tag}`,
+      })),
+      { value: "f", display: `f) Fetch models from the provider (1 GET request)` },
+      { value: "m", display: "m) Enter a model ID manually" },
+      { value: "s", display: "s) Switch provider (opens /setup)" },
+    ]
+    let answer: string | null
+    if (io instanceof RawTerminalIO) {
+      io.write(
+        `Models — ${detected.length} detected, ${curated.filter((m) => !detected.includes(m)).length} suggested\n`,
+      )
+      answer = await io.askChoice("Select model [number, id, or 'f']: ", options, {
+        selectHighlighted: false,
+        inputHint: "type to filter · esc cancels",
+      })
+    } else {
+      entries.forEach((entry, idx) => io.write(`  ${idx + 1}) ${entry.id}  · ${entry.tag}\n`))
+      io.write("  f) Fetch models from the provider\n")
+      io.write("  m) Enter a model ID manually\n")
+      io.write("  s) Switch provider (opens /setup)\n")
+      answer = await io.ask("Select model [number, id, or 'f'] (or 'cancel'): ", signal)
+    }
+    if (answer === null) return { status: "cancelled" }
+    const clean = answer.trim()
+    const lower = clean.toLowerCase()
+    if (clean === "") return { status: "cancelled" }
+    if (lower === "cancel" || lower === "c" || lower === "q") return { status: "cancelled" }
+    if (lower === "s" || lower === "switch") return { status: "switch" }
+    if (lower === "m" || lower === "manual") {
+      const res =
+        io instanceof RawTerminalIO
+          ? await io.askLineOutcome("Model ID: ", signal === undefined ? {} : { signal })
+          : await (async (): Promise<PromptOutcome> => {
+              const value = await io.ask("Model ID: ", signal)
+              return value === null ? { kind: "cancel" } : { kind: "value", value }
+            })()
+      if (res.kind !== "value") return { status: "cancelled" }
+      try {
+        return save(res.value.trim())
+      } catch (err) {
+        io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
+        continue
+      }
+    }
+    if (lower === "f" || lower === "fetch") {
+      const probeArgs = {
+        baseURL: existing.baseURL,
+        credential: existing.credential,
+        ...(existing.wireProtocol ? { wireProtocol: existing.wireProtocol } : {}),
+        ...(existing.headers ? { headers: existing.headers } : {}),
+        env,
+        ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+      }
+      let probe: ProbeModelsResult | undefined
+      if (io instanceof RawTerminalIO) {
+        const activity = await runCancellableActivity(
+          io.raw,
+          io.style,
+          `Discovering models at ${formatDestination(existing.baseURL)}`,
+          async (controller, setLabel) => {
+            setLabel(`GET ${existing.baseURL}/models`)
+            return await probeModels({ ...probeArgs, signal: controller.signal })
+          },
+          signal,
+        )
+        if (activity.status === "cancelled") {
+          io.write("  Model discovery cancelled; model unchanged.\n")
+          continue
+        }
+        probe = activity.value as ProbeModelsResult | undefined
+      } else {
+        io.write(`  Probing ${existing.baseURL} /models...\n`)
+        probe = await probeModels({ ...probeArgs, ...(signal === undefined ? {} : { signal }) })
+      }
+      if (!probe) continue
+      const sent = probe.usedFallback ? 2 : 1
+      discoveryRequests += sent
+      if (probe.cancelled) {
+        io.write("  Model discovery cancelled; model unchanged.\n")
+        continue
+      }
+      if (probe.ok && probe.models.length > 0) {
+        detected = [...probe.models]
+        io.write(
+          `  ✓ Found ${probe.models.length} live model(s) from ${probe.probedURL} (${sent} GET /models request sent).\n`,
+        )
+      } else {
+        io.write(
+          `  ! Discovery sent ${sent} GET /models request(s) to ${probe.probedURL} and failed: ${probe.error ?? "no models listed"}.\n`,
+        )
+      }
+      continue
+    }
+    let candidate = clean
+    if (/^\d+$/.test(candidate)) {
+      const idx = Number(candidate) - 1
+      if (idx >= 0 && idx < entries.length) candidate = entries[idx]!.id
+    }
+    try {
+      return save(candidate)
+    } catch (err) {
+      io.writeError(`  ${err instanceof Error ? err.message : String(err)}\n`)
+    }
+  }
 }
 
 function runDoctor(cwd: string, env: NodeJS.ProcessEnv, io: TerminalIO): number {
@@ -1325,7 +2007,8 @@ function renderTaskOutcome(result: TaskResult, io: TerminalIO): void {
     const proof = result.proofPack
     if (proof) {
       const count = `${proof.evidenceEntries} event${proof.evidenceEntries === 1 ? "" : "s"} recorded`
-      const evidence = proof.evidenceChainOk ? style.green(`✓ ${count} · hash chain verified`)
+      const evidence = proof.evidenceChainOk
+        ? style.green(`✓ ${count} · hash chain verified`)
         : style.red(`✗ ${count} · hash chain verification failed`)
       io.write(`  ${evidence}\n`)
     }
@@ -2088,12 +2771,15 @@ export async function runStandalone(
 
     let promptHistory = loadPromptHistory(resolved.data)
     let draftBuffer = ""
-    const sessionStatus = new Map<string,
+    let draftCursor = 0
+    const sessionStatus = new Map<
+      string,
       Pick<SessionStatus, "requests" | "requestLimit" | "context"> & { config: StandaloneConfig }
     >()
 
     let welcomeSessionId: string | undefined
-    const requestLimit = parsedRunOpts.cliBudgets.maxRequests ??
+    const requestLimit =
+      parsedRunOpts.cliBudgets.maxRequests ??
       (env["BASHWINK_MAX_REQUESTS"] === "unlimited" ? undefined : DEFAULT_TASK_BUDGETS.maxRequests)
 
     const renderSessionEntry = (resetScreen = false) => {
@@ -2103,12 +2789,17 @@ export async function runStandalone(
       welcomeSessionId = undefined
       if (io instanceof RawTerminalIO && activeSession.turns.length === 0) {
         welcomeSessionId = activeSession.id
-        const lines = renderWelcomeScreen({
-          workspace: cleanTerminalLine(workspaceDisplayPath(io, canonical)),
-          model: activeConfig ? cleanTerminalLine(activeConfig.model) : undefined,
-          trusted,
-          mode: permissionMode,
-        }, terminalCols(io) - 1, terminalRows(io), io.style)
+        const lines = renderWelcomeScreen(
+          {
+            workspace: cleanTerminalLine(workspaceDisplayPath(io, canonical)),
+            model: activeConfig ? cleanTerminalLine(activeConfig.model) : undefined,
+            trusted,
+            mode: permissionMode,
+          },
+          terminalCols(io) - 1,
+          terminalRows(io),
+          io.style,
+        )
         io.write(`${lines.join("\n")}\n`)
       }
     }
@@ -2116,10 +2807,30 @@ export async function runStandalone(
     let currentAbort: AbortController | undefined
     let interruptedAtPrompt = false
     let trustPromptShown = false
+    // Setup, discovery and connection tests own their own cancel path. A SIGINT that arrives
+    // while one is running must cancel that operation, not end the coding session (TUI-02).
+    let interactiveOpDepth = 0
+    const guardedSetup = async (
+      configDir: string,
+      existing?: StandaloneConfig,
+    ): Promise<
+      | { readonly status: "saved"; readonly config: StandaloneConfig }
+      | { readonly status: "cancelled" }
+    > => {
+      interactiveOpDepth += 1
+      try {
+        return await runInteractiveSetup(io, configDir, env, existing)
+      } finally {
+        interactiveOpDepth -= 1
+      }
+    }
     const onSigint = () => {
       if (currentAbort) {
         io.write("\nCancelling current task...\n")
         currentAbort.abort()
+      } else if (interactiveOpDepth > 0) {
+        // The active wizard/field owns cancellation; keep the session alive.
+        io.write("\n")
       } else {
         interruptedAtPrompt = true
         io.write("\nInterrupted.\n")
@@ -2384,6 +3095,24 @@ export async function runStandalone(
           )
           return "continue"
         }
+        if (cmdName === "model" || cmdName === "models") {
+          if (!activeConfig) {
+            const res = await guardedSetup(resolved.config)
+            if (res.status === "saved") {
+              activeConfig = res.config
+              renderSessionEntry(welcomeSessionId === activeSession.id)
+            }
+            return "continue"
+          }
+          const picked = await runModelPicker(io, resolved.config, env, activeConfig)
+          if (picked.status === "saved") {
+            activeConfig = picked.config
+            renderSessionEntry(welcomeSessionId === activeSession.id)
+            return "continue"
+          }
+          if (picked.status !== "switch") return "continue"
+          // "Switch provider" falls through to the full setup wizard below.
+        }
         if (
           cmdName === "setup" ||
           cmdName === "connect" ||
@@ -2393,7 +3122,7 @@ export async function runStandalone(
           const prevDest = activeConfig
             ? `${activeConfig.endpointType}:${formatDestination(activeConfig.baseURL)}`
             : undefined
-          const res = await runInteractiveSetup(io, resolved.config, env, activeConfig)
+          const res = await guardedSetup(resolved.config, activeConfig)
           if (res.status === "saved") {
             const nextDest = `${res.config.endpointType}:${formatDestination(res.config.baseURL)}`
             if (prevDest && prevDest !== nextDest && activeSession.turns.length > 0) {
@@ -2417,6 +3146,32 @@ export async function runStandalone(
           }
           io.write(`\nTesting ${activeConfig.model} at ${activeConfig.baseURL}...\n`)
           const testRes = await testProviderConnection({ config: activeConfig, env })
+          if (!testRes.cancelled) {
+            const outcome = applyConnectionTestResult(testRes)
+            const next: StandaloneConfig = {
+              version: activeConfig.version,
+              ...(activeConfig.providerId === undefined
+                ? {}
+                : { providerId: activeConfig.providerId }),
+              endpointType: activeConfig.endpointType,
+              ...(activeConfig.wireProtocol === undefined
+                ? {}
+                : { wireProtocol: activeConfig.wireProtocol }),
+              baseURL: activeConfig.baseURL,
+              model: activeConfig.model,
+              credential: activeConfig.credential,
+              ...(activeConfig.headers === undefined ? {} : { headers: activeConfig.headers }),
+              ...(activeConfig.price === undefined ? {} : { price: activeConfig.price }),
+              connectionStatus: outcome.connectionStatus,
+              ...(outcome.lastVerifiedAt === undefined
+                ? {}
+                : { lastVerifiedAt: outcome.lastVerifiedAt }),
+              ...(outcome.lastTest === undefined ? {} : { lastTest: outcome.lastTest }),
+              updatedAt: new Date().toISOString(),
+            }
+            saveStandaloneConfig(resolved.config, next)
+            activeConfig = next
+          }
           printConnectionTestResult(io, testRes, activeConfig.model)
           return "continue"
         }
@@ -2502,26 +3257,17 @@ export async function runStandalone(
           return "continue"
         }
         if (cmdName === "status") {
-          const trustedNow = isWorkspaceTrusted(resolved.config, canonical)
-          io.write("\n--- Status ---\n")
-          io.write(`Session   ${activeSession.title} (${activeSession.id})\n`)
-          io.write(
-            `Turns     ${activeSession.turns.length} (${activeSession.messages.length} context messages)\n`,
-          )
-          io.write(`Workspace ${canonical} (${trustedNow ? "trusted" : "read-only"})\n`)
-          io.write(
-            `Mode      ${permissionMode} (${savedRules.length} saved Always-allow rule(s))\n`,
-          )
-          io.write(
-            `Model     ${activeConfig ? `${activeConfig.model} at ${formatDestination(activeConfig.baseURL)}` : "none"}\n`,
-          )
-          io.write(
-            `Usage     ${activeSession.usageTotals.requests} reqs, ${activeSession.usageTotals.totalTokens} tokens` +
-              (activeSession.usageTotals.costUsd !== undefined
-                ? `, est. $${activeSession.usageTotals.costUsd.toFixed(6)}`
-                : "") +
-              "\n",
-          )
+          io.write("\n")
+          for (const line of renderStatusReport({
+            session: activeSession,
+            workspace: canonical,
+            trusted: isWorkspaceTrusted(resolved.config, canonical),
+            permissionMode,
+            savedRules: savedRules.length,
+            ...(activeConfig ? { config: activeConfig } : {}),
+          })) {
+            io.write(`${line}\n`)
+          }
           return "continue"
         }
         if (cmdName === "evidence") {
@@ -2565,40 +3311,668 @@ export async function runStandalone(
         const promptLabel = activeConfig ? "bashwink> " : "bashwink (no model)> "
         let trimmed = ""
 
+        /**
+         * `/test` runs inside the composer, so it shows progress and a live cancel shortcut
+         * and returns straight to editing. The result is persisted for `/status` (TUI-01,
+         * TUI-09), keeping chat reachability separate from tool support.
+         */
+        const runChatConnectionTest = async (turn: ComposerTurnContext): Promise<void> => {
+          const cfg = activeConfig
+          if (!cfg) {
+            turn.write("\nNo model configured yet. Run `/model` or `/connect` first.\n")
+            return
+          }
+          turn.setActivity(`Testing ${cfg.model} at ${formatDestination(cfg.baseURL)}`)
+          const testRes = await testProviderConnection({
+            config: cfg,
+            env,
+            signal: turn.signal,
+            onProgress: (stage: string) => {
+              turn.setActivity(stage === "tool_probe" ? "Verifying tool-call capability…" : stage)
+            },
+          })
+          if (testRes.cancelled) {
+            turn.write("\n  Connection test cancelled; session kept, profile unchanged.\n")
+            turn.setActivity(undefined)
+            return
+          }
+          const outcome = applyConnectionTestResult(testRes)
+          const next: StandaloneConfig = {
+            version: cfg.version,
+            ...(cfg.providerId === undefined ? {} : { providerId: cfg.providerId }),
+            endpointType: cfg.endpointType,
+            ...(cfg.wireProtocol === undefined ? {} : { wireProtocol: cfg.wireProtocol }),
+            baseURL: cfg.baseURL,
+            model: cfg.model,
+            credential: cfg.credential,
+            ...(cfg.headers === undefined ? {} : { headers: cfg.headers }),
+            ...(cfg.price === undefined ? {} : { price: cfg.price }),
+            connectionStatus: outcome.connectionStatus,
+            ...(outcome.lastVerifiedAt === undefined
+              ? {}
+              : { lastVerifiedAt: outcome.lastVerifiedAt }),
+            ...(outcome.lastTest === undefined ? {} : { lastTest: outcome.lastTest }),
+            updatedAt: new Date().toISOString(),
+          }
+          saveStandaloneConfig(resolved.config, next)
+          activeConfig = next
+          printConnectionTestResult(io, testRes, cfg.model)
+          io.write("  Result saved to the profile; `/status` reports it.\n")
+          turn.setActivity(undefined)
+        }
+
+        /**
+         * Runs one submitted prompt (or an in-place `/test`) with the composer still painted:
+         * the prompt box, the activity row and cancellation all belong to the composer now.
+         */
+        const executeSubmittedText = async (
+          text: string,
+          turn: ComposerTurnContext,
+        ): Promise<ComposerTurnOutcome | void> => {
+          const trimmed = text.trim()
+          const sink =
+            io instanceof RawTerminalIO ? (chunk: string) => turn.write(chunk) : undefined
+          if (io instanceof RawTerminalIO && sink) io.setWriteSink(sink)
+          try {
+            if (/^\/(test|ping|verify)$/i.test(trimmed)) {
+              await runChatConnectionTest(turn)
+              return
+            }
+            if (!activeConfig) {
+              io.write("\nNo model configured yet — configure a model first.\n")
+              turn.suspend()
+              const res = await guardedSetup(resolved.config)
+              turn.resume()
+              if (res.status !== "saved") return { restoreDraft: text }
+              activeConfig = res.config
+              renderCliHeader(
+                io,
+                canonical,
+                isWorkspaceTrusted(resolved.config, canonical),
+                activeConfig,
+                activeSession,
+              )
+            }
+
+            if (!trusted && !trustPromptShown && permissionMode !== "ask") {
+              trustPromptShown = true
+              io.write(`\nWorkspace ${canonical} is NOT trusted yet (read-only mode).\n`)
+              io.write(
+                "Reads are allowed. File edits and commands require trusting this directory, and approved actions run with your user permissions (not an OS sandbox).\n",
+              )
+              turn.suspend()
+              const trustAns = await askYesNo(
+                io,
+                "Trust this workspace for interactive edit/command approvals? [y/N] ",
+              )
+              turn.resume()
+              if (trustAns === null) return
+              if (isYes(trustAns)) {
+                const user = env["USER"] ?? env["USERNAME"] ?? "terminal-user"
+                grantWorkspaceTrust(resolved.config, canonical, user)
+                trusted = true
+                io.write(`Trusted ${canonical}.\n`)
+              } else {
+                io.write(
+                  "Continuing in read-only mode (edits and commands will be denied). Run /trust anytime to trust this folder.\n",
+                )
+              }
+            }
+
+            const cred = resolveCredentialSecret(activeConfig.credential, env)
+            if (!cred.ok) {
+              io.writeError(
+                `\nProvider at ${formatDestination(activeConfig.baseURL)} cannot authenticate (${cred.summary}).\n`,
+              )
+              turn.suspend()
+              const repair = await askYesNo(
+                io,
+                "Open /model setup to repair provider credentials? [y/N] ",
+              )
+              if (isYes(repair)) {
+                const res = await guardedSetup(resolved.config, activeConfig)
+                if (res.status === "saved") activeConfig = res.config
+              }
+              turn.resume()
+              return
+            }
+
+            promptHistory = appendPromptHistory(resolved.data, trimmed, cred.secret)
+            currentAbort = new AbortController()
+            const onTurnCancel = () => currentAbort?.abort()
+            turn.signal.addEventListener("abort", onTurnCancel, { once: true })
+            if (turn.signal.aborted) currentAbort.abort()
+            const turnCheckpoints: FileCheckpoint[] = []
+            const checkpointedPaths = new Set<string>()
+
+            // The composer owns the activity row now: progress, elapsed time and the cancel
+            // shortcut live inside the pinned block instead of a hand-rolled spinner line that
+            // could overwrite the prompt (TUI-12, TUI-13).
+            let spinnerText = ""
+            let turnSuspended = false
+
+            const clearSpinnerLine = () => {
+              turn.setActivity(undefined)
+            }
+
+            const startSpinnerAndCancel = () => {
+              if (turnSuspended) return
+              turn.setActivity(cleanTerminalLine(spinnerText === "" ? "Working" : spinnerText))
+            }
+
+            const pauseSpinnerAndCancel = () => {
+              turn.setActivity(undefined)
+              turnSuspended = true
+              turn.suspend()
+            }
+
+            const resumeTurnSurface = () => {
+              if (!turnSuspended) return
+              turnSuspended = false
+              turn.resume()
+            }
+
+            startSpinnerAndCancel()
+
+            const shownDiffCallIds = new Set<string>()
+            const readBurst: Array<{
+              readonly tool: "read_file" | "list_files"
+              readonly target: string
+              readonly ok: boolean
+              readonly durationMs?: number
+            }> = []
+
+            const flushReadBurst = () => {
+              if (readBurst.length === 0) return
+              const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+              if (readBurst.length <= 3) {
+                for (const entry of readBurst) {
+                  const target = cleanTerminalLine(entry.target || ".")
+                  if (io instanceof RawTerminalIO) {
+                    const time =
+                      entry.durationMs === undefined
+                        ? ""
+                        : style.muted(
+                            entry.durationMs < 100
+                              ? `(${entry.durationMs < 1 ? "<1" : Math.round(entry.durationMs)} ms)`
+                              : `(${(entry.durationMs / 1000).toFixed(1)}s)`,
+                          )
+                    const row = renderActivityRow(
+                      entry.tool === "list_files" ? "List" : "Read",
+                      target,
+                      [time, entry.ok ? "" : style.red("failed")].filter(Boolean).join("  "),
+                      terminalCols(io) - 1,
+                      style,
+                    )
+                    io.write(`${row}\n`)
+                  } else if (entry.tool === "list_files") {
+                    const icon = entry.ok ? style.accent("✱") : style.red("✗")
+                    io.write(`  ${icon} ${style.muted(`List ${target}`)}\n`)
+                  } else {
+                    const icon = entry.ok ? style.muted("→") : style.yellow("✗")
+                    io.write(
+                      `  ${icon} ${style.muted(entry.ok ? `Read ${target}` : `Read ${target} (not found)`)}\n`,
+                    )
+                  }
+                }
+              } else {
+                const dirs = readBurst.filter((r) => r.tool === "list_files")
+                const files = readBurst.filter((r) => r.tool === "read_file")
+                const failed = readBurst.filter((r) => !r.ok).length
+                const parts: string[] = []
+                if (dirs.length > 0)
+                  parts.push(`listed ${dirs.length} dir${dirs.length === 1 ? "" : "s"}`)
+                if (files.length > 0)
+                  parts.push(`read ${files.length} file${files.length === 1 ? "" : "s"}`)
+                const samples = [
+                  ...new Set(
+                    readBurst
+                      .filter((r) => r.ok && r.target && r.target !== ".")
+                      .map((r) => cleanTerminalLine(r.target)),
+                  ),
+                ].slice(0, 3)
+                const sampleText =
+                  samples.length > 0
+                    ? ` (${samples.join(", ")}${readBurst.length > 3 ? ", …" : ""})`
+                    : ""
+                const errText = failed > 0 ? ` · ${failed} unreadable` : ""
+                io.write(
+                  `  ${style.green("✓")} ${style.muted(`Explored ${parts.join(", ")}${sampleText}${errText}`)}\n`,
+                )
+              }
+              readBurst.length = 0
+            }
+
+            let activeContract
+            try {
+              activeContract = loadActiveContract(resolved.data, canonical)
+            } catch (err) {
+              io.writeError(
+                `${err instanceof Error ? err.message : String(err)}\nRepair or remove the corrupted contract before running tasks.\n`,
+              )
+              currentAbort = undefined
+              return
+            }
+            let result: TaskResult
+            let lastRequest: Pick<SessionStatus, "requestLimit" | "context"> = {}
+            try {
+              result = await runTask(
+                {
+                  workspace: canonical,
+                  prompt: trimmed,
+                  trusted,
+                  config: activeConfig,
+                  permissionMode,
+                  savedRules,
+                  history: activeSession.messages,
+                  budgets: parsedRunOpts.cliBudgets,
+                  ...(activeContract ? { contract: activeContract } : {}),
+                  requireContract: parsedRunOpts.requireContract,
+                  signal: currentAbort.signal,
+                },
+                {
+                  paths: resolved,
+                  env,
+                  ...(options.completeImpl ? { completeImpl: options.completeImpl } : {}),
+                  onSavePermissionRule: (rule) => {
+                    savedRules = saveAlwaysPermissionRule(resolved.config, canonical, rule).rules
+                  },
+                  onPermissionModeChange: (nextMode) => {
+                    permissionMode = setWorkspacePermissionMode(
+                      resolved.config,
+                      canonical,
+                      nextMode,
+                    ).mode
+                    clearSpinnerLine()
+                    const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+                    io.write(
+                      `  ${style.cyan("↳")} switched permission mode to ${style.bold(permissionMode)}\n`,
+                    )
+                  },
+                  requestWorkspaceTrust: async (
+                    req: ApprovalRequest,
+                  ): Promise<ApprovalDecision> => {
+                    pauseSpinnerAndCancel()
+                    flushReadBurst()
+                    try {
+                      const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+                      if (req.kind === "edit_file") {
+                        const cleanPatch = sanitizeSecretText(req.prepared.diffPreview, cred.secret)
+                        renderEditPreview(
+                          io,
+                          cleanPatch,
+                          sanitizeSecretText(req.prepared.relativePath, cred.secret),
+                          req.prepared.create,
+                          true,
+                        )
+                        shownDiffCallIds.add(req.callId)
+                        io.write(
+                          `  ${style.yellow("Note:")} Workspace ${sanitizeTerminalText(canonical)} is read-only; trusting enables edits.\n`,
+                        )
+                        const dec = await askPermissionDecision(
+                          io,
+                          "Shall I edit & switch to accept-edits mode? [Y/n]",
+                          {
+                            allowAlways: false,
+                            allowAcceptEdits: true,
+                            yesMeansAcceptEdits: true,
+                            defaultChoice: "accept-edits",
+                            ...(currentAbort ? { signal: currentAbort.signal } : {}),
+                          },
+                        )
+                        if (dec !== "reject") trusted = true
+                        return dec
+                      }
+                      return "reject"
+                    } finally {
+                      resumeTurnSurface()
+                      startSpinnerAndCancel()
+                    }
+                  },
+                  onEvent: (event: TaskEvent) => {
+                    if (event.type === "turn_started") {
+                      lastRequest = { requestLimit: event.maxRequests }
+                    } else if (event.type === "context_compacted" && io instanceof RawTerminalIO) {
+                      clearSpinnerLine()
+                      flushReadBurst()
+                      const before = formatTokenCount(event.beforeTokens)
+                      const after = formatTokenCount(event.afterTokens)
+                      const reduction = Math.round(
+                        (100 * (event.beforeTokens - event.afterTokens)) / event.beforeTokens,
+                      )
+                      const change = reduction > 0 ? `, −${reduction}%` : ""
+                      const badge = `⟳  Auto-compacted context (~${before} → ~${after} tokens${change})`
+                      for (const line of wrapPlainText(badge, terminalCols(io) - 3)) {
+                        io.write(`  ${io.style.violet(line)}\n`)
+                      }
+                    } else if (event.type === "assistant_progress" && io instanceof RawTerminalIO) {
+                      clearSpinnerLine()
+                      flushReadBurst()
+                      renderAssistantReply(io, event.text)
+                    } else if (event.type === "model_requested") {
+                      if (event.contextLimit > 0) {
+                        lastRequest = {
+                          ...lastRequest,
+                          context: { tokens: event.contextTokens, limit: event.contextLimit },
+                        }
+                      }
+                      spinnerText = `Waiting for ${event.model} at ${formatDestination(event.endpoint)}`
+                      if (!(io instanceof RawTerminalIO) && event.step === 1) {
+                        io.write(
+                          `Waiting for ${event.model} at ${formatDestination(event.endpoint)}...\n`,
+                        )
+                      }
+                      startSpinnerAndCancel()
+                    } else if (event.type === "guardian_review") {
+                      clearSpinnerLine()
+                      flushReadBurst()
+                      const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+                      const tag =
+                        event.verdict === "APPROVE"
+                          ? style.green("APPROVE")
+                          : event.verdict === "DENY"
+                            ? style.red("DENY")
+                            : style.yellow("ESCALATE")
+                      const reasonSuffix = event.reason
+                        ? ` (${sanitizeTerminalText(event.reason)})`
+                        : ""
+                      io.write(`  ${style.accent("◆")} Smart review [${tag}]${reasonSuffix}\n`)
+                      startSpinnerAndCancel()
+                    } else if (event.type === "tool_approved") {
+                      if (
+                        event.tool === "edit_file" &&
+                        event.relativePath &&
+                        event.resolvedPath &&
+                        !checkpointedPaths.has(event.relativePath)
+                      ) {
+                        checkpointedPaths.add(event.relativePath)
+                        const cp = captureFileCheckpoint(
+                          canonical,
+                          event.relativePath,
+                          event.resolvedPath,
+                          cred.secret,
+                        )
+                        if (cp) turnCheckpoints.push(cp)
+                      }
+                      if (
+                        event.source &&
+                        event.source !== "user" &&
+                        event.source !== "user-always"
+                      ) {
+                        clearSpinnerLine()
+                        flushReadBurst()
+                        const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+                        io.write(`  ${style.muted(`↳ approved (${event.source})`)}\n`)
+                        startSpinnerAndCancel()
+                      }
+                    } else if (event.type === "tool_completed") {
+                      const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+                      if (event.result.tool === "list_files" || event.result.tool === "read_file") {
+                        const target =
+                          event.result.target ?? (event.result.tool === "list_files" ? "." : "")
+                        readBurst.push({
+                          tool: event.result.tool,
+                          target,
+                          ok: event.result.status === "ok",
+                          ...(event.result.durationMs === undefined
+                            ? {}
+                            : { durationMs: event.result.durationMs }),
+                        })
+                        const readCount = readBurst.filter((r) => r.tool === "read_file").length
+                        const dirCount = readBurst.filter((r) => r.tool === "list_files").length
+                        const progressParts: string[] = []
+                        if (dirCount > 0)
+                          progressParts.push(`${dirCount} dir${dirCount === 1 ? "" : "s"}`)
+                        if (readCount > 0)
+                          progressParts.push(`${readCount} file${readCount === 1 ? "" : "s"}`)
+                        spinnerText =
+                          event.result.tool === "read_file"
+                            ? `Reading ${sanitizeTerminalText(target)} (${progressParts.join(", ")})`
+                            : `Listing ${sanitizeTerminalText(target || ".")} (${progressParts.join(", ")})`
+                        startSpinnerAndCancel()
+                        return
+                      }
+
+                      clearSpinnerLine()
+                      flushReadBurst()
+                      if (event.result.tool === "edit_file") {
+                        if (
+                          event.result.status === "ok" &&
+                          event.result.patch &&
+                          !shownDiffCallIds.has(event.result.callId)
+                        ) {
+                          renderEditPreview(
+                            io,
+                            event.result.patch,
+                            event.result.target ?? event.result.changedFile ?? "file",
+                            event.result.create,
+                          )
+                        }
+                        if (event.result.status !== "ok" || !(io instanceof RawTerminalIO)) {
+                          const icon =
+                            event.result.status === "ok" ? style.green("✓") : style.red("✗")
+                          io.write(`  ${icon} ${sanitizeTerminalText(event.result.output)}\n`)
+                        }
+                      } else if (event.result.tool === "run_command") {
+                        if (io instanceof RawTerminalIO) {
+                          renderRunActivity(io, event.result)
+                          return
+                        }
+                        const shellLines = renderOpenCodeShellCard(
+                          {
+                            command: sanitizeTerminalText(event.result.target ?? "command"),
+                            output: sanitizeTerminalText(event.result.output),
+                            status: event.result.status,
+                            ...(event.result.exitCode !== undefined
+                              ? { exitCode: event.result.exitCode }
+                              : {}),
+                            ...(event.result.signal !== undefined
+                              ? { signal: event.result.signal }
+                              : {}),
+                            maxWidth: terminalCols(io),
+                          },
+                          style,
+                        )
+                        io.write(`${shellLines.map((l) => `  ${l}`).join("\n")}\n`)
+                      }
+                    }
+                  },
+                  confirmAction: async (req: ApprovalRequest): Promise<ApprovalDecision> => {
+                    pauseSpinnerAndCancel()
+                    flushReadBurst()
+                    try {
+                      const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+                      if (req.kind === "edit_file") {
+                        const cleanPatch = sanitizeTerminalText(
+                          sanitizeSecretText(req.prepared.diffPreview, cred.secret),
+                        )
+                        renderEditPreview(
+                          io,
+                          cleanPatch,
+                          sanitizeSecretText(req.prepared.relativePath, cred.secret),
+                          req.prepared.create,
+                          true,
+                        )
+                        shownDiffCallIds.add(req.callId)
+                        if (req.integrityWarning) {
+                          io.write(
+                            `${style.red("TestGuard Warning:")} ${sanitizeTerminalText(sanitizeSecretText(req.integrityWarning, cred.secret))}\n`,
+                          )
+                        }
+                        if (req.reason && req.reason !== req.integrityWarning) {
+                          const prefix = req.smartDenied
+                            ? style.red("Blocked:")
+                            : style.yellow("Note:")
+                          io.write(
+                            `${prefix} ${sanitizeTerminalText(sanitizeSecretText(req.reason, cred.secret))}\n`,
+                          )
+                        }
+                        return await askPermissionDecision(io, "Apply this change? [y/N]", {
+                          allowAlways: req.allowAlways ?? true,
+                          allowAcceptEdits: true,
+                          ...(req.integrityWarning
+                            ? { integrityWarning: req.integrityWarning }
+                            : {}),
+                          ...(req.suggestedSummary ? { alwaysSummary: req.suggestedSummary } : {}),
+                          ...(currentAbort ? { signal: currentAbort.signal } : {}),
+                        })
+                      }
+                      const cmdLine = sanitizeTerminalText(
+                        sanitizeSecretText(
+                          [req.prepared.command, ...req.prepared.args].join(" "),
+                          cred.secret,
+                        ),
+                      )
+                      io.write(
+                        `\n  ${style.yellow("┃")} ${style.bold("$")} ${style.bold(cmdLine)}\n`,
+                      )
+                      io.write(
+                        `  ${style.yellow("┃")} ${style.muted(`Dir      ${sanitizeTerminalText(sanitizeSecretText(req.prepared.cwd, cred.secret))}`)}\n`,
+                      )
+                      io.write(
+                        `  ${style.yellow("┃")} ${style.muted(`Warning  ${req.hostAccessWarning}`)}\n`,
+                      )
+                      if (req.reason) {
+                        const prefix = req.smartDenied
+                          ? style.red("Blocked:")
+                          : style.yellow("Note:")
+                        io.write(
+                          `  ${style.yellow("┃")} ${prefix} ${sanitizeTerminalText(sanitizeSecretText(req.reason, cred.secret))}\n`,
+                        )
+                      }
+                      io.write(`  ${style.dim("╹")}\n`)
+                      return await askPermissionDecision(io, "Run this command? [y/N]", {
+                        allowAlways: req.allowAlways ?? true,
+                        ...(req.suggestedSummary ? { alwaysSummary: req.suggestedSummary } : {}),
+                        ...(currentAbort ? { signal: currentAbort.signal } : {}),
+                      })
+                    } finally {
+                      resumeTurnSurface()
+                      startSpinnerAndCancel()
+                    }
+                  },
+                },
+              )
+            } finally {
+              pauseSpinnerAndCancel()
+              flushReadBurst()
+              resumeTurnSurface()
+            }
+
+            currentAbort = undefined
+            sessionStatus.set(activeSession.id, {
+              ...lastRequest,
+              config: activeConfig,
+              requests: result.requests + (result.guardianRequests ?? 0),
+            })
+            renderTaskOutcome(result, io)
+            if (
+              !trusted &&
+              result.actions?.some(
+                (a) =>
+                  a.decision === "deny" && (a.tool === "edit_file" || a.tool === "run_command"),
+              )
+            ) {
+              const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+              io.write(
+                `  ${style.yellow("Tip:")} Workspace is read-only — run ${style.bold("/trust")} in the prompt box below to allow edits and commands.\n`,
+              )
+            }
+
+            const finalizedCheckpoints = finalizeTurnCheckpoints(
+              createBoundaryContext(canonical, resolved, activeConfig, env, activeContract),
+              turnCheckpoints,
+            )
+            activeSession = appendTurnToSession(activeSession, {
+              userPrompt: trimmed,
+              result,
+              model: activeConfig.model,
+              checkpoints: finalizedCheckpoints,
+            })
+            saveSession(resolved.data, activeSession, cred.secret)
+
+            if (
+              result.outcome === "failed" &&
+              result.stopReason &&
+              /(401|403|rejected authentication|cannot authenticate)/i.test(result.stopReason)
+            ) {
+              turn.suspend()
+              const repair = await askYesNo(
+                io,
+                "Provider rejected request. Run /setup to repair? [y/N] ",
+              )
+              if (isYes(repair)) {
+                const prevDest = activeConfig
+                  ? `${activeConfig.endpointType}:${formatDestination(activeConfig.baseURL)}`
+                  : undefined
+                const res = await guardedSetup(resolved.config, activeConfig)
+                if (res.status === "saved") {
+                  const nextDest = `${res.config.endpointType}:${formatDestination(res.config.baseURL)}`
+                  if (prevDest && prevDest !== nextDest && activeSession.turns.length > 0) {
+                    const splitSession = await askYesNo(
+                      io,
+                      `Destination changed (${prevDest} -> ${nextDest}). Start a fresh session instead of sharing history? [y/N] `,
+                    )
+                    if (isYes(splitSession)) {
+                      activeSession = createSession(canonical, detectGitBranch(canonical))
+                    }
+                  }
+                  activeConfig = res.config
+                }
+              }
+              turn.resume()
+            }
+          } finally {
+            if (io instanceof RawTerminalIO) io.setWriteSink(undefined)
+          }
+        }
         if (io instanceof RawTerminalIO) {
-          const usage = sessionStatus.get(activeSession.id)
           const action: ComposerAction = await runInteractiveComposer({
             raw: io.raw,
             style: io.style,
             promptLabel: "❯ ",
-            ...(welcomeSessionId === activeSession.id ? {
-              placeholder: activeConfig ? " Ask Bashwink anything…" : " Press Enter to set up a model",
-              beforeSubmit: (text: string) => {
-                if (text.startsWith("/") || ["exit", "quit", "connect"].includes(text)) return
-                welcomeSessionId = undefined
-                io.write("\x1b[2J\x1b[H")
-                renderCliHeader(io, canonical, trusted, activeConfig, activeSession)
-              },
-            } : {}),
+            ...(welcomeSessionId === activeSession.id
+              ? {
+                  placeholder: activeConfig
+                    ? " Ask Bashwink anything…"
+                    : " Press Enter to set up a model",
+                  beforeSubmit: (text: string) => {
+                    if (text.startsWith("/") || ["exit", "quit", "connect"].includes(text)) return
+                    welcomeSessionId = undefined
+                    io.write("\x1b[2J\x1b[H")
+                    renderCliHeader(io, canonical, trusted, activeConfig, activeSession)
+                  },
+                }
+              : {}),
             permissionMode,
             statusSummary: "",
-            renderStatus: (width) => renderSessionStatus(
-              {
-                requests: 0,
-                ...(requestLimit === undefined ? {} : { requestLimit }),
-                ...(usage?.config === activeConfig ? usage : undefined),
-                model: cleanTerminalLine(activeConfig?.model ?? "No model (/model)"),
-                mode: permissionMode,
-                readOnly: !trusted || permissionMode === "ask",
-              },
-              width,
-              io.style,
-            ),
+            renderStatus: (width) => {
+              // Read the live session status: a turn that finishes while the composer stays
+              // painted must update the footer instead of freezing the pre-turn numbers.
+              const live = sessionStatus.get(activeSession.id)
+              return renderSessionStatus(
+                {
+                  requests: 0,
+                  ...(requestLimit === undefined ? {} : { requestLimit }),
+                  ...(live?.config === activeConfig ? live : undefined),
+                  model: cleanTerminalLine(activeConfig?.model ?? "No model (/model)"),
+                  mode: permissionMode,
+                  readOnly:
+                    !isWorkspaceTrusted(resolved.config, canonical) || permissionMode === "ask",
+                },
+                width,
+                io.style,
+              )
+            },
             workspace: canonical,
             history: promptHistory,
             initialDraft: draftBuffer,
+            initialCursor: draftCursor,
+            runTurn: (turn: ComposerTurnContext) => executeSubmittedText(turn.text, turn),
+            turnCommands: ["test", "ping", "verify"],
           })
-          draftBuffer = ""
+          draftBuffer = action.draft
+          draftCursor = action.cursor
           if (action.kind === "exit") break
           if (action.kind === "cycle_mode") {
             permissionMode = setWorkspacePermissionMode(
@@ -2607,6 +3981,7 @@ export async function runStandalone(
               nextPermissionMode(permissionMode),
             ).mode
             draftBuffer = action.draft
+            draftCursor = action.cursor
             if (welcomeSessionId === activeSession.id) renderSessionEntry(true)
             continue
           }
@@ -2648,7 +4023,7 @@ export async function runStandalone(
 
         if (trimmed === "") {
           if (!activeConfig) {
-            const res = await runInteractiveSetup(io, resolved.config, env, undefined)
+            const res = await guardedSetup(resolved.config)
             if (res.status === "saved") {
               activeConfig = res.config
               renderSessionEntry(welcomeSessionId === activeSession.id)
@@ -2671,531 +4046,6 @@ export async function runStandalone(
           const res = await dispatchSlashCommand(cmd, cmdArgs)
           if (res === "exit") break
           continue
-        }
-
-        if (!activeConfig) {
-          io.write("\nNo model configured yet — configure a model first.\n")
-          const res = await runInteractiveSetup(io, resolved.config, env, undefined)
-          if (res.status !== "saved") continue
-          activeConfig = res.config
-          renderCliHeader(
-            io,
-            canonical,
-            isWorkspaceTrusted(resolved.config, canonical),
-            activeConfig,
-            activeSession,
-          )
-        }
-
-        if (!trusted && !trustPromptShown && permissionMode !== "ask") {
-          trustPromptShown = true
-          io.write(`\nWorkspace ${canonical} is NOT trusted yet (read-only mode).\n`)
-          io.write(
-            "Reads are allowed. File edits and commands require trusting this directory, and approved actions run with your user permissions (not an OS sandbox).\n",
-          )
-          const trustAns = await askYesNo(
-            io,
-            "Trust this workspace for interactive edit/command approvals? [y/N] ",
-          )
-          if (trustAns === null) break
-          if (isYes(trustAns)) {
-            const user = env["USER"] ?? env["USERNAME"] ?? "terminal-user"
-            grantWorkspaceTrust(resolved.config, canonical, user)
-            trusted = true
-            io.write(`Trusted ${canonical}.\n`)
-          } else {
-            io.write(
-              "Continuing in read-only mode (edits and commands will be denied). Run /trust anytime to trust this folder.\n",
-            )
-          }
-        }
-
-        const cred = resolveCredentialSecret(activeConfig.credential, env)
-        if (!cred.ok) {
-          io.writeError(
-            `\nProvider at ${formatDestination(activeConfig.baseURL)} cannot authenticate (${cred.summary}).\n`,
-          )
-          const repair = await askYesNo(
-            io,
-            "Open /model setup to repair provider credentials? [y/N] ",
-          )
-          if (isYes(repair)) {
-            const res = await runInteractiveSetup(io, resolved.config, env, activeConfig)
-            if (res.status === "saved") activeConfig = res.config
-          }
-          continue
-        }
-
-        promptHistory = appendPromptHistory(resolved.data, trimmed, cred.secret)
-        currentAbort = new AbortController()
-        const turnCheckpoints: FileCheckpoint[] = []
-        const checkpointedPaths = new Set<string>()
-
-        // Live spinner & raw Ctrl+C / Escape cancel listener while task runs
-        let spinnerTimer: ReturnType<typeof setInterval> | undefined
-        let stopTaskCapture: (() => void) | undefined
-        let spinnerActive = false
-        let spinnerText = ""
-        let spinnerIdx = 0
-        const taskStartMs = Date.now()
-
-        const clearSpinnerLine = () => {
-          if (spinnerActive && io instanceof RawTerminalIO) {
-            io.write("\r\x1b[2K")
-            spinnerActive = false
-          }
-        }
-
-        const startSpinnerAndCancel = () => {
-          if (!(io instanceof RawTerminalIO)) return
-          if (!stopTaskCapture) {
-            stopTaskCapture = io.raw.beginCapture((ev) => {
-              if (
-                (ev.kind === "ctrl" && ev.key === "c") ||
-                (ev.kind === "key" && ev.name === "escape")
-              ) {
-                clearSpinnerLine()
-                io.write("\nCancelling current task...\n")
-                currentAbort?.abort()
-              }
-            })
-          }
-          if (!spinnerTimer && spinnerText !== "") {
-            spinnerTimer = setInterval(() => {
-              if (!spinnerText || !(io instanceof RawTerminalIO)) return
-              const frame = SPINNER_FRAMES[spinnerIdx % SPINNER_FRAMES.length]!
-              spinnerIdx += 1
-              const elapsed = ((Date.now() - taskStartMs) / 1000).toFixed(1)
-              io.write(
-                `\r\x1b[2K${io.style.violet(truncatePlain(`  ${frame}  ${cleanTerminalLine(spinnerText)} (${elapsed}s · esc/ctrl+c cancel)`, terminalCols(io) - 1))}`,
-              )
-              spinnerActive = true
-            }, 90)
-          }
-        }
-
-        const pauseSpinnerAndCancel = () => {
-          if (spinnerTimer) {
-            clearInterval(spinnerTimer)
-            spinnerTimer = undefined
-          }
-          clearSpinnerLine()
-          if (stopTaskCapture) {
-            stopTaskCapture()
-            stopTaskCapture = undefined
-          }
-        }
-
-        startSpinnerAndCancel()
-
-        const shownDiffCallIds = new Set<string>()
-        const readBurst: Array<{
-          readonly tool: "read_file" | "list_files"
-          readonly target: string
-          readonly ok: boolean
-          readonly durationMs?: number
-        }> = []
-
-        const flushReadBurst = () => {
-          if (readBurst.length === 0) return
-          const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
-          if (readBurst.length <= 3) {
-            for (const entry of readBurst) {
-              const target = cleanTerminalLine(entry.target || ".")
-              if (io instanceof RawTerminalIO) {
-                const time = entry.durationMs === undefined ? ""
-                  : style.muted(entry.durationMs < 100 ? `(${entry.durationMs < 1 ? "<1" : Math.round(entry.durationMs)} ms)`
-                    : `(${(entry.durationMs / 1000).toFixed(1)}s)`)
-                const row = renderActivityRow(entry.tool === "list_files" ? "List" : "Read", target,
-                  [time, entry.ok ? "" : style.red("failed")].filter(Boolean).join("  "),
-                  terminalCols(io) - 1, style)
-                io.write(`${row}\n`)
-              } else if (entry.tool === "list_files") {
-                const icon = entry.ok ? style.accent("✱") : style.red("✗")
-                io.write(`  ${icon} ${style.muted(`List ${target}`)}\n`)
-              } else {
-                const icon = entry.ok ? style.muted("→") : style.yellow("✗")
-                io.write(
-                  `  ${icon} ${style.muted(entry.ok ? `Read ${target}` : `Read ${target} (not found)`)}\n`,
-                )
-              }
-            }
-          } else {
-            const dirs = readBurst.filter((r) => r.tool === "list_files")
-            const files = readBurst.filter((r) => r.tool === "read_file")
-            const failed = readBurst.filter((r) => !r.ok).length
-            const parts: string[] = []
-            if (dirs.length > 0)
-              parts.push(`listed ${dirs.length} dir${dirs.length === 1 ? "" : "s"}`)
-            if (files.length > 0)
-              parts.push(`read ${files.length} file${files.length === 1 ? "" : "s"}`)
-            const samples = [
-              ...new Set(
-                readBurst.filter((r) => r.ok && r.target && r.target !== ".").map((r) => cleanTerminalLine(r.target)),
-              ),
-            ].slice(0, 3)
-            const sampleText =
-              samples.length > 0
-                ? ` (${samples.join(", ")}${readBurst.length > 3 ? ", …" : ""})`
-                : ""
-            const errText = failed > 0 ? ` · ${failed} unreadable` : ""
-            io.write(
-              `  ${style.green("✓")} ${style.muted(`Explored ${parts.join(", ")}${sampleText}${errText}`)}\n`,
-            )
-          }
-          readBurst.length = 0
-        }
-
-        let activeContract
-        try {
-          activeContract = loadActiveContract(resolved.data, canonical)
-        } catch (err) {
-          io.writeError(
-            `${err instanceof Error ? err.message : String(err)}\nRepair or remove the corrupted contract before running tasks.\n`,
-          )
-          currentAbort = undefined
-          continue
-        }
-        let result: TaskResult
-        let lastRequest: Pick<SessionStatus, "requestLimit" | "context"> = {}
-        try {
-          result = await runTask(
-            {
-              workspace: canonical,
-              prompt: trimmed,
-              trusted,
-              config: activeConfig,
-              permissionMode,
-              savedRules,
-              history: activeSession.messages,
-              budgets: parsedRunOpts.cliBudgets,
-              ...(activeContract ? { contract: activeContract } : {}),
-              requireContract: parsedRunOpts.requireContract,
-              signal: currentAbort.signal,
-            },
-            {
-              paths: resolved,
-              env,
-              ...(options.completeImpl ? { completeImpl: options.completeImpl } : {}),
-              onSavePermissionRule: (rule) => {
-                savedRules = saveAlwaysPermissionRule(resolved.config, canonical, rule).rules
-              },
-              onPermissionModeChange: (nextMode) => {
-                permissionMode = setWorkspacePermissionMode(
-                  resolved.config,
-                  canonical,
-                  nextMode,
-                ).mode
-                clearSpinnerLine()
-                const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
-                io.write(
-                  `  ${style.cyan("↳")} switched permission mode to ${style.bold(permissionMode)}\n`,
-                )
-              },
-              requestWorkspaceTrust: async (req: ApprovalRequest): Promise<ApprovalDecision> => {
-                pauseSpinnerAndCancel()
-                flushReadBurst()
-                try {
-                  const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
-                  if (req.kind === "edit_file") {
-                    const cleanPatch = sanitizeSecretText(req.prepared.diffPreview, cred.secret)
-                    renderEditPreview(
-                      io,
-                      cleanPatch,
-                      sanitizeSecretText(req.prepared.relativePath, cred.secret),
-                      req.prepared.create,
-                      true,
-                    )
-                    shownDiffCallIds.add(req.callId)
-                    io.write(
-                      `  ${style.yellow("Note:")} Workspace ${sanitizeTerminalText(canonical)} is read-only; trusting enables edits.\n`,
-                    )
-                    const dec = await askPermissionDecision(
-                      io,
-                      "Shall I edit & switch to accept-edits mode? [Y/n]",
-                      {
-                        allowAlways: false,
-                        allowAcceptEdits: true,
-                        yesMeansAcceptEdits: true,
-                        defaultChoice: "accept-edits",
-                        ...(currentAbort ? { signal: currentAbort.signal } : {}),
-                      },
-                    )
-                    if (dec !== "reject") trusted = true
-                    return dec
-                  }
-                  return "reject"
-                } finally {
-                  startSpinnerAndCancel()
-                }
-              },
-              onEvent: (event: TaskEvent) => {
-                if (event.type === "turn_started") {
-                  lastRequest = { requestLimit: event.maxRequests }
-                } else if (event.type === "context_compacted" && io instanceof RawTerminalIO) {
-                  clearSpinnerLine()
-                  flushReadBurst()
-                  const before = formatTokenCount(event.beforeTokens)
-                  const after = formatTokenCount(event.afterTokens)
-                  const reduction = Math.round(100 * (event.beforeTokens - event.afterTokens) / event.beforeTokens)
-                  const change = reduction > 0 ? `, −${reduction}%` : ""
-                  const badge = `⟳  Auto-compacted context (~${before} → ~${after} tokens${change})`
-                  for (const line of wrapPlainText(badge, terminalCols(io) - 3)) {
-                    io.write(`  ${io.style.violet(line)}\n`)
-                  }
-                } else if (event.type === "assistant_progress" && io instanceof RawTerminalIO) {
-                  clearSpinnerLine()
-                  flushReadBurst()
-                  renderAssistantReply(io, event.text)
-                } else if (event.type === "model_requested") {
-                  if (event.contextLimit > 0) {
-                    lastRequest = { ...lastRequest, context: { tokens: event.contextTokens, limit: event.contextLimit } }
-                  }
-                  spinnerText = `Waiting for ${event.model} at ${formatDestination(event.endpoint)}`
-                  if (!(io instanceof RawTerminalIO) && event.step === 1) {
-                    io.write(
-                      `Waiting for ${event.model} at ${formatDestination(event.endpoint)}...\n`,
-                    )
-                  }
-                  startSpinnerAndCancel()
-                } else if (event.type === "guardian_review") {
-                  clearSpinnerLine()
-                  flushReadBurst()
-                  const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
-                  const tag =
-                    event.verdict === "APPROVE"
-                      ? style.green("APPROVE")
-                      : event.verdict === "DENY"
-                        ? style.red("DENY")
-                        : style.yellow("ESCALATE")
-                  const reasonSuffix = event.reason
-                    ? ` (${sanitizeTerminalText(event.reason)})`
-                    : ""
-                  io.write(`  ${style.accent("◆")} Smart review [${tag}]${reasonSuffix}\n`)
-                  startSpinnerAndCancel()
-                } else if (event.type === "tool_approved") {
-                  if (
-                    event.tool === "edit_file" &&
-                    event.relativePath &&
-                    event.resolvedPath &&
-                    !checkpointedPaths.has(event.relativePath)
-                  ) {
-                    checkpointedPaths.add(event.relativePath)
-                    const cp = captureFileCheckpoint(
-                      canonical,
-                      event.relativePath,
-                      event.resolvedPath,
-                      cred.secret,
-                    )
-                    if (cp) turnCheckpoints.push(cp)
-                  }
-                  if (event.source && event.source !== "user" && event.source !== "user-always") {
-                    clearSpinnerLine()
-                    flushReadBurst()
-                    const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
-                    io.write(`  ${style.muted(`↳ approved (${event.source})`)}\n`)
-                    startSpinnerAndCancel()
-                  }
-                } else if (event.type === "tool_completed") {
-                  const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
-                  if (event.result.tool === "list_files" || event.result.tool === "read_file") {
-                    const target =
-                      event.result.target ?? (event.result.tool === "list_files" ? "." : "")
-                    readBurst.push({
-                      tool: event.result.tool,
-                      target,
-                      ok: event.result.status === "ok",
-                      ...(event.result.durationMs === undefined ? {} : { durationMs: event.result.durationMs }),
-                    })
-                    const readCount = readBurst.filter((r) => r.tool === "read_file").length
-                    const dirCount = readBurst.filter((r) => r.tool === "list_files").length
-                    const progressParts: string[] = []
-                    if (dirCount > 0)
-                      progressParts.push(`${dirCount} dir${dirCount === 1 ? "" : "s"}`)
-                    if (readCount > 0)
-                      progressParts.push(`${readCount} file${readCount === 1 ? "" : "s"}`)
-                    spinnerText =
-                      event.result.tool === "read_file"
-                        ? `Reading ${sanitizeTerminalText(target)} (${progressParts.join(", ")})`
-                        : `Listing ${sanitizeTerminalText(target || ".")} (${progressParts.join(", ")})`
-                    startSpinnerAndCancel()
-                    return
-                  }
-
-                  clearSpinnerLine()
-                  flushReadBurst()
-                  if (event.result.tool === "edit_file") {
-                    if (
-                      event.result.status === "ok" &&
-                      event.result.patch &&
-                      !shownDiffCallIds.has(event.result.callId)
-                    ) {
-                      renderEditPreview(
-                        io,
-                        event.result.patch,
-                        event.result.target ?? event.result.changedFile ?? "file",
-                        event.result.create,
-                      )
-                    }
-                    if (event.result.status !== "ok" || !(io instanceof RawTerminalIO)) {
-                      const icon = event.result.status === "ok" ? style.green("✓") : style.red("✗")
-                      io.write(`  ${icon} ${sanitizeTerminalText(event.result.output)}\n`)
-                    }
-                  } else if (event.result.tool === "run_command") {
-                    if (io instanceof RawTerminalIO) {
-                      renderRunActivity(io, event.result)
-                      return
-                    }
-                    const shellLines = renderOpenCodeShellCard(
-                      {
-                        command: sanitizeTerminalText(event.result.target ?? "command"),
-                        output: sanitizeTerminalText(event.result.output),
-                        status: event.result.status,
-                        ...(event.result.exitCode !== undefined
-                          ? { exitCode: event.result.exitCode }
-                          : {}),
-                        ...(event.result.signal !== undefined
-                          ? { signal: event.result.signal }
-                          : {}),
-                        maxWidth: terminalCols(io),
-                      },
-                      style,
-                    )
-                    io.write(`${shellLines.map((l) => `  ${l}`).join("\n")}\n`)
-                  }
-                }
-              },
-              confirmAction: async (req: ApprovalRequest): Promise<ApprovalDecision> => {
-                pauseSpinnerAndCancel()
-                flushReadBurst()
-                try {
-                  const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
-                  if (req.kind === "edit_file") {
-                    const cleanPatch = sanitizeTerminalText(
-                      sanitizeSecretText(req.prepared.diffPreview, cred.secret),
-                    )
-                    renderEditPreview(
-                      io,
-                      cleanPatch,
-                      sanitizeSecretText(req.prepared.relativePath, cred.secret),
-                      req.prepared.create,
-                      true,
-                    )
-                    shownDiffCallIds.add(req.callId)
-                    if (req.integrityWarning) {
-                      io.write(
-                        `${style.red("TestGuard Warning:")} ${sanitizeTerminalText(sanitizeSecretText(req.integrityWarning, cred.secret))}\n`,
-                      )
-                    }
-                    if (req.reason && req.reason !== req.integrityWarning) {
-                      const prefix = req.smartDenied ? style.red("Blocked:") : style.yellow("Note:")
-                      io.write(
-                        `${prefix} ${sanitizeTerminalText(sanitizeSecretText(req.reason, cred.secret))}\n`,
-                      )
-                    }
-                    return await askPermissionDecision(io, "Apply this change? [y/N]", {
-                      allowAlways: req.allowAlways ?? true,
-                      allowAcceptEdits: true,
-                      ...(req.integrityWarning ? { integrityWarning: req.integrityWarning } : {}),
-                      ...(req.suggestedSummary ? { alwaysSummary: req.suggestedSummary } : {}),
-                      ...(currentAbort ? { signal: currentAbort.signal } : {}),
-                    })
-                  }
-                  const cmdLine = sanitizeTerminalText(
-                    sanitizeSecretText(
-                      [req.prepared.command, ...req.prepared.args].join(" "),
-                      cred.secret,
-                    ),
-                  )
-                  io.write(`\n  ${style.yellow("┃")} ${style.bold("$")} ${style.bold(cmdLine)}\n`)
-                  io.write(
-                    `  ${style.yellow("┃")} ${style.muted(`Dir      ${sanitizeTerminalText(sanitizeSecretText(req.prepared.cwd, cred.secret))}`)}\n`,
-                  )
-                  io.write(
-                    `  ${style.yellow("┃")} ${style.muted(`Warning  ${req.hostAccessWarning}`)}\n`,
-                  )
-                  if (req.reason) {
-                    const prefix = req.smartDenied ? style.red("Blocked:") : style.yellow("Note:")
-                    io.write(
-                      `  ${style.yellow("┃")} ${prefix} ${sanitizeTerminalText(sanitizeSecretText(req.reason, cred.secret))}\n`,
-                    )
-                  }
-                  io.write(`  ${style.dim("╹")}\n`)
-                  return await askPermissionDecision(io, "Run this command? [y/N]", {
-                    allowAlways: req.allowAlways ?? true,
-                    ...(req.suggestedSummary ? { alwaysSummary: req.suggestedSummary } : {}),
-                    ...(currentAbort ? { signal: currentAbort.signal } : {}),
-                  })
-                } finally {
-                  startSpinnerAndCancel()
-                }
-              },
-            },
-          )
-        } finally {
-          pauseSpinnerAndCancel()
-          flushReadBurst()
-        }
-
-        currentAbort = undefined
-        sessionStatus.set(activeSession.id, {
-          ...lastRequest,
-          config: activeConfig,
-          requests: result.requests + (result.guardianRequests ?? 0),
-        })
-        renderTaskOutcome(result, io)
-        if (
-          !trusted &&
-          result.actions?.some(
-            (a) => a.decision === "deny" && (a.tool === "edit_file" || a.tool === "run_command"),
-          )
-        ) {
-          const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
-          io.write(
-            `  ${style.yellow("Tip:")} Workspace is read-only — run ${style.bold("/trust")} in the prompt box below to allow edits and commands.\n`,
-          )
-        }
-
-        const finalizedCheckpoints = finalizeTurnCheckpoints(
-          createBoundaryContext(canonical, resolved, activeConfig, env, activeContract),
-          turnCheckpoints,
-        )
-        activeSession = appendTurnToSession(activeSession, {
-          userPrompt: trimmed,
-          result,
-          model: activeConfig.model,
-          checkpoints: finalizedCheckpoints,
-        })
-        saveSession(resolved.data, activeSession, cred.secret)
-
-        if (
-          result.outcome === "failed" &&
-          result.stopReason &&
-          /(401|403|rejected authentication|cannot authenticate)/i.test(result.stopReason)
-        ) {
-          const repair = await askYesNo(
-            io,
-            "Provider rejected request. Run /setup to repair? [y/N] ",
-          )
-          if (isYes(repair)) {
-            const prevDest = activeConfig
-              ? `${activeConfig.endpointType}:${formatDestination(activeConfig.baseURL)}`
-              : undefined
-            const res = await runInteractiveSetup(io, resolved.config, env, activeConfig)
-            if (res.status === "saved") {
-              const nextDest = `${res.config.endpointType}:${formatDestination(res.config.baseURL)}`
-              if (prevDest && prevDest !== nextDest && activeSession.turns.length > 0) {
-                const splitSession = await askYesNo(
-                  io,
-                  `Destination changed (${prevDest} -> ${nextDest}). Start a fresh session instead of sharing history? [y/N] `,
-                )
-                if (isYes(splitSession)) {
-                  activeSession = createSession(canonical, detectGitBranch(canonical))
-                }
-              }
-              activeConfig = res.config
-            }
-          }
         }
       }
       return interruptedAtPrompt ? 130 : 0

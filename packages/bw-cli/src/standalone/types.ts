@@ -33,6 +33,20 @@ export interface StandaloneConfig {
   readonly price?: ModelPrice
   readonly connectionStatus?: "unverified" | "verified" | "failed"
   readonly lastVerifiedAt?: string
+  /** Outcome of the most recent connection test, persisted so `/status` can report it (TUI-09). */
+  readonly lastTest?: ConnectionTestSummary
+}
+
+/**
+ * Chat reachability and tool support are separate observations: a model can answer chat
+ * prompts while failing the tool-call probe, and `/status` must not conflate them.
+ */
+export interface ConnectionTestSummary {
+  readonly at: string
+  readonly ok: boolean
+  readonly chatReachable: boolean
+  readonly toolSupport: "supported" | "unsupported" | "untested"
+  readonly latencyMs?: number
 }
 
 export interface SystemMessage {
@@ -311,7 +325,11 @@ export type TaskEvent =
       readonly contextTokens: number
       readonly contextLimit: number
     }
-  | { readonly type: "context_compacted"; readonly beforeTokens: number; readonly afterTokens: number }
+  | {
+      readonly type: "context_compacted"
+      readonly beforeTokens: number
+      readonly afterTokens: number
+    }
   | { readonly type: "assistant_progress"; readonly text: string }
   | { readonly type: "model_delta"; readonly text: string }
   | {

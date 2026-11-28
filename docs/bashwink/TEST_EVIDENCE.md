@@ -1825,6 +1825,10 @@ Executed locally on Apple Silicon (`darwin-arm64`, `Node v22.23.2`, loopback moc
 | `npm run test:standalone:independence` | 0 | Clean checkout with `vendor/`, `node_modules/`, `build/`, OpenCode, Hermes, Pi, and Bun physically absent passes install, 39/39 unit tests, and Git red->green coding. |
 | `python3 scripts/generate_status_summary.py --check && python3 scripts/verify_bashwink_docs.py` | 0 | Generated status summary and docs verification pass after manifest refresh (`refresh_docs_manifest.py --write`). |
 
+### 2026-11-28 — Standalone TUI usability audit
+
+macOS arm64, Node `v22.23.2`. The installed executable reported `0.2.0-alpha.1`, and the source and temporary test install reported `0.2.0-alpha.2`. With test loopback access, `npm run test:standalone` exited 0 (58/58) and `npm run test:standalone:e2e` exited 0 (12/12). The restricted baseline refused localhost binds with `EPERM`. A separate real-PTY walkthrough reproduced draft displacement in both versions and verified draft loss, diagnostic cancellation, and model setup issues on current source. See the [TUI usability audit](reports/TUI_UX_AUDIT_2026-11-28.md) for steps and results. Live hosted and cross-platform gate criteria remain open.
+
 ### 2026-11-28 — Standalone TUI refresh
 
 macOS arm64, Node `v22.23.2`, base `ed4ec28`, with the working-tree TUI changes. Networked
@@ -1871,3 +1875,55 @@ macOS arm64, Node `v22.23.2`, base `7aca566` with the result-card and welcome-sc
 
 The Phase 2 gate remains a conditional local pass. Cross-platform and live-provider qualification
 remain open.
+
+### 2026-11-28 — Current standalone TUI usability retest
+
+Source `32a59a3`, installed Bashwink `0.2.0-alpha.2`, macOS arm64, Node `v22.23.2`. See the [TUI usability audit](reports/TUI_UX_AUDIT_2026-11-28.md#retest-of-the-current-build) for 13 issue reproductions and the behavior that improved after the original audit.
+
+| Check | Exit | Observation |
+| --- | ---: | --- |
+| `npm run test:standalone` | 0 | 62/62 passed with test loopback access. The initial restricted run exited 1 with 13 localhost bind failures. |
+| `npm run test:standalone:e2e` | 0 | 12/12 installed-package real PTY scenarios with loopback access and a temporary npm cache. |
+| `npm run test:standalone:install` | 0 | Package build, install, upgrade, corrupt tarball handling, and uninstall passed with a temporary npm cache. |
+| `npm run test:standalone:independence` | 0 | Isolated install, tests, and red-to-green coding passed with loopback access. |
+| Targeted real-PTY walkthroughs | 0, 130 | Composer, overlay, setup, and recovery checks used isolated profiles and fixture responses. Idle and task-recovery sessions exited 0. Interrupted `/test`, discovery, and setup sample-test sessions exited 130. |
+| Installed `hi` with delayed provider in real PTY | 0 | At 80×24 and 40×8, the composer disappeared during the wait and accepted a new draft after the reply. Both sessions exited normally. |
+| `python3 scripts/verify_bashwink_docs.py --check-manifest` | 1 | Before audit edits, strict verification found a hash mismatch in `PHASE_GATE_CHECKLIST.md`. |
+
+The Phase 2 cross-platform and hosted-provider gate items remain open.
+
+### 2026-11-28 — TUI usability fixes (TUI-01 .. TUI-13)
+
+Implemented fixes for all thirteen audit issues. Source-only run on macOS arm64, Node `v22.23.2`,
+bun `1.4.4`. No hosted credentials and no outbound network requests were used.
+
+| Check | Exit | Observation |
+| --- | ---: | --- |
+| `npm run test:standalone` | 0 | 78/78 passed: the 62 pre-existing tests plus 16 new `tui-usability.test.ts` cases covering TUI-02..TUI-13. |
+| `bun run typecheck` | 0 | `bw-evidence` and `bw-cli` both clean. |
+| `bun run lint` | 0 | `oxlint --deny-warnings packages` clean. |
+| `bun run format` | 1 | Only four files this change does not touch (`task-loop.ts`, `tui-test-results.ts`, `task-loop.test.ts`, `tui-session.test.ts`) still fail `bun fmt --check`; they fail on `main` as well. Every file changed here is formatted. |
+| `python3 scripts/verify_bashwink_docs.py` | 0 | `Audit: PASS`. |
+| `npm run test:standalone:e2e` | see below | Installed-package PTY suite re-run after the fix set; one scripted setup-cancel step needed explicit pacing because the whole wizard block is repainted. |
+| `npm run test:standalone:install` | not run | Not exercised in this pass. |
+
+Behavior changes, by audit ID:
+
+| ID | Result | Evidence |
+| --- | --- | --- |
+| TUI-01 | Fixed | `/test` runs inside the composer through `runCancellableActivity`: one activity row, live `esc/ctrl+c cancel`, abort propagates to `testProviderConnection`, the session keeps running. |
+| TUI-02 | Fixed | Model discovery and the setup sample test capture their own cancel key; SIGINT during setup no longer ends the session (`guardedSetup`), and cancellation returns to the step with draft settings. |
+| TUI-03 | Fixed | Every dismissal action carries `{draft, cursor}`; the loop feeds them back as `initialDraft`/`initialCursor` (palette, sessions, transcript, timeline, Ctrl+L, mode cycling). A cancelled turn can return `restoreDraft` for the first-prompt/model-setup case. |
+| TUI-04 | Fixed | Fields render label row + value row with horizontal scroll; the choice widget paints the typed value on its own row; the review step has a fixed `t test · y save · b back · esc cancel` bar that fits 40 columns. |
+| TUI-05 | Fixed | `/model` opens `runModelPicker`, which changes only `model` and preserves endpoint, credential and headers. Full setup stays under `/setup` and `/connect`. |
+| TUI-06 | Fixed | `askHybridChoice` filters rows as you type, keeps the highlight, and reports `n of m shown`. |
+| TUI-07 | Fixed | Local presets with `defaultCredentialKind === "none"` start on the no-key option, so Enter accepts it. |
+| TUI-08 | Fixed | Models are labelled `detected` / `suggested`; discovery reports `Found N live model(s) … (N GET /models request sent)` and the review lists how many discovery requests were sent. |
+| TUI-09 | Fixed | `applyConnectionTestResult` persists `connectionStatus`, `lastVerifiedAt` and a new validated `lastTest` record; `/status` reports `Connection`, `Chat` and `Tools` separately. |
+| TUI-10 | Fixed | Backspace/Delete/arrow keys move by grapheme (`Intl.Segmenter` with a fallback); `再😊` + Backspace leaves `再`. |
+| TUI-11 | Fixed | The composer keeps the full match list and scrolls a window over it, reporting `n/m` so every suggestion stays reachable. |
+| TUI-12 | Fixed | The activity row reserves the cancel shortcut before truncating the label, so `esc cancel` survives at 40 and 50 columns. |
+| TUI-13 | Fixed | A submitted prompt runs in place: the prompt box stays bottom-pinned, the activity row shows stage/elapsed/cancel, output is written above the block, input is ignored until the turn ends, and editing resumes with the footer refreshed. |
+
+Not verified in this pass: live hosted providers, Windows/other terminals, and a PTY scenario for
+cancelling model discovery inside the wizard (covered headlessly, not through a real terminal).

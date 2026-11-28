@@ -260,6 +260,44 @@ export function parseStandaloneConfig(raw: string): StandaloneConfig {
       ? obj["lastVerifiedAt"]
       : undefined
 
+  let lastTest: StandaloneConfig["lastTest"]
+  if (obj["lastTest"] !== undefined) {
+    const t = obj["lastTest"]
+    if (typeof t !== "object" || t === null || Array.isArray(t)) {
+      throw new StandaloneConfigError("Config lastTest must be an object.")
+    }
+    const rec = t as Record<string, unknown>
+    if (typeof rec["at"] !== "string" || rec["at"].trim() === "") {
+      throw new StandaloneConfigError("Config lastTest.at must be a timestamp string.")
+    }
+    if (typeof rec["ok"] !== "boolean" || typeof rec["chatReachable"] !== "boolean") {
+      throw new StandaloneConfigError("Config lastTest must record booleans for ok/chatReachable.")
+    }
+    if (
+      rec["toolSupport"] !== "supported" &&
+      rec["toolSupport"] !== "unsupported" &&
+      rec["toolSupport"] !== "untested"
+    ) {
+      throw new StandaloneConfigError(
+        "Config lastTest.toolSupport must be 'supported', 'unsupported', or 'untested'.",
+      )
+    }
+    const latency = rec["latencyMs"]
+    if (
+      latency !== undefined &&
+      (typeof latency !== "number" || !Number.isFinite(latency) || latency < 0)
+    ) {
+      throw new StandaloneConfigError("Config lastTest.latencyMs must be a non-negative number.")
+    }
+    lastTest = {
+      at: rec["at"],
+      ok: rec["ok"],
+      chatReachable: rec["chatReachable"],
+      toolSupport: rec["toolSupport"],
+      ...(typeof latency === "number" ? { latencyMs: latency } : {}),
+    }
+  }
+
   return {
     version: STANDALONE_CONFIG_VERSION,
     ...(providerId === undefined ? {} : { providerId }),
@@ -273,6 +311,7 @@ export function parseStandaloneConfig(raw: string): StandaloneConfig {
     ...(price === undefined ? {} : { price }),
     ...(connectionStatus === undefined ? {} : { connectionStatus }),
     ...(lastVerifiedAt === undefined ? {} : { lastVerifiedAt }),
+    ...(lastTest === undefined ? {} : { lastTest }),
   }
 }
 
@@ -306,6 +345,7 @@ export function saveStandaloneConfig(configDirectory: string, config: Standalone
     ...(config.price === undefined ? {} : { price: config.price }),
     ...(config.connectionStatus === undefined ? {} : { connectionStatus: config.connectionStatus }),
     ...(config.lastVerifiedAt === undefined ? {} : { lastVerifiedAt: config.lastVerifiedAt }),
+    ...(config.lastTest === undefined ? {} : { lastTest: config.lastTest }),
   }
   const file = standaloneConfigFile(configDirectory)
   const temp = path.join(

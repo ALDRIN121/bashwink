@@ -210,6 +210,70 @@ export function alignRight(left: string, right: string, cols: number): string {
   return `${left}${" ".repeat(Math.max(1, cols - visibleWidth(left) - visibleWidth(right)))}${right}`
 }
 
+export const ACTIVITY_CARD_INSET = 8
+
+export function renderActivityCard(rows: readonly string[], cols: number, style: TuiStyle): string[] {
+  const inset = `  ${style.rule("│")} `
+  const width = cols - ACTIVITY_CARD_INSET
+  const border = (left: string, right: string) =>
+    `${inset}${style.rule(`${left}${"─".repeat(width + 2)}${right}`)}`
+  return [
+    border("╭", "╮"),
+    ...rows.map((line) => `${inset}${style.rule("│")} ${line}${" ".repeat(width - visibleWidth(line))} ${style.rule("│")}`),
+    border("╰", "╯"),
+  ]
+}
+
+export function formatTokenCount(tokens: number): string {
+  return tokens >= 1000 ? `${Number((tokens / 1000).toFixed(1))}k` : String(tokens)
+}
+
+export function renderWelcomeScreen(
+  session: { workspace: string; model: string | undefined; trusted: boolean; mode: string },
+  cols: number,
+  rows: number,
+  style: TuiStyle,
+): string[] {
+  const full = cols >= 72 && rows >= 24
+  const indent = full ? "   " : "  "
+  const width = cols - indent.length
+  const title = "Welcome to Bashwink"
+  const tagline = "Write code. Prove it works."
+  const configure = "Press Enter or use /model to set up a model."
+  const lines: string[] = []
+
+  if (full) {
+    const mascot = [" ■■■■■■■ ", "■ ›   − ■", "■       ■", " ■■■■■■■ ", "  ■   ■  "]
+    const message = [style.bold(title), style.muted(tagline)]
+    lines.push("", ...mascot.map((line, i) => `${style.accentBold(line)}   ${message[i] ?? ""}`), "")
+  } else {
+    lines.push(style.bold(truncatePlain(title, width)))
+    if (rows >= 12) lines.push(style.muted(truncatePlain(tagline, width)))
+  }
+
+  const value = (label: string, text: string) =>
+    `${style.accent(padPlainRight(label, 11))}${style.muted(truncatePlain(text, width - 11))}`
+  const mode = `${session.mode[0]?.toUpperCase() ?? ""}${session.mode.slice(1)} mode`
+  if (rows >= 12) lines.push(value("Workspace", truncatePathMiddle(session.workspace, width - 11)))
+  if (session.model) lines.push(value("Model", session.model))
+  else if (rows < 12) lines.push(style.violet(truncatePlain("/model to set up", width)))
+  else lines.push(value("Model", "No model configured"))
+  if (rows >= 12) lines.push(value("Trust", `${session.trusted ? "Trusted" : "Read-only"} · ${mode}`))
+
+  if (!session.model && rows >= 12) {
+    lines.push(style.violet(truncatePlain(width >= visibleWidth(configure) ? configure : "/model to set up", width)))
+  } else if (full) {
+    const suggestions = ["Fix a failing test", "Explain this repository", "Review my changes"]
+    lines.push("", style.violet("Get started:"), ...suggestions.map((text) => `${style.accent("›")}  ${text}`))
+  }
+  if (full) {
+    const commands = [["/model", "switch model"], ["/sessions", "resume session"], ["/help", "commands"]]
+    lines.push("", commands.map(([command, description]) =>
+      `${style.violet(command!)}  ${style.muted(description!)}`).join("   "))
+  }
+  return lines.map((line) => line.trim() === "" ? "" : `${indent}${line}`)
+}
+
 export interface SessionStatus {
   readonly model: string
   readonly mode: string
@@ -229,14 +293,13 @@ export function renderSessionStatus(status: SessionStatus, cols: number, style: 
     : status.mode === "accept-edits" ? style.cyan : style.accent
   const permission = [modeColor(mode), access].filter(Boolean).join(" · ")
   const requests = `Requests ${status.requests}${status.requestLimit === undefined ? "" : `/${status.requestLimit}`}`
-  const shortTokens = (tokens: number) =>
-    tokens >= 1000 ? `${Number((tokens / 1000).toFixed(1))}k` : String(tokens)
   const context = status.context
   const percent = context ? Math.round((context.tokens / context.limit) * 100) : 0
   const filled = Math.min(16, Math.round(percent * 16 / 100))
-  const meter = `${style.yellow("█".repeat(filled))}${style.rule("░".repeat(16 - filled))}`
+  const meterColor = percent >= 100 ? style.red : percent >= 80 ? style.yellow : style.green
+  const meter = `${meterColor("█".repeat(filled))}${style.rule("░".repeat(16 - filled))}`
   const contextText = context
-    ? `Context ~${shortTokens(context.tokens)}/${shortTokens(context.limit)} target (${percent}%)` : ""
+    ? `Context ~${formatTokenCount(context.tokens)}/${formatTokenCount(context.limit)} target (${percent}%)` : ""
   const fullContext = context ? `${contextText}  [${meter}]` : ""
   const fullWidth = (parts: string[]) => visibleWidth(parts.join(sep))
   const availableModelWidth = cols - fullWidth(["", permission])
@@ -268,7 +331,9 @@ export function renderActivityRow(
     const separateDetail = visibleWidth(detail) <= cols - 5 ? detail : truncatePlain(detail, cols - 5)
     return `${prefix}${style.muted(fitTarget(target, cols - visibleWidth(prefix)))}${detail ? `\n     ${separateDetail}` : ""}`
   }
-  return alignRight(`${prefix}${style.muted(fitTarget(target, targetWidth))}`, detail, cols)
+  const left = `${prefix}${style.muted(fitTarget(target, targetWidth))}`
+  if ((action === "Edit" || action === "Add") && detail) return `${left} ${detail}`
+  return alignRight(left, detail, cols)
 }
 
 /**

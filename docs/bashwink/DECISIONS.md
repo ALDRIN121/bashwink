@@ -320,3 +320,12 @@ composer. The footer shows the last request's estimated input relative to the ru
 threshold and the last task's request count, including Guardian calls. A provider context-window
 limit would require model metadata. Print chain verification from ProofPack and retain the
 separate ClaimGuard status in the transcript.
+
+Render test cards from complete Node TAP output with matching case and summary counts. Other
+output uses the existing plain command preview. Show recorded compaction estimates before and
+after the change. Larger completed edits use a summary row with `/diff` for details, and
+approval prompts show the expanded diff.
+
+An empty interactive session opens on a width-aware welcome view with workspace, model and trust
+details. Reuse the composer so users can type immediately. The first task replaces the welcome
+view with the transcript, and resuming a session with turns opens on its conversation.

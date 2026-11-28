@@ -21,6 +21,11 @@ The standalone TUI refresh bounds the composer and updates the transcript and fo
 retention across overlays, diagnostic cancellation, and a model-only switcher remain eligible UX
 follow-ups. [Refresh evidence](TEST_EVIDENCE.md#2026-11-28--standalone-tui-refresh).
 
+The result-card follow-up is verified locally with Node TAP. Cross-platform and live-provider
+qualification remain the next Phase 2 gate checks.
+
+The startup welcome screen is implemented for empty interactive sessions.
+
 ---
 
 ## v0.1.0-alpha.1 release candidate RC1 — stopped at the gate (historical, 2026-11-25)

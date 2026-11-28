@@ -605,6 +605,8 @@ export interface ComposerOptions {
   readonly raw: RawTerminalSession
   readonly style: TuiStyle
   readonly promptLabel: string
+  readonly placeholder?: string
+  readonly beforeSubmit?: (text: string) => void
   readonly statusSummary: string
   readonly permissionMode?: string
   readonly renderStatus?: (width: number) => string
@@ -821,7 +823,7 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
       curCol,
       firstPrefix,
       contPrefix,
-      "",
+      opts.placeholder ?? "",
       searchingHistory,
       cols,
       (s) => `${railStyled}${style.accentBold(s.slice(railPlain.length))}`,
@@ -946,8 +948,9 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
     lastPaintedRows = outLines
   }
 
-  const commitFinalPromptLine = (submittedText: string) => {
+  const commitFinalPromptLine = (submittedText: string, isPrompt: boolean) => {
     clearRenderedBlock(true)
+    if (isPrompt) opts.beforeSubmit?.(submittedText)
     const preview = submittedText
       .split("\n")
       .map(
@@ -994,7 +997,7 @@ export async function runInteractiveComposer(opts: ComposerOptions): Promise<Com
       const shouldCommit =
         commitText !== undefined &&
         !(action.kind === "command" && SILENT_CLEAR_COMMANDS.has(action.name))
-      if (shouldCommit) commitFinalPromptLine(commitText)
+      if (shouldCommit) commitFinalPromptLine(commitText, action.kind === "submit")
       else clearRenderedBlock(true)
       resolve(action)
     }

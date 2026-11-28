@@ -6,7 +6,7 @@ import test from "node:test"
 import { paths } from "../../src/paths.ts"
 import { grantWorkspaceTrust, verifyEvidenceFile } from "../../src/standalone/security.ts"
 import { pendingCalls, runTask, stepMessages } from "../../src/standalone/task-loop.ts"
-import type { ProviderCompletion, StandaloneConfig, TaskEvent } from "../../src/standalone/types.ts"
+import type { ChatMessage, ProviderCompletion, StandaloneConfig, TaskEvent } from "../../src/standalone/types.ts"
 
 function setupFixture(opts: { trusted?: boolean; files?: Record<string, string> } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "bw-loop-test-"))
@@ -77,6 +77,35 @@ test("ported pendingCalls & stepMessages: skips providerExecuted, replays invali
 })
 
 // --- Full loop, tools, approvals, scope, redaction, budgets, cancellation, context provider ---
+test("context compaction reports measured estimates before the next model request", async () => {
+  const f = setupFixture()
+  try {
+    const events: TaskEvent[] = []
+    const history: ChatMessage[] = Array.from({ length: 8 }, () => [
+      { role: "user" as const, content: "Earlier question" },
+      { role: "assistant" as const, content: "Long earlier response. ".repeat(200) },
+    ]).flat()
+    await runTask(
+      { workspace: f.workspace, prompt: "Continue", trusted: true, config: f.config, history },
+      {
+        paths: f.paths,
+        env: { TEST_PROVIDER_KEY: "secret-val" },
+        onEvent: (event) => { events.push(event) },
+        confirmAction: async () => false,
+        completeImpl: async () => ({ text: "Done", finishReason: "stop", toolCalls: [], toolInputErrors: [] }),
+      },
+    )
+    const compacted = events.find((event) => event.type === "context_compacted")
+    const request = events.find((event) => event.type === "model_requested")
+    assert.ok(compacted && request)
+    assert.ok(compacted.beforeTokens > compacted.afterTokens)
+    assert.equal(compacted.afterTokens, request.contextTokens)
+    assert.ok(events.indexOf(compacted) < events.indexOf(request))
+  } finally {
+    f.cleanup()
+  }
+})
+
 test("runTask rejects truncated finishReason='length' tool calls before any side effect", async () => {
   const f = setupFixture({ files: { "a.txt": "before\n" } })
   try {

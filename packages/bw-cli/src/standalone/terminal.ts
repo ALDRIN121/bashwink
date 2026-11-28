@@ -70,7 +70,7 @@ import {
   type FileCheckpoint,
   type SessionRecord,
 } from "./session.ts"
-import { runTask, type ApprovalRequest } from "./task-loop.ts"
+import { DEFAULT_TASK_BUDGETS, runTask, type ApprovalRequest } from "./task-loop.ts"
 import { PROVIDER_CATALOG, findProviderPreset, type ProviderPreset } from "./provider-catalog.ts"
 import {
   CURSOR_SHOW,
@@ -82,8 +82,12 @@ import {
   padPlainRight,
   createStyle,
   alignRight,
+  ACTIVITY_CARD_INSET,
+  formatTokenCount,
+  renderActivityCard,
   renderActivityRow,
   renderSessionStatus,
+  renderWelcomeScreen,
   renderTranscriptDiff,
   renderOpenCodeDiff,
   renderOpenCodeMarkdown,
@@ -98,6 +102,7 @@ import {
   type SessionStatus,
   type TuiStyle,
 } from "./tui-theme.ts"
+import { renderTapResults } from "./tui-test-results.ts"
 import {
   RawTerminalSession,
   SLASH_COMMANDS,
@@ -561,9 +566,7 @@ function renderCliHeader(
   const name = `${style.accentBold("❯~")}  ${style.bold("bashwink")}`
   const badge = style.badge(` v${STANDALONE_VERSION} `)
   const title = visibleWidth(name) + visibleWidth(badge) + 2 <= cols ? `${name}  ${badge}` : name
-  const home = io.homeDirectory
-  const displayPath = workspace === home ? "~" : home && workspace.startsWith(home + path.sep)
-    ? `~${workspace.slice(home.length)}` : workspace
+  const displayPath = workspaceDisplayPath(io, workspace)
   const branch = session?.gitBranch ? cleanTerminalLine(session.gitBranch) : ""
   const avail = cols - visibleWidth(title) - 3
   const branchTag = branch && avail >= 12 ? style.violet(`⑂ ${truncatePlain(branch, Math.floor(avail / 2))}`) : ""
@@ -572,6 +575,12 @@ function renderCliHeader(
     : ""
   const right = [location, branchTag].filter(Boolean).join(style.rule(" · "))
   io.write(`${alignRight(title, right, cols)}\n${style.rule("─".repeat(cols))}\n`)
+}
+
+function workspaceDisplayPath(io: RawTerminalIO, workspace: string): string {
+  const home = io.homeDirectory
+  return workspace === home ? "~" : home && workspace.startsWith(home + path.sep)
+    ? `~${workspace.slice(home.length)}` : workspace
 }
 
 function renderPlainCliHeader(
@@ -676,6 +685,16 @@ function renderEditPreview(
   if (approval && !stripAnsiSequences(row).includes(target)) {
     for (const part of wrapPlainText(target, cols - 5)) io.write(`     ${style.muted(part)}\n`)
   }
+  const changed = counts.additions + counts.deletions
+  if (!approval && changed >= 4 && cols >= 48) {
+    const clipped = /^\.\.\. \(/m.test(cleanPatch)
+    const detail = style.muted(`${changed} ${clipped ? "changed lines shown" : "lines changed"} · /diff`)
+    const width = cols - ACTIVITY_CARD_INSET
+    const fileLabel = `▫ ${truncatePathMiddle(target, width - visibleWidth(detail) - 3)}`
+    const cardRow = alignRight(fileLabel, detail, width)
+    io.write(`${renderActivityCard([cardRow], cols, style).join("\n")}\n`)
+    return
+  }
   io.write(`${renderTranscriptDiff(cleanPatch, cols, style).join("\n")}\n`)
 }
 
@@ -692,8 +711,14 @@ function renderRunActivity(io: RawTerminalIO, run: ToolDispatchResult): void {
 
   const row = renderActivityRow("Run", cleanTerminalLine(run.target ?? "command"), elapsed + status, cols, style)
   io.write(`${row}\n`)
-  const output = sanitizeTerminalText(run.output)
-    .split(/\r?\n/)
+  const text = sanitizeTerminalText(run.output)
+  const results = run.exitCode != null && !run.signal && !run.timedOut && !run.outputTruncated
+    ? renderTapResults(text, cols, style) : undefined
+  if (results) {
+    io.write(`${results.join("\n")}\n`)
+    return
+  }
+  const output = text.split("\n")
     .filter((line, index) => line.trim() && !(index === 0 && line.startsWith("exitCode:")))
   for (const line of output.slice(0, 6)) {
     io.write(`     ${style.muted(truncatePlain(cleanTerminalLine(line), cols - 5))}\n`)
@@ -2067,6 +2092,27 @@ export async function runStandalone(
       Pick<SessionStatus, "requests" | "requestLimit" | "context"> & { config: StandaloneConfig }
     >()
 
+    let welcomeSessionId: string | undefined
+    const requestLimit = parsedRunOpts.cliBudgets.maxRequests ??
+      (env["BASHWINK_MAX_REQUESTS"] === "unlimited" ? undefined : DEFAULT_TASK_BUDGETS.maxRequests)
+
+    const renderSessionEntry = (resetScreen = false) => {
+      if (resetScreen && io instanceof RawTerminalIO) io.write("\x1b[2J\x1b[H")
+      const trusted = isWorkspaceTrusted(resolved.config, canonical)
+      renderCliHeader(io, canonical, trusted, activeConfig, activeSession)
+      welcomeSessionId = undefined
+      if (io instanceof RawTerminalIO && activeSession.turns.length === 0) {
+        welcomeSessionId = activeSession.id
+        const lines = renderWelcomeScreen({
+          workspace: cleanTerminalLine(workspaceDisplayPath(io, canonical)),
+          model: activeConfig ? cleanTerminalLine(activeConfig.model) : undefined,
+          trusted,
+          mode: permissionMode,
+        }, terminalCols(io) - 1, terminalRows(io), io.style)
+        io.write(`${lines.join("\n")}\n`)
+      }
+    }
+
     let currentAbort: AbortController | undefined
     let interruptedAtPrompt = false
     let trustPromptShown = false
@@ -2088,14 +2134,8 @@ export async function runStandalone(
     process.stdout.on("resize", onResize)
 
     try {
-      renderCliHeader(
-        io,
-        canonical,
-        isWorkspaceTrusted(resolved.config, canonical),
-        activeConfig,
-        activeSession,
-      )
-      if (!activeConfig) {
+      renderSessionEntry()
+      if (!activeConfig && !(io instanceof RawTerminalIO)) {
         io.write("\nWelcome to Bashwink! Configure a model to get started\n")
         io.write("  (0 outbound requests sent; ambient env keys are ignored).\n")
         io.write("Type /model or /connect (or press Enter) to select a provider and model.\n")
@@ -2117,7 +2157,8 @@ export async function runStandalone(
             const accepted = loaded ? await confirmCrossWorkspaceSession(loaded) : undefined
             if (accepted) {
               activeSession = accepted
-              renderResumedSessionContext(io, activeSession)
+              renderSessionEntry(true)
+              if (activeSession.turns.length > 0) renderResumedSessionContext(io, activeSession)
             }
           }
         }
@@ -2144,14 +2185,7 @@ export async function runStandalone(
           if (res.action === "cancel") return
           if (res.action === "new") {
             activeSession = createSession(canonical, detectGitBranch(canonical))
-            io.write("\x1b[2J\x1b[H")
-            renderCliHeader(
-              io,
-              canonical,
-              isWorkspaceTrusted(resolved.config, canonical),
-              activeConfig,
-              activeSession,
-            )
+            renderSessionEntry(true)
             return
           }
           if (res.action === "select") {
@@ -2159,14 +2193,7 @@ export async function runStandalone(
             const accepted = loaded ? await confirmCrossWorkspaceSession(loaded) : undefined
             if (accepted) {
               activeSession = accepted
-              io.write("\x1b[2J\x1b[H")
-              renderCliHeader(
-                io,
-                canonical,
-                isWorkspaceTrusted(resolved.config, canonical),
-                activeConfig,
-                activeSession,
-              )
+              renderSessionEntry(true)
               renderResumedSessionContext(io, activeSession)
             }
             return
@@ -2195,14 +2222,7 @@ export async function runStandalone(
               const forked = forkSession(target)
               saveSession(resolved.data, forked)
               activeSession = forked
-              io.write("\x1b[2J\x1b[H")
-              renderCliHeader(
-                io,
-                canonical,
-                isWorkspaceTrusted(resolved.config, canonical),
-                activeConfig,
-                activeSession,
-              )
+              renderSessionEntry(true)
               renderResumedSessionContext(io, activeSession)
             }
             return
@@ -2238,14 +2258,7 @@ export async function runStandalone(
           const forked = forkSession(activeSession, res.turnIndex + 1)
           saveSession(resolved.data, forked)
           activeSession = forked
-          io.write("\x1b[2J\x1b[H")
-          renderCliHeader(
-            io,
-            canonical,
-            isWorkspaceTrusted(resolved.config, canonical),
-            activeConfig,
-            activeSession,
-          )
+          renderSessionEntry(true)
           renderResumedSessionContext(io, activeSession)
           return
         }
@@ -2315,6 +2328,7 @@ export async function runStandalone(
         if (cmdName === "trust") {
           const user = env["USER"] ?? env["USERNAME"] ?? "terminal-user"
           grantWorkspaceTrust(resolved.config, canonical, user)
+          if (welcomeSessionId === activeSession.id) renderSessionEntry(true)
           io.write(`Trusted ${canonical}.\n`)
           return "continue"
         }
@@ -2327,6 +2341,7 @@ export async function runStandalone(
           }
           if (sub !== "" && isValidPermissionMode(sub)) {
             permissionMode = setWorkspacePermissionMode(resolved.config, canonical, sub).mode
+            if (welcomeSessionId === activeSession.id) renderSessionEntry(true)
             io.write(`Permission mode set to '${permissionMode}'.\n`)
             return "continue"
           }
@@ -2358,6 +2373,7 @@ export async function runStandalone(
               io.write(`Cleared saved Always-allow rules for ${canonical}.\n`)
             } else if (picked && isValidPermissionMode(picked)) {
               permissionMode = setWorkspacePermissionMode(resolved.config, canonical, picked).mode
+              if (welcomeSessionId === activeSession.id) renderSessionEntry(true)
               io.write(`Permission mode set to '${permissionMode}'.\n`)
             }
             return "continue"
@@ -2390,13 +2406,7 @@ export async function runStandalone(
               }
             }
             activeConfig = res.config
-            renderCliHeader(
-              io,
-              canonical,
-              isWorkspaceTrusted(resolved.config, canonical),
-              activeConfig,
-              activeSession,
-            )
+            renderSessionEntry(welcomeSessionId === activeSession.id)
           }
           return "continue"
         }
@@ -2416,26 +2426,12 @@ export async function runStandalone(
         }
         if (cmdName === "new") {
           activeSession = createSession(canonical, detectGitBranch(canonical))
-          if (io instanceof RawTerminalIO) io.write("\x1b[2J\x1b[H")
-          renderCliHeader(
-            io,
-            canonical,
-            isWorkspaceTrusted(resolved.config, canonical),
-            activeConfig,
-            activeSession,
-          )
+          renderSessionEntry(true)
           return "continue"
         }
         if (cmdName === "clear") {
           activeSession = createSession(canonical, detectGitBranch(canonical))
-          if (io instanceof RawTerminalIO) io.write("\x1b[2J\x1b[H")
-          renderCliHeader(
-            io,
-            canonical,
-            isWorkspaceTrusted(resolved.config, canonical),
-            activeConfig,
-            activeSession,
-          )
+          renderSessionEntry(true)
           return "continue"
         }
         if (cmdName === "fork") {
@@ -2575,11 +2571,21 @@ export async function runStandalone(
             raw: io.raw,
             style: io.style,
             promptLabel: "❯ ",
+            ...(welcomeSessionId === activeSession.id ? {
+              placeholder: activeConfig ? " Ask Bashwink anything…" : " Press Enter to set up a model",
+              beforeSubmit: (text: string) => {
+                if (text.startsWith("/") || ["exit", "quit", "connect"].includes(text)) return
+                welcomeSessionId = undefined
+                io.write("\x1b[2J\x1b[H")
+                renderCliHeader(io, canonical, trusted, activeConfig, activeSession)
+              },
+            } : {}),
             permissionMode,
             statusSummary: "",
             renderStatus: (width) => renderSessionStatus(
               {
                 requests: 0,
+                ...(requestLimit === undefined ? {} : { requestLimit }),
                 ...(usage?.config === activeConfig ? usage : undefined),
                 model: cleanTerminalLine(activeConfig?.model ?? "No model (/model)"),
                 mode: permissionMode,
@@ -2601,11 +2607,11 @@ export async function runStandalone(
               nextPermissionMode(permissionMode),
             ).mode
             draftBuffer = action.draft
+            if (welcomeSessionId === activeSession.id) renderSessionEntry(true)
             continue
           }
           if (action.kind === "clear_screen") {
-            io.write("\x1b[2J\x1b[H")
-            renderCliHeader(io, canonical, trusted, activeConfig, activeSession)
+            renderSessionEntry(true)
             continue
           }
           if (action.kind === "palette") {
@@ -2645,13 +2651,7 @@ export async function runStandalone(
             const res = await runInteractiveSetup(io, resolved.config, env, undefined)
             if (res.status === "saved") {
               activeConfig = res.config
-              renderCliHeader(
-                io,
-                canonical,
-                isWorkspaceTrusted(resolved.config, canonical),
-                activeConfig,
-                activeSession,
-              )
+              renderSessionEntry(welcomeSessionId === activeSession.id)
             }
           }
           continue
@@ -2793,6 +2793,7 @@ export async function runStandalone(
           readonly tool: "read_file" | "list_files"
           readonly target: string
           readonly ok: boolean
+          readonly durationMs?: number
         }> = []
 
         const flushReadBurst = () => {
@@ -2802,8 +2803,12 @@ export async function runStandalone(
             for (const entry of readBurst) {
               const target = cleanTerminalLine(entry.target || ".")
               if (io instanceof RawTerminalIO) {
+                const time = entry.durationMs === undefined ? ""
+                  : style.muted(entry.durationMs < 100 ? `(${entry.durationMs < 1 ? "<1" : Math.round(entry.durationMs)} ms)`
+                    : `(${(entry.durationMs / 1000).toFixed(1)}s)`)
                 const row = renderActivityRow(entry.tool === "list_files" ? "List" : "Read", target,
-                  entry.ok ? "" : style.red("failed"), terminalCols(io) - 1, style)
+                  [time, entry.ok ? "" : style.red("failed")].filter(Boolean).join("  "),
+                  terminalCols(io) - 1, style)
                 io.write(`${row}\n`)
               } else if (entry.tool === "list_files") {
                 const icon = entry.ok ? style.accent("✱") : style.red("✗")
@@ -2930,7 +2935,14 @@ export async function runStandalone(
                 } else if (event.type === "context_compacted" && io instanceof RawTerminalIO) {
                   clearSpinnerLine()
                   flushReadBurst()
-                  io.write(`  ${io.style.violet("⟳  Auto-compacting context…")}\n`)
+                  const before = formatTokenCount(event.beforeTokens)
+                  const after = formatTokenCount(event.afterTokens)
+                  const reduction = Math.round(100 * (event.beforeTokens - event.afterTokens) / event.beforeTokens)
+                  const change = reduction > 0 ? `, −${reduction}%` : ""
+                  const badge = `⟳  Auto-compacted context (~${before} → ~${after} tokens${change})`
+                  for (const line of wrapPlainText(badge, terminalCols(io) - 3)) {
+                    io.write(`  ${io.style.violet(line)}\n`)
+                  }
                 } else if (event.type === "assistant_progress" && io instanceof RawTerminalIO) {
                   clearSpinnerLine()
                   flushReadBurst()
@@ -2993,6 +3005,7 @@ export async function runStandalone(
                       tool: event.result.tool,
                       target,
                       ok: event.result.status === "ok",
+                      ...(event.result.durationMs === undefined ? {} : { durationMs: event.result.durationMs }),
                     })
                     const readCount = readBurst.filter((r) => r.tool === "read_file").length
                     const dirCount = readBurst.filter((r) => r.tool === "list_files").length

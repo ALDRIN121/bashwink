@@ -38,6 +38,7 @@ import {
   renderOpenCodeMarkdown,
   renderOpenCodeShellCard,
   renderSessionStatus,
+  renderWelcomeScreen,
   stripAnsiSequences,
   truncatePathMiddle,
   truncatePlain,
@@ -46,8 +47,40 @@ import {
   wrapPlainText,
   wrapStyledLine,
 } from "../../src/standalone/tui-theme.ts"
+import { renderTapResults } from "../../src/standalone/tui-test-results.ts"
 import { findSlashCommand, fuzzyFilter, SLASH_COMMANDS } from "../../src/standalone/tui-widgets.ts"
 import type { StandaloneConfig, TaskResult } from "../../src/standalone/types.ts"
+
+test("welcome screen fits narrow panes and shows live session settings", () => {
+  const data = { workspace: "~/projects/用户/api", model: "local-coder", trusted: true, mode: "ask" }
+  const style = createStyle(false)
+  const wide = renderWelcomeScreen(data, 120, 35, style).join("\n")
+  for (const text of ["Welcome to Bashwink", "Write code. Prove it works.", "~/projects/用户/api",
+    "local-coder", "Trusted · Ask mode", "Fix a failing test", "/sessions"]) {
+    assert.ok(wide.includes(text), text)
+  }
+  const narrow = renderWelcomeScreen({ ...data, model: undefined, trusted: false }, 35, 12, style)
+  assert.ok(narrow.length <= 6 && narrow.every((line) => visibleWidth(line) <= 35))
+  assert.match(narrow.join("\n"), /\/model/)
+  assert.doesNotMatch(narrow.join("\n"), /Trusted|Fix a failing test/)
+})
+
+test("test cards show failures, timings, and hidden passes from complete TAP output", () => {
+  const output = [
+    "TAP version 13", "ok 1 - accepts valid tokens", "  duration_ms: 28.1",
+    "not ok 2 - rejects missing tokens", "  error: 'Expected 401, received 200'", "  duration_ms: 13",
+    "ok 3 - accepts signed tokens", "1..3", "# tests 3", "# pass 2", "# fail 1",
+  ].join("\n")
+  const style = createStyle(false)
+  const card = renderTapResults(output, 100, style)!
+  assert.match(card.join("\n"), /Test results \(1 failed, 2 passed\)/)
+  assert.match(card.join("\n"), /✗ rejects missing tokens.*Expected 401, received 200.*13 ms/)
+  assert.match(card.join("\n"), /✓ accepts valid tokens.*28 ms/)
+  assert.match(card.join("\n"), /1 more passed/)
+  assert.ok(renderTapResults(output, 34, style)!.every((line) => visibleWidth(line) <= 34))
+  assert.equal(renderTapResults(output.replace("# fail 1", "# fail 0"), 100, style), undefined)
+  assert.equal(renderTapResults(output.split("# tests")[0]!, 100, style), undefined)
+})
 
 test("key parser handles arrows, ctrl chords, Kitty shift+enter, bracketed paste, and standalone escape", () => {
   const st = createKeyParserState()
@@ -996,6 +1029,18 @@ test("OpenCode markdown table/code renderer, shell card, grouped read burst, and
                         }),
                       },
                     },
+                    {
+                      id: "ed2",
+                      type: "function",
+                      function: {
+                        name: "edit_file",
+                        arguments: JSON.stringify({
+                          path: "b.txt",
+                          oldText: "old-value",
+                          newText: "first\nsecond\nthird",
+                        }),
+                      },
+                    },
                   ],
                 },
               },
@@ -1054,6 +1099,7 @@ test("OpenCode markdown table/code renderer, shell card, grouped read burst, and
     assert.ok(clean.includes("Explored listed 1 dir, read 4 files"))
     assert.ok(!clean.includes("→ read_file -> ok"))
     assert.match(clean, /Edit\s+a\.txt\s+\(\+1 -1\)/)
+    assert.match(clean, /▫ b\.txt.*4 lines changed · \/diff/)
     assert.ok(clean.includes("-  a.txt: old-value") && clean.includes("+  a.txt: new-value"))
     assert.match(clean, /events recorded · hash chain verified/)
     assert.match(clean, /Context ~.*Requests 3\/20/)

@@ -1841,3 +1841,33 @@ session remain unverified. The Phase 2 gate remains a conditional local pass.
 | `bun test packages/bw-cli/test/contract.test.ts packages/bw-cli/test/contract-cli.test.ts packages/bw-cli/test/usage-guard.test.ts packages/bw-evidence` | 0 | 137/137 shared-module checks with loopback access. |
 | `npm run typecheck && npm run lint && git diff --check` | 0 | Type checks, lint, and patch whitespace passed. |
 | `python3 scripts/generate_status_summary.py --check && python3 scripts/verify_bashwink_docs.py` | 0 | Task register and phase documentation checks passed. |
+
+### 2026-11-28 — Standalone TUI result cards
+
+macOS arm64, Node `v22.23.2`, base `7aca566` with the result-card changes and loopback fixtures.
+
+| Command | Exit | Observation |
+| --- | ---: | --- |
+| `npm run test:standalone` | 0 | 61/61. Covers TAP failures, timings, hidden cases, inconsistent output fallback, narrow cards, compact edit rows, and the before/after context event. |
+| `npm run test:standalone:e2e` | 0 | 12/12 installed PTY scenarios. The red-to-green fixture displays real failing and passing Node TAP cards around its approved edit. |
+| `npm run test:standalone:install` | 0 | Package build, install, upgrade, and uninstall passed. |
+| `npm run test:standalone:independence` | 0 | Clean-copy install, standalone tests, and red-to-green fixture passed. |
+| `npm run typecheck && npm run lint && python3 scripts/generate_status_summary.py --check && python3 scripts/verify_bashwink_docs.py && git diff --check` | 0 | Static, documentation, and patch checks passed. |
+
+The Phase 2 gate remains a conditional macOS arm64 pass. Other release hosts and a live hosted
+provider remain unverified for this update.
+
+### 2026-11-28 — Standalone TUI welcome screen
+
+macOS arm64, Node `v22.23.2`, base `7aca566` with the result-card and welcome-screen changes.
+
+| Command | Exit | Observation |
+| --- | ---: | --- |
+| `npm run test:standalone` | 0 | 62/62, including configured and narrow welcome rendering. |
+| `npm run test:standalone:e2e` | 0 | 12/12. Installed PTY exercised setup without outbound requests, configured startup, `/new`, and `--continue` reopening the conversation. |
+| `npm run test:standalone:install` | 0 | Package and install lifecycle passed. |
+| `npm run test:standalone:independence` | 0 | Clean-copy install, standalone tests, and the red-to-green fixture passed. |
+| `npm run typecheck && npm run lint && python3 scripts/generate_status_summary.py --check && python3 scripts/verify_bashwink_docs.py && git diff --check` | 0 | Static, documentation, and patch checks passed. |
+
+The Phase 2 gate remains a conditional local pass. Cross-platform and live-provider qualification
+remain open.

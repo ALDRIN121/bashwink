@@ -574,24 +574,25 @@ function diffWorkspaceMutationSnapshots(
   }
 }
 
-function compactContextMessagesIfNeeded(messages: ChatMessage[], maxContextTokens: number): boolean {
+function compactContextMessagesIfNeeded(messages: ChatMessage[], maxContextTokens: number):
+  { beforeTokens: number; afterTokens: number } | undefined {
   const MAX_MESSAGES = 48
   if (messages.length <= 10 && estimateRequestInputTokens(messages) <= maxContextTokens) {
-    return false
+    return undefined
   }
-  let compacted = false
+  let beforeTokens: number | undefined
   const keepHead = Math.min(2, messages.length)
   const keepTailStart = Math.max(keepHead, messages.length - 8)
   for (let i = keepHead; i < keepTailStart; i += 1) {
     const msg = messages[i]!
     if (msg.role === "tool" && msg.content.length > 500) {
-      compacted = true
+      beforeTokens ??= estimateRequestInputTokens(messages)
       messages[i] = {
         ...msg,
         content: `[compacted prior tool output: ${msg.name} (${msg.isError ? "error" : "ok"}, ${msg.content.length} chars; head: ${msg.content.slice(0, 140).replace(/\s+/g, " ")}…)]`,
       }
     } else if (msg.role === "assistant" && msg.content.length > 1000) {
-      compacted = true
+      beforeTokens ??= estimateRequestInputTokens(messages)
       messages[i] = {
         ...msg,
         content: `${msg.content.slice(0, 400)}\n...[compacted prior assistant response]`,
@@ -605,7 +606,7 @@ function compactContextMessagesIfNeeded(messages: ChatMessage[], maxContextToken
       cutEnd -= 1
     }
     if (cutEnd > keepHead + 2) {
-      compacted = true
+      beforeTokens ??= estimateRequestInputTokens(messages)
       const removedCount = cutEnd - keepHead
       messages.splice(keepHead, removedCount, {
         role: "user",
@@ -613,7 +614,9 @@ function compactContextMessagesIfNeeded(messages: ChatMessage[], maxContextToken
       })
     }
   }
-  return compacted
+  return beforeTokens === undefined ? undefined : {
+    beforeTokens, afterTokens: estimateRequestInputTokens(messages),
+  }
 }
 
 async function waitRetryDelayMs(ms: number, signal?: AbortSignal): Promise<boolean> {
@@ -1338,9 +1341,8 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
       // Refresh dynamic system guidance (trust / permission mode changes) and bound context size.
       messages[0] = { role: "system", content: buildCurrentSystemPrompt() }
       const contextCap = budgets.maxInputTokens ? Math.floor(budgets.maxInputTokens * 0.85) : 96_000
-      if (compactContextMessagesIfNeeded(messages, contextCap)) {
-        deps.onEvent?.({ type: "context_compacted" })
-      }
+      const compaction = compactContextMessagesIfNeeded(messages, contextCap)
+      if (compaction) deps.onEvent?.({ type: "context_compacted", ...compaction })
 
       const maxTransientRetries = budgets.maxTransientRetries ?? 2
       let completion: ProviderCompletion | undefined
@@ -1676,6 +1678,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
         }
 
         if (call.name === "list_files") {
+          const startedAt = performance.now()
           const r = executeListFiles(boundary, call.input)
           const targetDir = String(call.input["directory"] ?? ".")
           const res: ToolDispatchResult = {
@@ -1684,6 +1687,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
             status: r.ok ? "ok" : "error",
             output: r.output,
             target: targetDir,
+            durationMs: performance.now() - startedAt,
           }
           recorder.recordTool("after", ref, {
             status: r.ok ? "completed" : "error",
@@ -1698,6 +1702,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
           results.push(res)
           deps.onEvent?.({ type: "tool_completed", result: res })
         } else if (call.name === "read_file") {
+          const startedAt = performance.now()
           const r = executeReadFile(boundary, call.input, activeSecret)
           const targetPath = String(call.input["path"] ?? "")
           const res: ToolDispatchResult = {
@@ -1706,6 +1711,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
             status: r.ok ? "ok" : "error",
             output: r.output,
             target: targetPath,
+            durationMs: performance.now() - startedAt,
           }
           recorder.recordTool("after", ref, {
             status: r.ok ? "completed" : "error",
@@ -2324,6 +2330,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
             signal: run.signal,
             durationMs,
             timedOut: run.timedOut,
+            outputTruncated: run.truncated,
           }
           actions.push({
             callId: call.id,

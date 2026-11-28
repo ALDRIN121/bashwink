@@ -325,6 +325,15 @@ async function main() {
         return;
       }
       if (turn === 2) {
+        res.end(completionJson({
+          finishReason: "tool_calls",
+          toolCalls: [
+            { id: "c0", name: "run_command", input: { command: process.execPath, args: ["--test", "sum.test.js"] } },
+          ],
+        }));
+        return;
+      }
+      if (turn === 3) {
         res.end(
           completionJson({
             finishReason: "tool_calls",
@@ -339,7 +348,7 @@ async function main() {
         );
         return;
       }
-      if (turn === 3) {
+      if (turn === 4) {
         res.end(
           completionJson({
             finishReason: "tool_calls",
@@ -625,7 +634,8 @@ async function main() {
       plainDir,
       { ...env, NODE_OPTIONS: probeImportFlag, BW_EGRESS_LOG: cancelLog, BW_EGRESS_BLOCK_BEFORE_SUBMIT: "1" },
       [
-        { wait: "Type /model or /connect (or press Enter) to select a provider and model." },
+        { wait: "Welcome to Bashwink" },
+        { wait: "Press Enter or use /model to set up a model." },
         { wait: "No model (/model)", send: "/model\n" },
         { wait: "OpenAI" },
         { wait: "Ollama (local)" },
@@ -673,10 +683,15 @@ async function main() {
       plainDir,
       { ...env, NODE_OPTIONS: probeImportFlag, BW_EGRESS_LOG: submitLog },
       [
-        { wait: "local-test-model", send: "Say hello\n" },
+        { wait: "Welcome to Bashwink" },
+        { wait: "local-test-model" },
+        { wait: "Ask Bashwink anything…" },
+        { wait: "Requests 0/20", send: "Say hello\n" },
         { wait: "Trust this workspace for interactive edit/command approvals? [y/N]", send: "n\n" },
         { wait: "Hello from target local endpoint." },
-        { wait: "❯ ", send: "/exit\n" },
+        { wait: "❯ ", send: "/new\n" },
+        { wait: "Welcome to Bashwink" },
+        { wait: "Ask Bashwink anything…", send: "/exit\n" },
       ],
     );
     assert.equal(onboardRes.exitCode, 0, onboardRes.output);
@@ -694,14 +709,16 @@ async function main() {
     // --- 2. Relaunch shows saved config + `bashwink setup` cancel preserves it (with egress blocked) ---
     const persistLog = path.join(root, "egress-persist.jsonl");
     const persistRes = await runPtySession(
-      [bashwinkBin],
+      [bashwinkBin, "--continue"],
       plainDir,
       { ...env, NODE_OPTIONS: probeImportFlag, BW_EGRESS_LOG: persistLog, BW_EGRESS_BLOCK_BEFORE_SUBMIT: "1" },
       [
-        { wait: "local-test-model", send: "/exit\n" },
+        { wait: "Hello from target local endpoint." },
+        { wait: "❯ ", send: "/exit\n" },
       ],
     );
     assert.equal(persistRes.exitCode, 0, persistRes.output);
+    assert.doesNotMatch(persistRes.output, /Welcome to Bashwink/);
     assert.deepEqual(readEgressLog(persistLog), [], "Relaunch must attempt 0 outbound connections");
     assert.equal(target.requests.length, 1, "Launch must make 0 outbound requests");
 
@@ -748,9 +765,12 @@ async function main() {
       { wait: "❯ ", send: "fix the failing test\n" },
       { wait: "Trust this workspace for interactive edit/command approvals? [y/N]", send: "y\n" },
       { wait: "I’ll inspect the files, make the fix, and run the test." },
+      { wait: "Run this command? [y/N]", send: "y\n" },
+      { wait: "Test results (1 failed)" },
       { wait: "Apply this change? [y/N]", send: "y\n" },
       { wait: "not an OS sandbox" },
       { wait: "Run this command? [y/N]", send: "y\n" },
+      { wait: "Test results (1 passed)" },
       { wait: "Outcome   completed" },
       { wait: "❯ ", send: "/exit\n" },
     ]);
@@ -758,7 +778,7 @@ async function main() {
     assert.match(fixRes.output, /Changed\s+sum\.js/);
     assert.match(fixRes.output, /\(\d+\.\d+s\).*exit 0/);
     assert.match(fixRes.output, /events recorded · hash chain verified/);
-    assert.match(fixRes.output, /Requests 4\/20/);
+    assert.match(fixRes.output, /Requests 5\/20/);
 
     // Independently re-run test outside Bashwink
     const postTest = spawnSync(process.execPath, ["--test", "sum.test.js"], { cwd: gitRepo, encoding: "utf8" });

@@ -34,6 +34,13 @@ The 28 November standalone TUI refresh updates the Phase 2 coding transcript and
 live tool activity, command timing, unified diff previews, and ProofPack chain status. The
 composer reserves a bounded viewport for multiline drafts. [Verification](TEST_EVIDENCE.md#2026-11-28--standalone-tui-refresh).
 
+The transcript also shows timed file reads, Node TAP result cards, compact summaries for larger
+applied edits, and estimated token savings from automatic context compaction.
+[Verification](TEST_EVIDENCE.md#2026-11-28--standalone-tui-result-cards).
+
+New interactive sessions show a welcome screen with workspace, model, trust and starter prompts.
+[Verification](TEST_EVIDENCE.md#2026-11-28--standalone-tui-welcome-screen).
+
 The standard npm builder now supports a single source build and install command. When the pinned
 Bun version is unavailable, the installer offers a temporary build copy from the native npm
 package. The revised installer passed on macOS arm64 with npm 12's default lifecycle policy.

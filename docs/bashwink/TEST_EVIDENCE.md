@@ -1824,3 +1824,20 @@ Executed locally on Apple Silicon (`darwin-arm64`, `Node v22.23.2`, loopback moc
 | `npm run test:standalone:e2e` | 0 | 12/12 real PTY adversarial + lifecycle scenarios against installed binary (onboarding egress=0, provider isolation, Git red->green + `ProofPack` `verified`, declined edit + exit-9 `ClaimGuard`, `Ctrl+C` + child PID reaping, fake-success downgrade to `done_unverified`, `TestGuard` `.skip` block under `accept-edits`, poisoned `README.md`/workspace configs + non-ASCII `proj ü 用户`, `IntentLock` `ScopeFence`, `--flag=path`/`~/` escapes, canary redaction across terminal/`evidence.jsonl`/`sessions/*.json`/`runs/*.json`, and 3-failure retry stop + `evidence export`/`purge`). |
 | `npm run test:standalone:independence` | 0 | Clean checkout with `vendor/`, `node_modules/`, `build/`, OpenCode, Hermes, Pi, and Bun physically absent passes install, 39/39 unit tests, and Git red->green coding. |
 | `python3 scripts/generate_status_summary.py --check && python3 scripts/verify_bashwink_docs.py` | 0 | Generated status summary and docs verification pass after manifest refresh (`refresh_docs_manifest.py --write`). |
+
+### 2026-11-28 — Standalone TUI refresh
+
+macOS arm64, Node `v22.23.2`, base `ed4ec28`, with the working-tree TUI changes. Networked
+fixtures used loopback providers. Windows ConPTY, other release hosts, and a live hosted-provider
+session remain unverified. The Phase 2 gate remains a conditional local pass.
+
+| Command | Exit | Observation |
+| --- | ---: | --- |
+| `node --disable-warning=ExperimentalWarning --experimental-strip-types --test packages/bw-cli/test/standalone/composer-redraw.test.ts` | 0 | 4/4. The new 40×8 test reproduced transcript displacement before the fix and passed after it. |
+| `npm run test:standalone` | 0 | 59/59, including real PTY resize, mode cycling, approvals, edit preview, and session overlays. The restricted initial run could not bind a loopback socket. |
+| `npm run test:standalone:e2e` | 0 | 12/12 installed-package PTY scenarios, including intermediate assistant text, measured command time and exit, request count, and verified hash-chain text. |
+| `npm run test:standalone:install` | 0 | Package build and install lifecycle passed using a temporary writable npm cache. |
+| `npm run test:standalone:independence` | 0 | Clean copy passed install, standalone tests, and the red-to-green coding fixture without vendored engines, Bun, or `node_modules`. |
+| `bun test packages/bw-cli/test/contract.test.ts packages/bw-cli/test/contract-cli.test.ts packages/bw-cli/test/usage-guard.test.ts packages/bw-evidence` | 0 | 137/137 shared-module checks with loopback access. |
+| `npm run typecheck && npm run lint && git diff --check` | 0 | Type checks, lint, and patch whitespace passed. |
+| `python3 scripts/generate_status_summary.py --check && python3 scripts/verify_bashwink_docs.py` | 0 | Task register and phase documentation checks passed. |

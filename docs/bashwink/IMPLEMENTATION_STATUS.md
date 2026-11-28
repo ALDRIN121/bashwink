@@ -30,6 +30,10 @@ it. `--check` fails if it drifts from the register.
 
 <!-- END GENERATED:status -->
 
+The 28 November standalone TUI refresh updates the Phase 2 coding transcript and footer with
+live tool activity, command timing, unified diff previews, and ProofPack chain status. The
+composer reserves a bounded viewport for multiline drafts. [Verification](TEST_EVIDENCE.md#2026-11-28--standalone-tui-refresh).
+
 The standard npm builder now supports a single source build and install command. When the pinned
 Bun version is unavailable, the installer offers a temporary build copy from the native npm
 package. The revised installer passed on macOS arm64 with npm 12's default lifecycle policy.

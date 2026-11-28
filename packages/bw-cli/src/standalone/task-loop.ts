@@ -574,21 +574,24 @@ function diffWorkspaceMutationSnapshots(
   }
 }
 
-function compactContextMessagesIfNeeded(messages: ChatMessage[], maxContextTokens: number): void {
+function compactContextMessagesIfNeeded(messages: ChatMessage[], maxContextTokens: number): boolean {
   const MAX_MESSAGES = 48
   if (messages.length <= 10 && estimateRequestInputTokens(messages) <= maxContextTokens) {
-    return
+    return false
   }
+  let compacted = false
   const keepHead = Math.min(2, messages.length)
   const keepTailStart = Math.max(keepHead, messages.length - 8)
   for (let i = keepHead; i < keepTailStart; i += 1) {
     const msg = messages[i]!
     if (msg.role === "tool" && msg.content.length > 500) {
+      compacted = true
       messages[i] = {
         ...msg,
         content: `[compacted prior tool output: ${msg.name} (${msg.isError ? "error" : "ok"}, ${msg.content.length} chars; head: ${msg.content.slice(0, 140).replace(/\s+/g, " ")}…)]`,
       }
     } else if (msg.role === "assistant" && msg.content.length > 1000) {
+      compacted = true
       messages[i] = {
         ...msg,
         content: `${msg.content.slice(0, 400)}\n...[compacted prior assistant response]`,
@@ -602,6 +605,7 @@ function compactContextMessagesIfNeeded(messages: ChatMessage[], maxContextToken
       cutEnd -= 1
     }
     if (cutEnd > keepHead + 2) {
+      compacted = true
       const removedCount = cutEnd - keepHead
       messages.splice(keepHead, removedCount, {
         role: "user",
@@ -609,6 +613,7 @@ function compactContextMessagesIfNeeded(messages: ChatMessage[], maxContextToken
       })
     }
   }
+  return compacted
 }
 
 async function waitRetryDelayMs(ms: number, signal?: AbortSignal): Promise<boolean> {
@@ -880,7 +885,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
     requestMessages: readonly ChatMessage[],
     requestedCap?: number,
   ):
-    | { readonly ok: true; readonly requestMaxOutputTokens?: number }
+    | { readonly ok: true; readonly requestMaxOutputTokens?: number; readonly estimatedInputTokens: number }
     | { readonly ok: false; readonly stopReason: string } => {
     if (requests + guardianRequests >= budgets.maxRequests) {
       return {
@@ -943,8 +948,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
     }
 
     if (budgets.maxCostUsd !== undefined && input.config.price) {
-      const estInputTokens = estimateRequestInputTokens(requestMessages)
-      const estInputCostUsd = (estInputTokens * input.config.price.inputUsdPer1M) / 1_000_000
+      const estInputCostUsd = (estInput * input.config.price.inputUsdPer1M) / 1_000_000
       const remainingUsdAfterInput = budgets.maxCostUsd - totalCostUsd - estInputCostUsd
 
       if (totalCostUsd >= budgets.maxCostUsd || remainingUsdAfterInput < 0) {
@@ -982,6 +986,7 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
 
     return {
       ok: true,
+      estimatedInputTokens: estInput,
       ...(requestMaxOutputTokens !== undefined ? { requestMaxOutputTokens } : {}),
     }
   }
@@ -1333,7 +1338,9 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
       // Refresh dynamic system guidance (trust / permission mode changes) and bound context size.
       messages[0] = { role: "system", content: buildCurrentSystemPrompt() }
       const contextCap = budgets.maxInputTokens ? Math.floor(budgets.maxInputTokens * 0.85) : 96_000
-      compactContextMessagesIfNeeded(messages, contextCap)
+      if (compactContextMessagesIfNeeded(messages, contextCap)) {
+        deps.onEvent?.({ type: "context_compacted" })
+      }
 
       const maxTransientRetries = budgets.maxTransientRetries ?? 2
       let completion: ProviderCompletion | undefined
@@ -1360,6 +1367,8 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
           step,
           model: input.config.model,
           endpoint: input.config.baseURL,
+          contextTokens: preBudget.estimatedInputTokens,
+          contextLimit: contextCap,
         })
 
         requests += 1
@@ -1569,6 +1578,13 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
       const results: ToolDispatchResult[] = []
       let abortedOrUncertain = false
       const mutationOrderBeforeStep = lastMutationOrder
+
+      if (completion.text.trim() !== "") {
+        deps.onEvent?.({
+          type: "assistant_progress",
+          text: sanitizeSecretText(completion.text, activeSecret),
+        })
+      }
 
       for (const item of calls) {
         if (input.signal?.aborted) {
@@ -2146,12 +2162,14 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
           const cmdOrder = actionOrder
           const beforeCmdHashes = currentProtectedHashes
           const beforeMutationSnapshot = captureWorkspaceMutationSnapshot(boundary.workspace)
+          const commandStartedAt = performance.now()
           const run = await executePreparedCommand(prep.prepared, input.config, {
             timeoutMs: effectiveCmdTimeoutMs,
             ...(input.signal ? { signal: input.signal } : {}),
             baseEnv: env,
             ...(activeSecret ? { activeSecret } : {}),
           })
+          const durationMs = performance.now() - commandStartedAt
 
           const afterMutationSnapshot = captureWorkspaceMutationSnapshot(boundary.workspace)
           const mutationDelta = diffWorkspaceMutationSnapshots(
@@ -2304,6 +2322,8 @@ export async function runTask(input: TaskInput, deps: TaskLoopDeps): Promise<Tas
             target: safeCmdDisplay,
             exitCode: run.exitCode,
             signal: run.signal,
+            durationMs,
+            timedOut: run.timedOut,
           }
           actions.push({
             callId: call.id,

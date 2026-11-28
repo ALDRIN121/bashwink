@@ -33,9 +33,11 @@ import {
   formatPromptMetadata,
   formatStatusFooterLine,
   getTerminalLayout,
+  renderActivityRow,
   renderOpenCodeDiff,
   renderOpenCodeMarkdown,
   renderOpenCodeShellCard,
+  renderSessionStatus,
   stripAnsiSequences,
   truncatePathMiddle,
   truncatePlain,
@@ -460,34 +462,34 @@ test("real PTY interactive TUI supports multi-turn history, Ctrl+P palette, Ctrl
     grantWorkspaceTrust(resolved.config, ws, "pty-tester")
 
     const steps = [
-      { wait: "bashwink> ", send: "change note\r" },
+      { wait: "❯ ", send: "change note\r" },
       { wait: "approved (accept-edits)" },
-      { wait: "← Edit" },
+      { wait: "Edit " },
       { wait: "+1" },
       { wait: "TURN_ONE_DONE" },
       // Inspect `/diff` modal to verify line-numbered diff card persists in session turn
-      { wait: "bashwink> ", send: "/diff\r" },
+      { wait: "❯ ", send: "/diff\r" },
       { wait: "Session Changes" },
       { wait: "note.txt", delay: 0.05, send: "q" },
-      { wait: "bashwink> ", send: "follow up\r" },
+      { wait: "❯ ", send: "follow up\r" },
       { wait: "TURN_TWO_DONE" },
       // Open Command Palette (Ctrl+P) -> select status via typing 'status' + Enter
-      { wait: "bashwink> ", send: "\x10" },
+      { wait: "❯ ", send: "\x10" },
       { wait: "Bashwink Command Palette", delay: 0.05, send: "status\r" },
       { wait: "--- Status ---" },
       // Open Transcript Viewer (Ctrl+T) -> close with 'q'
-      { wait: "bashwink> ", send: "\x14" },
+      { wait: "❯ ", send: "\x14" },
       { wait: "Transcript", delay: 0.05, send: "q" },
       // Open Session Browser (Ctrl+O) -> close with Esc
-      { wait: "bashwink> ", send: "\x0f" },
+      { wait: "❯ ", send: "\x0f" },
       { wait: "Sessions", delay: 0.05, send: "\x1b" },
       // Double-tap Escape -> Timeline & Rewind -> press 'r' to restore files+chat back to turn 1!
-      { wait: "bashwink> ", delay: 0.05, send: "\x1b" },
+      { wait: "❯ ", delay: 0.05, send: "\x1b" },
       { delay: 0.08, send: "\x1b" },
       { wait: "Turn 2 Snapshot", delay: 0.05, send: "\x1b[A" }, // move up to Turn 1
       { wait: "Turn 1 Snapshot", delay: 0.05, send: "r" },
       { wait: "Rewound 2 turn(s); restored 1 file(s)" },
-      { wait: "bashwink> ", send: "\x03" }, // clear restored draft from composer
+      { wait: "❯ ", send: "\x03" }, // clear restored draft from composer
       { delay: 0.05, send: "/exit\r" },
     ]
     const parsed = await runPtyDriver(ws, home, 30, 100, steps)
@@ -606,6 +608,20 @@ test("responsive layout tiers, middle path truncation, styled wrapping, and comp
   assert.ok(visibleWidth(tightFooter) <= 42)
   assert.ok(tightFooter.includes("Esc×2 to rewind"))
 
+  const sessionStatus = renderSessionStatus({
+    model: "accounts/fireworks/models/deepseek-v3p2-custom-endpoint-v12345",
+    mode: "ask",
+    readOnly: true,
+    requests: 4,
+    requestLimit: 20,
+    context: { tokens: 25_000, limit: 96_000 },
+  }, 79, plainStyle)
+  assert.match(sessionStatus, /Context ~25k\/96k target \(26%\).*Requests 4\/20.*ASK MODE · Read-only/)
+  assert.ok(visibleWidth(sessionStatus) <= 79)
+  const editRow = renderActivityRow("Edit", "一個目錄/更長目錄/較長資料夾/auth.ts", "(+1 -1)", 38, plainStyle)
+  assert.ok(editRow.includes("auth.ts"))
+  assert.ok(visibleWidth(editRow) <= 38)
+
   const samplePatch = [
     "--- src/math.ts",
     "+++ src/math.ts",
@@ -675,15 +691,15 @@ test("real PTY auto-adjusts composer and modals live across wide -> narrow -> wi
     )
 
     const steps = [
-      { wait: "[120×32]" },
+      { wait: "v0.2.0-alpha.2" },
       { wait: "┃ " },
-      { wait: "Ask Bashwink to inspect, edit, or test" },
+      { wait: "❯ " },
       { wait: "resize-model" },
-      { wait: "╹▀▀▀▀▀▀" },
       { wait: "commands" },
-      // Shrink live to compact pane (48x16) -> composer immediately switches to compact placeholder
+      // Shrink live to compact pane (48x16) -> composer and model remain visible
       { resize: [16, 48] as const, delay: 0.08 },
-      { wait: "Ask Bashwink (/ cmd, @ file)" },
+      { wait: "❯ " },
+      { wait: "resize-model" },
       // Open Command Palette while narrow -> compact hint bar renders without wrapping
       { send: "\x10", delay: 0.05 },
       { wait: "Type filter · Esc" },
@@ -691,7 +707,8 @@ test("real PTY auto-adjusts composer and modals live across wide -> narrow -> wi
       { resize: [28, 110] as const, delay: 0.08 },
       { wait: "(Bashwink Command Palette)" },
       { send: "\x1b", delay: 0.05 },
-      { wait: "bashwink> ", send: "/exit\r" },
+      { wait: "\x1b[?1049l" },
+      { wait: "❯ ", send: "/exit\r" },
     ]
     const parsed = await runPtyDriver(ws, home, 32, 120, steps)
     assert.equal(parsed.exitCode, 0, parsed.output)
@@ -700,7 +717,7 @@ test("real PTY auto-adjusts composer and modals live across wide -> narrow -> wi
   }
 })
 
-test("real PTY OpenCode bottom-pinned raised prompt, Shift+Tab mode cycling, Always allow persistence, and clean /exit", async (t) => {
+test("real PTY bottom-pinned composer, Shift+Tab mode cycling, Always allow persistence, and clean /exit", async (t) => {
   const pyCheck = spawnSync("python3", ["-c", "import pty, termios"], { encoding: "utf8" })
   if (pyCheck.status !== 0) {
     t.skip("python3 pty module unavailable")
@@ -803,55 +820,51 @@ test("real PTY OpenCode bottom-pinned raised prompt, Shift+Tab mode cycling, Alw
     grantWorkspaceTrust(resolved.config, ws, "tester")
 
     const steps = [
-      { wait: "bashwink> " },
-      { wait: "mode:accept-edits" },
+      { wait: "❯ " },
+      { wait: "ACCEPT-EDITS MODE" },
       { wait: "shift+tab" },
       // Shift+Tab cycles mode while preserving draft text: accept-edits -> smart -> auto -> manual -> ask -> accept-edits
       { send: "draft text\x1b[Z" },
-      { wait: "mode:smart" },
+      { wait: "SMART MODE" },
       { send: "\x1b[Z" },
-      { wait: "mode:auto" },
+      { wait: "AUTO MODE" },
       { send: "\x1b[Z" },
-      { wait: "mode:manual" },
+      { wait: "MANUAL MODE" },
       { send: "\x1b[Z" },
-      { wait: "mode:ask" },
+      { wait: "ASK MODE" },
       { send: "\x1b[Z" },
-      { wait: "mode:accept-edits" },
+      { wait: "ACCEPT-EDITS MODE" },
       { send: "\x03" }, // Clear "draft text"
       { wait: "Cleared input", send: "/mode manual\r" },
       { wait: "Permission mode set to 'manual'." },
-      { wait: "bashwink> ", send: "update both files\r" },
+      { wait: "❯ ", send: "update both files\r" },
       { wait: "Apply this change? [y/N]" },
       { wait: "Always allow (a)" },
       { send: "a\r" }, // Save Always allow for edit_file -> second edit auto-approves without prompting!
       { wait: "Both files updated." },
-      { wait: "bashwink> ", send: "/mode ask\r" },
+      { wait: "❯ ", send: "/mode ask\r" },
       { wait: "Permission mode set to 'ask'." },
-      { wait: "mode:ask", send: "/exit\r" },
+      { wait: "ASK MODE", send: "/exit\r" },
     ]
     const parsed = await runPtyDriver(ws, home, 30, 110, steps)
     assert.equal(parsed.exitCode, 0, parsed.output)
-    // OpenCode raised surface background ANSI (48;5;235) was painted!
-    assert.ok(
-      parsed.output.includes("\x1b[48;5;235m"),
-      "Expected OpenCode raised prompt background",
-    )
+    assert.ok(parsed.output.includes("\x1b[38;5;243m" + "─".repeat(109)))
     assert.equal(readFileSync(path.join(ws, "one.txt"), "utf8"), "new1\n")
     assert.equal(readFileSync(path.join(ws, "two.txt"), "utf8"), "new2\n")
     // Verify confirmation widget appeared only ONCE across the two edits, and second edit used the saved rule
     assert.equal(parsed.output.split("Always allow (a)").length - 1, 1)
     assert.ok(parsed.output.includes("approved (rule)"))
-    // Verify clean /exit left NO orphaned "╹▀▀▀▀" after the final prompt
+    // Verify clean /exit clears the composer.
     const tailAfterGoodbye = parsed.output.split("Both files updated.")[1] ?? ""
     const strippedTail = stripAnsiSequences(tailAfterGoodbye).trimEnd()
-    assert.ok(!strippedTail.endsWith("▀"))
+    assert.ok(!strippedTail.endsWith("─"))
   } finally {
     await new Promise<void>((resolve) => srv.close(() => resolve()))
     rmSync(root, { recursive: true, force: true })
   }
 })
 
-test("OpenCode markdown table/code renderer, shell card, grouped read burst, and auto-mode split diff in PTY", async (t) => {
+test("OpenCode markdown table/code renderer, shell card, grouped read burst, and auto-mode unified diff in PTY", async (t) => {
   const plain = createStyle(false)
   const mdLines = renderOpenCodeMarkdown(
     [
@@ -961,7 +974,7 @@ test("OpenCode markdown table/code renderer, shell card, grouped read burst, and
         return
       }
       if (step === 2) {
-        // Edit in auto mode -> auto-applied AND still shows side-by-side split diff comparison!
+        // Edit in auto mode and show the applied unified diff in the transcript.
         res.end(
           JSON.stringify({
             choices: [
@@ -1029,20 +1042,21 @@ test("OpenCode markdown table/code renderer, shell card, grouped read burst, and
     grantWorkspaceTrust(resolved.config, ws, "tester")
 
     const steps = [
-      { wait: "bashwink> ", send: "/mode auto\r" },
+      { wait: "❯ ", send: "/mode auto\r" },
       { wait: "Permission mode set to 'auto'." },
-      { wait: "bashwink> ", send: "inspect and update\r" },
+      { wait: "❯ ", send: "inspect and update\r" },
       { wait: "Outcome   completed" },
-      { wait: "bashwink> ", send: "/exit\r" },
+      { wait: "❯ ", send: "/exit\r" },
     ]
     const parsed = await runPtyDriver(ws, home, 36, 130, steps)
     assert.equal(parsed.exitCode, 0, parsed.output)
     const clean = stripAnsiSequences(parsed.output)
     assert.ok(clean.includes("Explored listed 1 dir, read 4 files"))
     assert.ok(!clean.includes("→ read_file -> ok"))
-    assert.ok(clean.includes("← Edit a.txt"))
-    // Split side-by-side separator (` - ` left and ` + ` right) shown automatically even in auto mode!
-    assert.ok(clean.includes("1 - a.txt: old-value") && clean.includes("1 + a.txt: new-value"))
+    assert.match(clean, /Edit\s+a\.txt\s+\(\+1 -1\)/)
+    assert.ok(clean.includes("-  a.txt: old-value") && clean.includes("+  a.txt: new-value"))
+    assert.match(clean, /events recorded · hash chain verified/)
+    assert.match(clean, /Context ~.*Requests 3\/20/)
     assert.ok(clean.includes("│"))
     // Markdown table rendered via Unicode box drawing
     assert.ok(clean.includes("┌") && clean.includes("File") && clean.includes("updated cleanly"))
@@ -1135,12 +1149,12 @@ test("real PTY untrusted session unlocks & switches to accept-edits on bare Ente
 
     // Deliberately DO NOT pre-trust workspace; decline startup trust via Enter -> inline edit unlock accepts on bare Enter!
     const steps = [
-      { wait: "bashwink> ", send: "create hello.py\r" },
+      { wait: "❯ ", send: "create hello.py\r" },
       { wait: "Trust this workspace for interactive edit/command approvals? [y/N]", send: "\r" },
       { wait: "Continuing in read-only mode" },
       { wait: "Shall I edit & switch to accept-edits mode? [Y/n]", delay: 0.05, send: "\r" },
       { wait: "Created hello.py." },
-      { wait: "mode:accept-edits" },
+      { wait: "ACCEPT-EDITS MODE" },
       { send: "/exit\r" },
     ]
     const parsed = await runPtyDriver(ws, home, 32, 120, steps)
@@ -1169,7 +1183,7 @@ test("SIGTERM ends the prompt and the transcript viewer instead of wedging the t
     // At the prompt: dispose() used to remove the key listener without settling the composer,
     // so the process stayed alive with a dead prompt and Ctrl+C did nothing.
     const prompt = await runPtyDriver(ws, home, 30, 100, [
-      { wait: "bashwink (no model)> " },
+      { wait: "❯ " },
       { signal: "SIGTERM" },
     ])
     assert.equal(prompt.exitCode, 130, prompt.output)
@@ -1181,7 +1195,7 @@ test("SIGTERM ends the prompt and the transcript viewer instead of wedging the t
 
     // Inside a full-screen overlay: the alternate screen must be left behind.
     const viewer = await runPtyDriver(ws, home, 30, 100, [
-      { wait: "bashwink (no model)> " },
+      { wait: "❯ " },
       { send: "/transcript\r" },
       { wait: "Transcript" },
       { signal: "SIGTERM" },
@@ -1208,13 +1222,13 @@ test("setup asks before saving a hosted provider with no credential", async (t) 
 
   try {
     const steps = [
-      { wait: "bashwink (no model)> ", delay: 0.05, send: "\r" },
+      { wait: "❯ ", delay: 0.05, send: "\r" },
       { wait: "Select provider", delay: 0.05, send: "12\r" },
       { wait: "Endpoint URL", delay: 0.05, send: "\r" },
       { wait: "Authentication:", delay: 0.05, send: "3\r" },
       { wait: "will reject unauthenticated requests", delay: 0.05, send: "n\r" },
       { wait: "Authentication:", delay: 0.05, send: "cancel\r" },
-      { wait: "bashwink (no model)> ", delay: 0.05, send: "/exit\r" },
+      { wait: "❯ ", delay: 0.05, send: "/exit\r" },
     ]
     const parsed = await runPtyDriver(ws, home, 31, 120, steps)
     assert.equal(parsed.exitCode, 0, parsed.output)

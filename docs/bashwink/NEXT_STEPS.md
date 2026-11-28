@@ -17,6 +17,10 @@ Remaining actions before external distribution or starting Phase 3:
 2. Run a bounded authorized live-provider interactive session against the Phase 2 standalone build and record real endpoint evidence.
 3. Explicitly authorize if/when to start Phase 3 (Execution isolation & review/verify stack) or publish packages (`do not publish or push` without explicit approval).
 
+The standalone TUI refresh bounds the composer and updates the transcript and footer. Draft
+retention across overlays, diagnostic cancellation, and a model-only switcher remain eligible UX
+follow-ups. [Refresh evidence](TEST_EVIDENCE.md#2026-11-28--standalone-tui-refresh).
+
 ---
 
 ## v0.1.0-alpha.1 release candidate RC1 — stopped at the gate (historical, 2026-11-25)

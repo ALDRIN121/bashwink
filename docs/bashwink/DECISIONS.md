@@ -312,3 +312,11 @@ it does not make the multi-file apply atomic.
   2. **Structural enforcement below the model:** Pre-request budget checks (`BudgetPilot` covering both main and Guardian turns, omitted `usage` estimation, elapsed-time caps, and normalized no-progress stops), `BaselineSnapshot`, `TestGuard` (setting `hardBlockedFromAuto: true` and `allowAlways: false` before `Always allow`/mode matching + post-command hash delta auditing as `unconstrained`), `ProofPack` with `seq`/`hash` linkage, deterministic `ClaimGuard` downgrade (`done_unverified` / `inconclusive`), expanded `ScopeFence` (`maxFiles`, `--flag=path`, `~/`), nonce-escaped `TrustZones` (`<trust_zone>` / `<untrusted>`), and per-instance `EvidenceRecorder.secretValues` plus recursive session/run/prompt scrubbing.
   3. **Honest platform boundary:** Advertise and verify `darwin-arm64` locally across unit, install, independence, and 12/12 real PTY adversarial scenarios. Cross-platform (`linux-x64`, `linux-arm64`, `darwin-x64`, `win32-x64`) and live paid-provider checks remain unverified/blocked locally at the Phase 2 gate.
 - **Status:** Accepted and implemented (`darwin-arm64`).
+
+## Standalone TUI presentation (2026-11-28)
+
+Keep the ANSI transcript in terminal scrollback and reserve the bottom rows for an adaptive
+composer. The footer shows the last request's estimated input relative to the runtime compaction
+threshold and the last task's request count, including Guardian calls. A provider context-window
+limit would require model metadata. Print chain verification from ProofPack and retain the
+separate ClaimGuard status in the transcript.

@@ -45,7 +45,6 @@ import {
   loadRunRecord,
   loadWorkspacePermissions,
   nextPermissionMode,
-  permissionModeLabel,
   purgeExpiredArtifacts,
   sanitizeSecretText,
   saveAlwaysPermissionRule,
@@ -79,18 +78,24 @@ import {
   SYNC_START,
   colorsEnabled,
   countDiffChanges,
-  createStyle,
   getTerminalLayout,
   padPlainRight,
+  createStyle,
+  alignRight,
+  renderActivityRow,
+  renderSessionStatus,
+  renderTranscriptDiff,
   renderOpenCodeDiff,
   renderOpenCodeMarkdown,
   renderOpenCodeShellCard,
+  stripAnsiSequences,
   truncatePathMiddle,
   truncatePlain,
+  visibleWidth,
+  wrapPlainText,
+  wrapStyledLine,
   type ParsedKeyEvent,
-  type PromptMetadataInput,
-  type StatusFooterInput,
-  type TerminalLayout,
+  type SessionStatus,
   type TuiStyle,
 } from "./tui-theme.ts"
 import {
@@ -121,6 +126,7 @@ import type {
   TaskBudgets,
   TaskEvent,
   TaskResult,
+  ToolDispatchResult,
 } from "./types.ts"
 
 export const STANDALONE_VERSION = "0.2.0-alpha.2"
@@ -259,11 +265,13 @@ class NodeTerminalIO implements TerminalIO {
 }
 
 class RawTerminalIO implements TerminalIO {
+  readonly homeDirectory: string
   readonly isTTY = true
   readonly raw: RawTerminalSession
   readonly style: TuiStyle
 
   constructor(env: NodeJS.ProcessEnv) {
+    this.homeDirectory = env["HOME"] ?? env["USERPROFILE"] ?? ""
     this.raw = new RawTerminalSession()
     this.style = createStyle(colorsEnabled(env, true))
   }
@@ -543,7 +551,37 @@ function renderCliHeader(
   config?: StandaloneConfig,
   session?: SessionRecord,
 ): void {
-  const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+  if (!(io instanceof RawTerminalIO)) {
+    renderPlainCliHeader(io, workspace, trusted, config, session)
+    return
+  }
+
+  const style = io.style
+  const cols = terminalCols(io) - 1
+  const name = `${style.accentBold("❯~")}  ${style.bold("bashwink")}`
+  const badge = style.badge(` v${STANDALONE_VERSION} `)
+  const title = visibleWidth(name) + visibleWidth(badge) + 2 <= cols ? `${name}  ${badge}` : name
+  const home = io.homeDirectory
+  const displayPath = workspace === home ? "~" : home && workspace.startsWith(home + path.sep)
+    ? `~${workspace.slice(home.length)}` : workspace
+  const branch = session?.gitBranch ? cleanTerminalLine(session.gitBranch) : ""
+  const avail = cols - visibleWidth(title) - 3
+  const branchTag = branch && avail >= 12 ? style.violet(`⑂ ${truncatePlain(branch, Math.floor(avail / 2))}`) : ""
+  const location = avail >= 8
+    ? style.muted(truncatePathMiddle(cleanTerminalLine(displayPath), avail - (branchTag ? visibleWidth(branchTag) + 3 : 0)))
+    : ""
+  const right = [location, branchTag].filter(Boolean).join(style.rule(" · "))
+  io.write(`${alignRight(title, right, cols)}\n${style.rule("─".repeat(cols))}\n`)
+}
+
+function renderPlainCliHeader(
+  io: TerminalIO,
+  workspace: string,
+  trusted: boolean,
+  config?: StandaloneConfig,
+  session?: SessionRecord,
+): void {
+  const style = createStyle(false)
   const layout = getTerminalLayout(terminalCols(io), terminalRows(io))
   const modelLine = config
     ? `${config.providerId ? `${config.providerId} / ` : ""}${config.model} (${formatDestination(config.baseURL)})`
@@ -598,6 +636,71 @@ function renderCliHeader(
     ? "Commands: /sessions (Ctrl+O) · /timeline (Esc×2) · /transcript (Ctrl+T) · /model · /connect · /trust · /help · /exit"
     : "Commands: /sessions  /timeline  /transcript  /model  /connect  /trust  /help  /exit"
   io.write(`${style.muted(truncatePlain(cmdHint, layout.cols))}\n`)
+}
+
+function cleanTerminalLine(text: string): string {
+  return sanitizeTerminalText(text).replace(/[\n\t]/g, " ")
+}
+
+function renderAssistantReply(io: RawTerminalIO, text: string): void {
+  const style = io.style
+  const rail = style.accent("┃")
+  const width = terminalCols(io) - 3
+  const markdown = sanitizeTerminalText(text.trim()).replace(/\t/g, "    ")
+  const lines = renderOpenCodeMarkdown(markdown, width, style)
+  io.write(`\n${rail}  ${style.accentBold("bashwink")}\n`)
+  for (const line of lines.flatMap((line) => wrapStyledLine(line, width))) {
+    io.write(`${rail}${line}\n`)
+  }
+}
+
+function renderEditPreview(
+  io: TerminalIO,
+  patch: string,
+  file: string,
+  create?: boolean,
+  approval = false,
+): void {
+  const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
+  const cols = terminalCols(io) - 1
+  const cleanPatch = sanitizeTerminalText(patch)
+  const target = cleanTerminalLine(file)
+  if (!(io instanceof RawTerminalIO)) {
+    io.write(`\n${renderOpenCodeDiff(cleanPatch, { path: target, create, maxWidth: cols, view: "auto" }, style).join("\n")}\n`)
+    return
+  }
+  const counts = countDiffChanges(cleanPatch)
+  const delta = `(${style.green(`+${counts.additions}`)} ${style.red(`-${counts.deletions}`)})`
+  const row = renderActivityRow(create ? "Add" : "Edit", target, delta, cols, style)
+  io.write(`${row}\n`)
+  if (approval && !stripAnsiSequences(row).includes(target)) {
+    for (const part of wrapPlainText(target, cols - 5)) io.write(`     ${style.muted(part)}\n`)
+  }
+  io.write(`${renderTranscriptDiff(cleanPatch, cols, style).join("\n")}\n`)
+}
+
+function renderRunActivity(io: RawTerminalIO, run: ToolDispatchResult): void {
+  const style = io.style
+  const cols = terminalCols(io) - 1
+  const elapsed = run.durationMs === undefined ? "" : style.muted(`(${(run.durationMs / 1000).toFixed(1)}s)  `)
+  let status: string
+  if (run.status === "denied") status = style.yellow("declined")
+  else if (run.timedOut) status = style.red("timed out")
+  else if (run.signal) status = style.red(`signal ${cleanTerminalLine(run.signal)}`)
+  else if (run.exitCode == null) status = style.red("failed")
+  else status = (run.status === "ok" ? style.green : style.red)(`exit ${run.exitCode}`)
+
+  const row = renderActivityRow("Run", cleanTerminalLine(run.target ?? "command"), elapsed + status, cols, style)
+  io.write(`${row}\n`)
+  const output = sanitizeTerminalText(run.output)
+    .split(/\r?\n/)
+    .filter((line, index) => line.trim() && !(index === 0 && line.startsWith("exitCode:")))
+  for (const line of output.slice(0, 6)) {
+    io.write(`     ${style.muted(truncatePlain(cleanTerminalLine(line), cols - 5))}\n`)
+  }
+  if (output.length > 6) {
+    io.write(`     ${style.muted(`… (${output.length - 6} more lines)`)}\n`)
+  }
 }
 
 function printConnectionTestResult(io: TerminalIO, res: TestConnectionResult, model: string): void {
@@ -1150,11 +1253,11 @@ function renderTaskOutcome(result: TaskResult, io: TerminalIO): void {
   const cols = terminalCols(io)
   if (result.finalText.trim() !== "") {
     const cleanMd = sanitizeTerminalText(result.finalText.trim())
-    const rendered = renderOpenCodeMarkdown(cleanMd, cols, style)
-    io.write(`\n${rendered.join("\n")}\n`)
+    if (io instanceof RawTerminalIO) renderAssistantReply(io, cleanMd)
+    else io.write(`\n${renderOpenCodeMarkdown(cleanMd, cols, style).join("\n")}\n`)
   }
-  const ruleW = Math.min(Math.max(20, cols - 4), 72)
-  io.write(`\n  ${style.dim("─".repeat(ruleW))}\n`)
+  if (io instanceof RawTerminalIO) io.write("\n")
+  else io.write(`\n  ${style.dim("─".repeat(Math.min(Math.max(20, cols - 4), 72)))}\n`)
   const outcomeLine = `  Outcome   ${result.outcome}${result.stopReason ? ` — ${sanitizeTerminalText(result.stopReason)}` : ""}`
   const outcomeColored =
     result.outcome === "completed"
@@ -1180,7 +1283,7 @@ function renderTaskOutcome(result: TaskResult, io: TerminalIO): void {
   if (result.diffPreviews && result.diffPreviews.length > 0) {
     const fileSummaries = result.diffPreviews.map((d) => {
       const c = countDiffChanges(d.patch)
-      return `${d.path} (${style.green(`+${c.additions}`)} ${style.red(`-${c.deletions}`)})`
+      return `${cleanTerminalLine(d.path)} (${style.green(`+${c.additions}`)} ${style.red(`-${c.deletions}`)})`
     })
     io.write(`  Changed   ${fileSummaries.join(", ")}\n`)
   } else {
@@ -1190,8 +1293,19 @@ function renderTaskOutcome(result: TaskResult, io: TerminalIO): void {
   }
   if (result.changedTests.length > 0) {
     io.write(
-      `  ${style.yellow("Tests")}     modified test files: ${result.changedTests.join(", ")} (verify independently)\n`,
+      `  ${style.yellow("Tests")}     modified test files: ${result.changedTests.map(cleanTerminalLine).join(", ")} (verify independently)\n`,
     )
+  }
+  if (io instanceof RawTerminalIO) {
+    const proof = result.proofPack
+    if (proof) {
+      const count = `${proof.evidenceEntries} event${proof.evidenceEntries === 1 ? "" : "s"} recorded`
+      const evidence = proof.evidenceChainOk ? style.green(`✓ ${count} · hash chain verified`)
+        : style.red(`✗ ${count} · hash chain verification failed`)
+      io.write(`  ${evidence}\n`)
+    }
+    // An interrupted evidence write can leave a recorded command without a live completion row.
+    if (result.outcome !== "uncertain") return
   }
   if (result.commands.length === 0) {
     io.write(`  ${style.muted("Commands  none")}\n`)
@@ -1247,79 +1361,6 @@ function renderResumedSessionContext(io: TerminalIO, session: SessionRecord): vo
         `  ${style.green("Asst:")} ${sanitizeTerminalText(truncatePlain(turn.assistantText.replace(/\n/g, " "), maxMsgW))}\n`,
       )
     }
-  }
-}
-
-function buildStatusSummary(
-  session: SessionRecord,
-  trusted: boolean,
-  config?: StandaloneConfig,
-  layout?: TerminalLayout,
-  permissionMode: PermissionMode = "accept-edits",
-): string {
-  const modelText = config ? config.model : "no model"
-  const trustText = permissionMode === "ask" ? "ask (read-only)" : trusted ? "trusted" : "read-only"
-  const modeText = permissionModeLabel(permissionMode, Boolean(layout?.isCompact))
-  const costText =
-    session.usageTotals.costUsd !== undefined ? ` · $${session.usageTotals.costUsd.toFixed(4)}` : ""
-  if (layout?.isCompact) {
-    return `${truncatePlain(session.title, 18)} (${session.turns.length}t) · ${modelText} · ${modeText}`
-  }
-  if (layout && !layout.isWide) {
-    return `${truncatePlain(session.title, 28)} (${session.turns.length}t) · ${modelText} · ${modeText} · ${trustText}${costText} · shift+tab mode`
-  }
-  return `${session.title} (${session.turns.length}t) · ${modelText} · ${modeText} · ${trustText}${costText} · shift+tab mode · ctrl+p palette · ctrl+o sessions`
-}
-
-function buildComposerMetadata(
-  trusted: boolean,
-  config?: StandaloneConfig,
-  permissionMode: PermissionMode = "accept-edits",
-): PromptMetadataInput {
-  return {
-    agent: permissionMode === "ask" ? "ask" : "build",
-    model: config ? config.model : "no model selected (/model)",
-    ...(config?.providerId ? { provider: config.providerId } : {}),
-    permissionMode,
-    trustLabel: permissionMode === "ask" ? "read-only" : trusted ? "trusted" : "read-only",
-    trusted: permissionMode === "ask" ? false : trusted,
-  }
-}
-
-function formatCompactTokens(tokens: number): string {
-  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k tok`
-  return `${tokens} tok`
-}
-
-function buildComposerStatusFooter(
-  workspace: string,
-  env: NodeJS.ProcessEnv,
-  session: SessionRecord,
-): Omit<StatusFooterInput, "statusMessage"> {
-  const home = env["HOME"] || ""
-  const shortDir =
-    home !== "" && workspace.startsWith(home)
-      ? `~${workspace.slice(home.length) || "/"}`
-      : workspace
-  const branchTag = session.gitBranch ? ` (${session.gitBranch})` : ""
-  const location = `${shortDir}${branchTag}`
-  const tokens = session.usageTotals.totalTokens
-  const tokensText = tokens > 0 ? formatCompactTokens(tokens) : undefined
-  const costText =
-    session.usageTotals.costUsd !== undefined
-      ? `$${session.usageTotals.costUsd.toFixed(4)}`
-      : undefined
-  return {
-    location,
-    turnsCount: session.turns.length,
-    ...(tokensText ? { tokensText } : {}),
-    ...(costText ? { costText } : {}),
-    shortcuts: [
-      { key: "shift+tab", label: "mode" },
-      { key: "ctrl+p", label: "commands" },
-      { key: "ctrl+o", label: "sessions" },
-      { key: "esc×2", label: "rewind" },
-    ],
   }
 }
 
@@ -2022,6 +2063,9 @@ export async function runStandalone(
 
     let promptHistory = loadPromptHistory(resolved.data)
     let draftBuffer = ""
+    const sessionStatus = new Map<string,
+      Pick<SessionStatus, "requests" | "requestLimit" | "context"> & { config: StandaloneConfig }
+    >()
 
     let currentAbort: AbortController | undefined
     let interruptedAtPrompt = false
@@ -2244,6 +2288,7 @@ export async function runStandalone(
               `\nRewound conversation ${revertedTurns.length} turn(s); prompt restored to composer.\n`,
             )
           }
+          sessionStatus.delete(activeSession.id)
         }
       }
 
@@ -2452,6 +2497,7 @@ export async function runStandalone(
             io.write("Session has <= 2 turns; nothing to compact.\n")
           } else {
             activeSession = compacted.updated
+            sessionStatus.delete(activeSession.id)
             saveSession(resolved.data, activeSession)
             io.write(
               `Compacted ${compacted.summarizedTurns} earlier turn(s) (${compacted.beforeMessages} -> ${compacted.afterMessages} context messages).\n`,
@@ -2524,22 +2570,24 @@ export async function runStandalone(
         let trimmed = ""
 
         if (io instanceof RawTerminalIO) {
+          const usage = sessionStatus.get(activeSession.id)
           const action: ComposerAction = await runInteractiveComposer({
             raw: io.raw,
             style: io.style,
-            promptLabel,
+            promptLabel: "❯ ",
             permissionMode,
-            statusSummary: buildStatusSummary(
-              activeSession,
-              trusted,
-              activeConfig,
-              io.raw.layout(),
-              permissionMode,
+            statusSummary: "",
+            renderStatus: (width) => renderSessionStatus(
+              {
+                requests: 0,
+                ...(usage?.config === activeConfig ? usage : undefined),
+                model: cleanTerminalLine(activeConfig?.model ?? "No model (/model)"),
+                mode: permissionMode,
+                readOnly: !trusted || permissionMode === "ask",
+              },
+              width,
+              io.style,
             ),
-            getStatusSummary: (layout) =>
-              buildStatusSummary(activeSession, trusted, activeConfig, layout, permissionMode),
-            getMetadata: () => buildComposerMetadata(trusted, activeConfig, permissionMode),
-            getStatusFooter: () => buildComposerStatusFooter(canonical, env, activeSession),
             workspace: canonical,
             history: promptHistory,
             initialDraft: draftBuffer,
@@ -2719,7 +2767,7 @@ export async function runStandalone(
               spinnerIdx += 1
               const elapsed = ((Date.now() - taskStartMs) / 1000).toFixed(1)
               io.write(
-                `\r\x1b[2K${io.style.accent(frame)} ${spinnerText} ${io.style.muted(`(${elapsed}s · esc/ctrl+c cancel)`)}`,
+                `\r\x1b[2K${io.style.violet(truncatePlain(`  ${frame}  ${cleanTerminalLine(spinnerText)} (${elapsed}s · esc/ctrl+c cancel)`, terminalCols(io) - 1))}`,
               )
               spinnerActive = true
             }, 90)
@@ -2752,8 +2800,12 @@ export async function runStandalone(
           const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
           if (readBurst.length <= 3) {
             for (const entry of readBurst) {
-              const target = sanitizeTerminalText(entry.target || ".")
-              if (entry.tool === "list_files") {
+              const target = cleanTerminalLine(entry.target || ".")
+              if (io instanceof RawTerminalIO) {
+                const row = renderActivityRow(entry.tool === "list_files" ? "List" : "Read", target,
+                  entry.ok ? "" : style.red("failed"), terminalCols(io) - 1, style)
+                io.write(`${row}\n`)
+              } else if (entry.tool === "list_files") {
                 const icon = entry.ok ? style.accent("✱") : style.red("✗")
                 io.write(`  ${icon} ${style.muted(`List ${target}`)}\n`)
               } else {
@@ -2774,7 +2826,7 @@ export async function runStandalone(
               parts.push(`read ${files.length} file${files.length === 1 ? "" : "s"}`)
             const samples = [
               ...new Set(
-                readBurst.filter((r) => r.ok && r.target && r.target !== ".").map((r) => r.target),
+                readBurst.filter((r) => r.ok && r.target && r.target !== ".").map((r) => cleanTerminalLine(r.target)),
               ),
             ].slice(0, 3)
             const sampleText =
@@ -2800,6 +2852,7 @@ export async function runStandalone(
           continue
         }
         let result: TaskResult
+        let lastRequest: Pick<SessionStatus, "requestLimit" | "context"> = {}
         try {
           result = await runTask(
             {
@@ -2840,19 +2893,15 @@ export async function runStandalone(
                 try {
                   const style = io instanceof RawTerminalIO ? io.style : createStyle(false)
                   if (req.kind === "edit_file") {
-                    const cleanPatch = sanitizeTerminalText(req.prepared.diffPreview)
-                    const rendered = renderOpenCodeDiff(
+                    const cleanPatch = sanitizeSecretText(req.prepared.diffPreview, cred.secret)
+                    renderEditPreview(
+                      io,
                       cleanPatch,
-                      {
-                        path: req.prepared.relativePath,
-                        create: req.prepared.create,
-                        maxWidth: terminalCols(io),
-                        view: "auto",
-                      },
-                      style,
+                      sanitizeSecretText(req.prepared.relativePath, cred.secret),
+                      req.prepared.create,
+                      true,
                     )
                     shownDiffCallIds.add(req.callId)
-                    io.write(`\n${rendered.join("\n")}\n`)
                     io.write(
                       `  ${style.yellow("Note:")} Workspace ${sanitizeTerminalText(canonical)} is read-only; trusting enables edits.\n`,
                     )
@@ -2876,7 +2925,20 @@ export async function runStandalone(
                 }
               },
               onEvent: (event: TaskEvent) => {
-                if (event.type === "model_requested") {
+                if (event.type === "turn_started") {
+                  lastRequest = { requestLimit: event.maxRequests }
+                } else if (event.type === "context_compacted" && io instanceof RawTerminalIO) {
+                  clearSpinnerLine()
+                  flushReadBurst()
+                  io.write(`  ${io.style.violet("⟳  Auto-compacting context…")}\n`)
+                } else if (event.type === "assistant_progress" && io instanceof RawTerminalIO) {
+                  clearSpinnerLine()
+                  flushReadBurst()
+                  renderAssistantReply(io, event.text)
+                } else if (event.type === "model_requested") {
+                  if (event.contextLimit > 0) {
+                    lastRequest = { ...lastRequest, context: { tokens: event.contextTokens, limit: event.contextLimit } }
+                  }
                   spinnerText = `Waiting for ${event.model} at ${formatDestination(event.endpoint)}`
                   if (!(io instanceof RawTerminalIO) && event.step === 1) {
                     io.write(
@@ -2955,22 +3017,22 @@ export async function runStandalone(
                       event.result.patch &&
                       !shownDiffCallIds.has(event.result.callId)
                     ) {
-                      const cleanPatch = sanitizeTerminalText(event.result.patch)
-                      const rendered = renderOpenCodeDiff(
-                        cleanPatch,
-                        {
-                          path: event.result.target ?? event.result.changedFile ?? "file",
-                          create: event.result.create,
-                          maxWidth: terminalCols(io),
-                          view: "auto",
-                        },
-                        style,
+                      renderEditPreview(
+                        io,
+                        event.result.patch,
+                        event.result.target ?? event.result.changedFile ?? "file",
+                        event.result.create,
                       )
-                      io.write(`\n${rendered.join("\n")}\n`)
                     }
-                    const icon = event.result.status === "ok" ? style.green("✓") : style.red("✗")
-                    io.write(`  ${icon} ${event.result.output}\n`)
+                    if (event.result.status !== "ok" || !(io instanceof RawTerminalIO)) {
+                      const icon = event.result.status === "ok" ? style.green("✓") : style.red("✗")
+                      io.write(`  ${icon} ${sanitizeTerminalText(event.result.output)}\n`)
+                    }
                   } else if (event.result.tool === "run_command") {
+                    if (io instanceof RawTerminalIO) {
+                      renderRunActivity(io, event.result)
+                      return
+                    }
                     const shellLines = renderOpenCodeShellCard(
                       {
                         command: sanitizeTerminalText(event.result.target ?? "command"),
@@ -2999,18 +3061,14 @@ export async function runStandalone(
                     const cleanPatch = sanitizeTerminalText(
                       sanitizeSecretText(req.prepared.diffPreview, cred.secret),
                     )
-                    const rendered = renderOpenCodeDiff(
+                    renderEditPreview(
+                      io,
                       cleanPatch,
-                      {
-                        path: req.prepared.relativePath,
-                        create: req.prepared.create,
-                        maxWidth: terminalCols(io),
-                        view: "auto",
-                      },
-                      style,
+                      sanitizeSecretText(req.prepared.relativePath, cred.secret),
+                      req.prepared.create,
+                      true,
                     )
                     shownDiffCallIds.add(req.callId)
-                    io.write(`\n${rendered.join("\n")}\n`)
                     if (req.integrityWarning) {
                       io.write(
                         `${style.red("TestGuard Warning:")} ${sanitizeTerminalText(sanitizeSecretText(req.integrityWarning, cred.secret))}\n`,
@@ -3067,6 +3125,11 @@ export async function runStandalone(
         }
 
         currentAbort = undefined
+        sessionStatus.set(activeSession.id, {
+          ...lastRequest,
+          config: activeConfig,
+          requests: result.requests + (result.guardianRequests ?? 0),
+        })
         renderTaskOutcome(result, io)
         if (
           !trusted &&

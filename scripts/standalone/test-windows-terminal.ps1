@@ -353,12 +353,11 @@ try {
   $BashwinkCmdLine = "`"$NodeExe`" `"$BashwinkJs`""
   $s1 = New-Object ConPtySession ($BashwinkCmdLine), $RepoDir, 100, 30
   try {
-    $s1.WaitFor("Model    none configured", 15000)
-    $s1.WaitFor("bashwink (no model)> ", 15000)
+    $s1.WaitFor("No model (/model)", 15000)
     $s1.Send("/model`r`n")
     $s1.WaitFor("Select provider [1-48 or id] (or 'cancel'):", 15000)
     $s1.Send("cancel`r`n")
-    $s1.WaitFor("bashwink (no model)> ", 15000)
+    $s1.WaitFor("❯ ", 15000)
     $s1.Send("/exit`r`n")
     $c1 = $s1.WaitForExit(15000)
     if ($c1 -ne 0) { throw "Cancelled setup returned exit $c1" }
@@ -373,7 +372,7 @@ try {
   $ServerState.Turn = 0
   $s2 = New-Object ConPtySession ($BashwinkCmdLine), $RepoDir, 100, 30
   try {
-    $s2.WaitFor("bashwink (no model)> ", 15000)
+    $s2.WaitFor("❯ ", 15000)
     $s2.Send("`r`n")
     $s2.WaitFor("Select provider [1-48 or id] (or 'cancel'):", 15000)
     $s2.Send("10`r`n")
@@ -385,12 +384,12 @@ try {
     $s2.Send("win-local-model`r`n")
     $s2.WaitFor("Save and use this model? [y/N]", 15000)
     $s2.Send("y`r`n")
-    $s2.WaitFor("bashwink> ", 15000)
+    $s2.WaitFor("❯ ", 15000)
     if ($ServerState.Count -ne 0) { throw "Outbound requests fired before task submission ($($ServerState.Count))" }
     $s2.Resize(80, 24)
     $s2.Send("/mode manual`r`n")
     $s2.WaitFor("Permission mode set to 'manual'.", 15000)
-    $s2.WaitFor("bashwink> ", 15000)
+    $s2.WaitFor("❯ ", 15000)
     $s2.Send("fix sum`r`n")
     $s2.WaitFor("Trust this workspace for interactive edit/command approvals? [y/N]", 15000)
     $s2.Send("y`r`n")
@@ -399,7 +398,7 @@ try {
     $s2.WaitFor("Run this command? [y/N]", 15000)
     $s2.Send("y`r`n")
     $s2.WaitFor("Outcome   completed", 15000)
-    $s2.WaitFor("bashwink> ", 15000)
+    $s2.WaitFor("❯ ", 15000)
 
     # Cancel a slow command with Ctrl+C (\u0003)
     $ServerState.Scenario = "cancel_cmd"
@@ -410,7 +409,7 @@ try {
     Start-Sleep -Milliseconds 300
     $s2.Send([string][char]3)
     $s2.WaitFor("Outcome   cancelled", 15000)
-    $s2.WaitFor("> ", 15000)
+    $s2.WaitFor("❯ ", 15000)
     $s2.Send("/exit`r`n")
     $c2 = $s2.WaitForExit(15000)
     if ($c2 -ne 0) { throw "Interactive ConPTY session returned exit $c2" }

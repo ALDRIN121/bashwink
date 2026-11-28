@@ -8,6 +8,9 @@ investigation (ADR-010).**
 
 Last evaluated 2026-11-26 after local Phase 2 standalone verification (`darwin-arm64`: 39/39 unit/PTY tests, 133/133 Bun shared-module regression tests, `test:standalone:install`, 12/12 `test:standalone:e2e`, `test:standalone:independence`), plus earlier real GitHub Actions runs on Phase 0 and Phase 1.
 
+The local Phase 2 criteria were rechecked for the 28 November TUI refresh on `darwin-arm64`.
+[Commands and results](TEST_EVIDENCE.md#2026-11-28--standalone-tui-refresh).
+
 ## Phase 2 — Evidence-first safeguards (Standalone v0.2.0-alpha.2 gate evaluation)
 
 - [x] **12/12 initial fixed fixtures reach expected states under pinned test conditions (`darwin-arm64`).** Verified against the installed compiled standalone binary via `npm run test:standalone:e2e` (12/12 real PTY scenarios covering onboarding egress=0, provider isolation, Git red->green + ProofPack `verified`, declined edit + exit-9 failure, `Ctrl+C` + child PID termination, fake `"All tests pass!"` downgrade, `TestGuard` `.skip` block under `accept-edits`, poisoned `README.md` + malicious workspace `standalone.json`/`opencode.json` in `proj ü 用户`, `IntentLock` `ScopeFence` outside write + symlink block, compound-arg credential escape, canary redaction, and budget/3-failure retry stop + `evidence export`/`purge`).

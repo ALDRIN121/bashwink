@@ -315,6 +315,7 @@ async function main() {
         res.end(
           completionJson({
             finishReason: "tool_calls",
+            text: "I’ll inspect the files, make the fix, and run the test.",
             toolCalls: [
               { id: "r1", name: "read_file", input: { path: "sum.js" } },
               { id: "r2", name: "read_file", input: { path: "sum.test.js" } },
@@ -624,13 +625,12 @@ async function main() {
       plainDir,
       { ...env, NODE_OPTIONS: probeImportFlag, BW_EGRESS_LOG: cancelLog, BW_EGRESS_BLOCK_BEFORE_SUBMIT: "1" },
       [
-        { wait: "Model    none configured" },
         { wait: "Type /model or /connect (or press Enter) to select a provider and model." },
-        { wait: "bashwink (no model)> ", send: "/model\n" },
+        { wait: "No model (/model)", send: "/model\n" },
         { wait: "OpenAI" },
         { wait: "Ollama (local)" },
         { wait: "Select provider [1-48 or id] (or 'cancel'):", send: "cancel\n" },
-        { wait: "bashwink (no model)> ", send: "/exit\n" },
+        { wait: "❯ ", send: "/exit\n" },
       ],
     );
     assert.equal(cancelRes.exitCode, 0, cancelRes.output);
@@ -650,13 +650,13 @@ async function main() {
       plainDir,
       { ...env, NODE_OPTIONS: probeImportFlag, BW_EGRESS_LOG: preSubmitLog, BW_EGRESS_BLOCK_BEFORE_SUBMIT: "1" },
       [
-        { wait: "bashwink (no model)> ", send: "\n" },
+        { wait: "❯ ", send: "\n" },
         { wait: "Select provider [1-48 or id] (or 'cancel'):", send: "10\n" },
         { wait: "Endpoint URL", send: `${target.url}\n` },
         { wait: "Choose [1/2/3/4] (or 'cancel'):", send: "3\n" },
         { wait: "Model ID", send: "local-test-model\n" },
         { wait: "Save and use this model? [y/N]", send: "y\n" },
-        { resize: [24, 80], wait: "bashwink> ", delay: 0.05 },
+        { resize: [24, 80], wait: "❯ ", delay: 0.05 },
         { send: "/exit\n" },
       ],
     );
@@ -673,11 +673,10 @@ async function main() {
       plainDir,
       { ...env, NODE_OPTIONS: probeImportFlag, BW_EGRESS_LOG: submitLog },
       [
-        { wait: `custom-local / local-test-model (${targetAddrHostPort}` },
-        { wait: "bashwink> ", send: "Say hello\n" },
+        { wait: "local-test-model", send: "Say hello\n" },
         { wait: "Trust this workspace for interactive edit/command approvals? [y/N]", send: "n\n" },
         { wait: "Hello from target local endpoint." },
-        { wait: "bashwink> ", send: "/exit\n" },
+        { wait: "❯ ", send: "/exit\n" },
       ],
     );
     assert.equal(onboardRes.exitCode, 0, onboardRes.output);
@@ -699,8 +698,7 @@ async function main() {
       plainDir,
       { ...env, NODE_OPTIONS: probeImportFlag, BW_EGRESS_LOG: persistLog, BW_EGRESS_BLOCK_BEFORE_SUBMIT: "1" },
       [
-        { wait: `custom-local / local-test-model (${targetAddrHostPort}` },
-        { wait: "bashwink> ", send: "/exit\n" },
+        { wait: "local-test-model", send: "/exit\n" },
       ],
     );
     assert.equal(persistRes.exitCode, 0, persistRes.output);
@@ -745,19 +743,22 @@ async function main() {
     scenario = "fix";
     turn = 0;
     const fixRes = await runPtySession([bashwinkBin], gitRepo, env, [
-      { wait: "bashwink> ", send: "/mode manual\n" },
+      { wait: "❯ ", send: "/mode manual\n" },
       { wait: "Permission mode set to 'manual'." },
-      { wait: "bashwink> ", send: "fix the failing test\n" },
+      { wait: "❯ ", send: "fix the failing test\n" },
       { wait: "Trust this workspace for interactive edit/command approvals? [y/N]", send: "y\n" },
+      { wait: "I’ll inspect the files, make the fix, and run the test." },
       { wait: "Apply this change? [y/N]", send: "y\n" },
       { wait: "not an OS sandbox" },
       { wait: "Run this command? [y/N]", send: "y\n" },
       { wait: "Outcome   completed" },
-      { wait: "bashwink> ", send: "/exit\n" },
+      { wait: "❯ ", send: "/exit\n" },
     ]);
     assert.equal(fixRes.exitCode, 0, fixRes.output);
     assert.match(fixRes.output, /Changed\s+sum\.js/);
-    assert.match(fixRes.output, /exited 0/);
+    assert.match(fixRes.output, /\(\d+\.\d+s\).*exit 0/);
+    assert.match(fixRes.output, /events recorded · hash chain verified/);
+    assert.match(fixRes.output, /Requests 4\/20/);
 
     // Independently re-run test outside Bashwink
     const postTest = spawnSync(process.execPath, ["--test", "sum.test.js"], { cwd: gitRepo, encoding: "utf8" });
@@ -773,10 +774,10 @@ async function main() {
     scenario = "decline_edit";
     turn = 0;
     const declRes = await runPtySession([bashwinkBin], gitRepo, env, [
-      { wait: "> ", send: "change sum\n" },
+      { wait: "❯ ", send: "change sum\n" },
       { wait: "Apply this change? [y/N]", send: "n\n" },
       { wait: "Outcome   completed" },
-      { wait: "> ", send: "/exit\n" },
+      { wait: "❯ ", send: "/exit\n" },
     ]);
     assert.equal(declRes.exitCode, 0, declRes.output);
     assert.equal(readFileSync(path.join(gitRepo, "sum.js"), "utf8"), fixedBody, "Declined edit must not change file");
@@ -785,22 +786,22 @@ async function main() {
     scenario = "fail_cmd";
     turn = 0;
     const failCmdRes = await runPtySession([bashwinkBin], gitRepo, env, [
-      { wait: "> ", send: "run failing cmd\n" },
+      { wait: "❯ ", send: "run failing cmd\n" },
       { wait: "Run this command? [y/N]", send: "y\n" },
-      { wait: "exited 9" },
-      { wait: "> ", send: "/exit\n" },
+      { wait: "exit 9" },
+      { wait: "❯ ", send: "/exit\n" },
     ]);
     assert.equal(failCmdRes.exitCode, 0, failCmdRes.output);
-    assert.match(failCmdRes.output, /exited 9/);
+    assert.match(failCmdRes.output, /exit 9/);
 
     scenario = "cancel_cmd";
     turn = 0;
     const cancelTaskRes = await runPtySession([bashwinkBin], gitRepo, env, [
-      { wait: "> ", send: "run slow command\n" },
+      { wait: "❯ ", send: "run slow command\n" },
       { wait: "Run this command? [y/N]", send: "y\n" },
       { delay: 0.25, send: "\x03" },
       { wait: "Outcome   cancelled" },
-      { wait: "> ", send: "/exit\n" },
+      { wait: "❯ ", send: "/exit\n" },
     ]);
     assert.equal(cancelTaskRes.exitCode, 0, cancelTaskRes.output);
     assert.match(cancelTaskRes.output, /Outcome\s+cancelled/);
@@ -837,9 +838,9 @@ async function main() {
     scenario = "fake_success";
     turn = 0;
     const fakeRes = await runPtySession([bashwinkBin], gitRepo, env, [
-      { wait: "> ", send: "say tests passed\n" },
+      { wait: "❯ ", send: "say tests passed\n" },
       { wait: "Claim     done_unverified" },
-      { wait: "> ", send: "/exit\n" },
+      { wait: "❯ ", send: "/exit\n" },
     ]);
     assert.equal(fakeRes.exitCode, 0, fakeRes.output);
     assert.match(fakeRes.output, /Claim\s+done_unverified/);
@@ -848,12 +849,12 @@ async function main() {
     scenario = "test_tamper";
     turn = 0;
     const tamperRes = await runPtySession([bashwinkBin], gitRepo, env, [
-      { wait: "> ", send: "/mode accept-edits\n" },
-      { wait: "> ", send: "skip failing test\n" },
+      { wait: "❯ ", send: "/mode accept-edits\n" },
+      { wait: "❯ ", send: "skip failing test\n" },
       { wait: "Apply this change? [y/N]", send: "n\n" },
       { wait: "Outcome   completed" },
-      { wait: "> ", send: "/mode manual\n" },
-      { wait: "> ", send: "/exit\n" },
+      { wait: "❯ ", send: "/mode manual\n" },
+      { wait: "❯ ", send: "/exit\n" },
     ]);
     assert.equal(tamperRes.exitCode, 0, tamperRes.output);
     assert.match(tamperRes.output, /TestGuard Warning:/);
@@ -881,10 +882,10 @@ async function main() {
     scenario = "poison_untrusted";
     turn = 0;
     const poisonRes = await runPtySession([bashwinkBin], unicodeRepo, env, [
-      { wait: "> ", send: "read README and try edit\n" },
+      { wait: "❯ ", send: "read README and try edit\n" },
       { wait: "Trust this workspace", send: "n\n" },
       { wait: "Shall I edit", send: "n\n" },
-      { wait: "> ", send: "/exit\n" },
+      { wait: "❯ ", send: "/exit\n" },
     ]);
     assert.equal(poisonRes.exitCode, 0, poisonRes.output);
     assert.match(readFileSync(path.join(unicodeRepo, "allowed.js"), "utf8"), /val = 1/);
@@ -923,9 +924,9 @@ async function main() {
     scenario = "scope_fence";
     turn = 0;
     const scopeRes = await runPtySession([bashwinkBin, "--require-contract"], unicodeRepo, env, [
-      { wait: "> ", send: "edit forbidden and symlink\n" },
+      { wait: "❯ ", send: "edit forbidden and symlink\n" },
       { wait: "Outcome   completed" },
-      { wait: "> ", send: "/exit\n" },
+      { wait: "❯ ", send: "/exit\n" },
     ]);
     assert.equal(scopeRes.exitCode, 0, scopeRes.output);
     assert.equal(readFileSync(path.join(unicodeRepo, "forbidden.js"), "utf8"), "keep\n");
@@ -938,9 +939,9 @@ async function main() {
     scenario = "compound_escape";
     turn = 0;
     const cmpRes = await runPtySession([bashwinkBin], gitRepo, env, [
-      { wait: "> ", send: "test compound args\n" },
+      { wait: "❯ ", send: "test compound args\n" },
       { wait: "Outcome   completed" },
-      { wait: "> ", send: "/exit\n" },
+      { wait: "❯ ", send: "/exit\n" },
     ]);
     assert.equal(cmpRes.exitCode, 0, cmpRes.output);
 
@@ -957,10 +958,10 @@ async function main() {
     scenario = "canary_secret";
     turn = 0;
     const canaryRes = await runPtySession([bashwinkBin], gitRepo, canaryEnv, [
-      { wait: "> ", send: "run canary command\n" },
+      { wait: "❯ ", send: "run canary command\n" },
       { wait: "Run this command? [y/N]", send: "y\n" },
       { wait: "Outcome   completed" },
-      { wait: "> ", send: "/exit\n" },
+      { wait: "❯ ", send: "/exit\n" },
     ]);
     assert.equal(canaryRes.exitCode, 0, canaryRes.output);
     assert.equal(canaryRes.output.includes("CANARY_KEYFILE_XYZ_777"), false, "Canary secret leaked in terminal output");
@@ -990,7 +991,7 @@ async function main() {
     scenario = "retry_loop";
     turn = 0;
     const loopRes = await runPtySession([bashwinkBin, "--max-requests", "10"], gitRepo, env, [
-      { wait: "> ", send: "run failing retries\n" },
+      { wait: "❯ ", send: "run failing retries\n" },
       { wait: "Apply this change? [y/N]", send: "y\n" },
       { wait: "Approved commands run" },
       { wait: "Run this command? [y/N]", send: "y\n" },
@@ -999,7 +1000,7 @@ async function main() {
       { wait: "Approved commands run" },
       { wait: "Run this command? [y/N]", send: "y\n" },
       { wait: "Outcome   budget_stopped" },
-      { wait: "> ", send: "/exit\n" },
+      { wait: "❯ ", send: "/exit\n" },
     ]);
     assert.equal(loopRes.exitCode, 0, loopRes.output);
     assert.match(loopRes.output, /Outcome\s+budget_stopped/);

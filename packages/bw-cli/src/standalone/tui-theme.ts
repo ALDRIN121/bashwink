@@ -53,6 +53,9 @@ export interface TuiStyle {
   yellow(s: string): string
   cyan(s: string): string
   blue(s: string): string
+  violet(s: string): string
+  rule(s: string): string
+  badge(s: string): string
   promptCap(s: string): string
   selectedRow(s: string): string
   diffLine(line: string): string
@@ -65,14 +68,17 @@ export function createStyle(enabled: boolean): TuiStyle {
     dim: (s) => wrapAnsi("\x1b[2m", "\x1b[22m", s, enabled),
     italic: (s) => wrapAnsi("\x1b[3m", "\x1b[23m", s, enabled),
     inverse: (s) => wrapAnsi("\x1b[7m", "\x1b[27m", s, enabled),
-    accent: (s) => wrapAnsi("\x1b[38;5;75m", "\x1b[39m", s, enabled),
-    accentBold: (s) => wrapAnsi("\x1b[1;38;5;75m", "\x1b[22;39m", s, enabled),
-    muted: (s) => wrapAnsi("\x1b[38;5;244m", "\x1b[39m", s, enabled),
-    green: (s) => wrapAnsi("\x1b[38;5;114m", "\x1b[39m", s, enabled),
+    accent: (s) => wrapAnsi("\x1b[38;5;155m", "\x1b[39m", s, enabled),
+    accentBold: (s) => wrapAnsi("\x1b[1;38;5;155m", "\x1b[22;39m", s, enabled),
+    muted: (s) => wrapAnsi("\x1b[38;5;250m", "\x1b[39m", s, enabled),
+    green: (s) => wrapAnsi("\x1b[38;5;155m", "\x1b[39m", s, enabled),
     red: (s: string) => wrapAnsi("\x1b[38;5;203m", "\x1b[39m", s, enabled),
     yellow: (s) => wrapAnsi("\x1b[38;5;221m", "\x1b[39m", s, enabled),
     cyan: (s) => wrapAnsi("\x1b[38;5;80m", "\x1b[39m", s, enabled),
     blue: (s) => wrapAnsi("\x1b[38;5;111m", "\x1b[39m", s, enabled),
+    violet: (s) => wrapAnsi("\x1b[38;5;177m", "\x1b[39m", s, enabled),
+    rule: (s) => wrapAnsi("\x1b[38;5;243m", "\x1b[39m", s, enabled),
+    badge: (s) => wrapAnsi("\x1b[48;5;236;38;5;253m", "\x1b[49;39m", s, enabled),
     promptCap: (s) => wrapAnsi("\x1b[38;5;235m", "\x1b[39m", s, enabled),
     selectedRow: (s) => wrapAnsi("\x1b[48;5;237;38;5;255m", "\x1b[49;39m", s, enabled),
     diffLine: (line) => {
@@ -199,6 +205,72 @@ export function padPlainRight(text: string, cols: number): string {
   return w < cols ? truncated + " ".repeat(cols - w) : truncated
 }
 
+export function alignRight(left: string, right: string, cols: number): string {
+  if (!right) return left
+  return `${left}${" ".repeat(Math.max(1, cols - visibleWidth(left) - visibleWidth(right)))}${right}`
+}
+
+export interface SessionStatus {
+  readonly model: string
+  readonly mode: string
+  readonly readOnly: boolean
+  readonly requests: number
+  readonly requestLimit?: number
+  readonly context?: { readonly tokens: number; readonly limit: number }
+}
+
+export function renderSessionStatus(status: SessionStatus, cols: number, style: TuiStyle): string {
+  const sep = style.rule(cols < 100 ? " │ " : "  │  ")
+  const mode = cols < 40
+    ? status.mode === "accept-edits" ? "EDITS" : status.mode.toUpperCase()
+    : `${status.mode.toUpperCase()} MODE`
+  const access = status.readOnly ? style.yellow("Read-only") : ""
+  const modeColor = status.mode === "auto" ? style.yellow
+    : status.mode === "accept-edits" ? style.cyan : style.accent
+  const permission = [modeColor(mode), access].filter(Boolean).join(" · ")
+  const requests = `Requests ${status.requests}${status.requestLimit === undefined ? "" : `/${status.requestLimit}`}`
+  const shortTokens = (tokens: number) =>
+    tokens >= 1000 ? `${Number((tokens / 1000).toFixed(1))}k` : String(tokens)
+  const context = status.context
+  const percent = context ? Math.round((context.tokens / context.limit) * 100) : 0
+  const filled = Math.min(16, Math.round(percent * 16 / 100))
+  const meter = `${style.yellow("█".repeat(filled))}${style.rule("░".repeat(16 - filled))}`
+  const contextText = context
+    ? `Context ~${shortTokens(context.tokens)}/${shortTokens(context.limit)} target (${percent}%)` : ""
+  const fullContext = context ? `${contextText}  [${meter}]` : ""
+  const fullWidth = (parts: string[]) => visibleWidth(parts.join(sep))
+  const availableModelWidth = cols - fullWidth(["", permission])
+  if (availableModelWidth < 4) return style.yellow(truncatePlain(stripAnsiSequences(permission), cols))
+  const minModelWidth = Math.min(visibleWidth(status.model), cols < 100 ? 8 : 16, availableModelWidth)
+  const telemetry = [[fullContext, requests], [contextText, requests], [requests]]
+    .map((parts) => parts.filter(Boolean))
+    .find((parts) => fullWidth([...parts, "", permission]) + minModelWidth <= cols) ?? []
+  const modelWidth = cols - fullWidth([...telemetry, "", permission])
+  const model = truncatePlain(status.model, modelWidth)
+  const left = [...telemetry, model, permission].join(sep)
+
+  const hints = ["ctrl+p commands", "ctrl+o sessions", "shift+tab mode"]
+  while (hints.length > 0 && visibleWidth(left) + 3 + visibleWidth(hints.join(" · ")) > cols) hints.pop()
+  return alignRight(left, style.muted(hints.join(" · ")), cols)
+}
+
+export function renderActivityRow(
+  action: string,
+  target: string,
+  detail: string,
+  cols: number,
+  style: TuiStyle,
+): string {
+  const prefix = `${style.rule("  ├─")} ▫  ${style.accentBold(padPlainRight(action, 5))}  `
+  const fitTarget = action === "Run" ? truncatePlain : truncatePathMiddle
+  const targetWidth = cols - visibleWidth(prefix) - (detail ? visibleWidth(detail) + 1 : 0)
+  if (targetWidth < 4) {
+    const separateDetail = visibleWidth(detail) <= cols - 5 ? detail : truncatePlain(detail, cols - 5)
+    return `${prefix}${style.muted(fitTarget(target, cols - visibleWidth(prefix)))}${detail ? `\n     ${separateDetail}` : ""}`
+  }
+  return alignRight(`${prefix}${style.muted(fitTarget(target, targetWidth))}`, detail, cols)
+}
+
 /**
  * Fill a styled row cleanly to `cols` width with OpenCode's subtle raised prompt surface (`#212121` / `48;5;235`).
  */
@@ -282,9 +354,17 @@ export function truncatePathMiddle(text: string, maxCols: number): string {
   if (visibleWidth(plain) <= maxCols) return plain
   if (maxCols <= 5) return truncatePlain(plain, maxCols)
   const chars = Array.from(plain)
-  const keepHead = Math.max(2, Math.floor((maxCols - 1) * 0.35))
-  const keepTail = Math.max(3, maxCols - 1 - keepHead)
-  return `${chars.slice(0, keepHead).join("")}…${chars.slice(-keepTail).join("")}`
+  const headBudget = Math.floor((maxCols - 1) * 0.35)
+  const head = truncatePlain(plain, headBudget + 1).slice(0, -1)
+  const tailBudget = maxCols - visibleWidth(head) - 1
+  let width = 0
+  let tail = ""
+  for (const ch of chars.reverse()) {
+    width += charDisplayWidth(ch)
+    if (width > tailBudget) break
+    tail = ch + tail
+  }
+  return `${head}…${tail}`
 }
 
 /** Wrap a single possibly-ANSI-styled line to <= `maxCols` display cells cleanly. */
@@ -621,6 +701,23 @@ function parsePatchRows(patch: string): ParsedDiffRow[] {
     }
   }
   return rows
+}
+
+export function renderTranscriptDiff(patch: string, cols: number, style: TuiStyle): string[] {
+  const indent = "     "
+  const width = Math.max(8, cols - indent.length - 2)
+  const border = (left: string, right: string) => `${indent}${style.rule(`${left}${"─".repeat(width)}${right}`)}`
+  const lines = parsePatchRows(patch).map(({ kind, text }) => {
+    const sign = kind === "added" ? "+" : kind === "removed" ? "-" : " "
+    const marker = sign === "+" ? style.green(sign) : sign === "-" ? style.red(sign) : sign
+    const code = text.replace(/\t/g, "    ")
+    const row = kind === "hunk" || kind === "note"
+      ? style.muted(` ${padPlainRight(code, width - 1)}`)
+      : ` ${marker}  ${padPlainRight(code, width - 4)}`
+    const background = kind === "added" ? "22" : kind === "removed" ? "52" : "235"
+    return `${indent}${style.rule("│")}${wrapAnsi(`\x1b[48;5;${background}m`, "\x1b[49m", row, style.enabled)}${style.rule("│")}`
+  })
+  return [border("╭", "╮"), ...lines, border("╰", "╯")]
 }
 
 function highlightInlineDiffPair(

@@ -149,6 +149,9 @@ function startComposer(screen: Screen, history: readonly string[] = []) {
   })
 
   return {
+    paste(text: string): void {
+      onKey!({ kind: "paste", text })
+    },
     type(text: string): void {
       for (const ch of text) onKey!({ kind: "char", text: ch })
     },
@@ -219,6 +222,24 @@ test("growth and shrinkage of the menu never erases output above the prompt", as
   )
 
   assert.equal(await composer.submit(), "command")
+})
+
+test("a long draft stays within the bottom composer on a short terminal", async () => {
+  const screen = new Screen(40, 8)
+  screen.place(0, "previous assistant reply")
+  screen.cursorTo(1)
+  const composer = startComposer(screen)
+  composer.paste(Array.from({ length: 20 }, (_, i) => `draft ${i + 1}`).join("\n"))
+
+  assert.equal(screen.lines()[0], "previous assistant reply")
+  assert.match(screen.lines()[5]!, /draft 20/)
+  assert.equal(screen.lines()[7], "ready")
+
+  composer.ctrlC()
+  assert.match(screen.lines()[5]!, /bashwink>$/)
+  assert.equal(screen.lines()[0], "previous assistant reply")
+  composer.ctrlC()
+  assert.equal(await composer.result(), "exit")
 })
 
 test(

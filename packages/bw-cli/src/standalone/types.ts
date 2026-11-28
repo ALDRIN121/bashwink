@@ -111,6 +111,8 @@ export interface ToolDispatchResult {
   readonly exitCode?: number | null
   readonly signal?: string | null
   readonly changedFile?: string
+  readonly durationMs?: number
+  readonly timedOut?: boolean
 }
 
 export type UntrustedTrustZone =
@@ -305,7 +307,11 @@ export type TaskEvent =
       readonly step: number
       readonly model: string
       readonly endpoint: string
+      readonly contextTokens: number
+      readonly contextLimit: number
     }
+  | { readonly type: "context_compacted" }
+  | { readonly type: "assistant_progress"; readonly text: string }
   | { readonly type: "model_delta"; readonly text: string }
   | {
       readonly type: "model_retrying"

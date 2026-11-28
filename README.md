@@ -107,6 +107,8 @@ Interactive commands inside `bashwink`: `/setup`, `/trust`, `/help`, `/exit` (`C
 
 ## Development and local verification
 
+Contributing? Read [CONTRIBUTING.md](CONTRIBUTING.md) first — claim the issue, then code.
+
 ```sh
 npm run test:standalone               # Unit, provider, scope, and cost-cap regression tests
 npm run test:standalone:install       # Tarball build, audit, space prefix, upgrade, corrupt tarball, uninstall

@@ -36,6 +36,10 @@ def check(cond, message):
     if not cond: errors.append(message)
 
 check((repo/'AGENTS.md').is_file(),'Missing root AGENTS.md')
+# The human contribution path is a gate, not a convenience: without these a contributor cannot know
+# the claim flow, the real gate commands, or what "verified" is allowed to mean here.
+check((repo/'CONTRIBUTING.md').is_file(),'Missing root CONTRIBUTING.md')
+check((repo/'.github'/'PULL_REQUEST_TEMPLATE.md').is_file(),'Missing .github/PULL_REQUEST_TEMPLATE.md')
 for path in REQUIRED:
     check((docs/path).is_file(),f'Missing docs/bashwink/{path}')
 if (docs/'BASHWINK_TASKS_90.csv').exists():

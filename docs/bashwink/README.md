@@ -27,6 +27,7 @@ This folder is the single reference for the proposed Bashwink open-source coding
 | Research | `COMPETITIVE_GAP_RESEARCH.md`, `EXPERIMENTS_AND_EVALUATIONS.md` | Competitor analysis and test design |
 | Combined reading | `BASHWINK_V2_INTEGRATED_PLAN.md` | Consolidated context; do not treat as a separate task register |
 | Agent operation | `AGENT_WORKFLOW.md`, `BASHWINK_MASTER_AGENT_PROMPT.md`, root `AGENTS.md` | Safe agent execution rules |
+| Human contribution | root `CONTRIBUTING.md`, `.github/PULL_REQUEST_TEMPLATE.md` | Claim an issue, local gates, PR evidence requirements |
 | Progress | `IMPLEMENTATION_STATUS.md`, `TEST_EVIDENCE.md`, `NEXT_STEPS.md` | Current state, reproducible test evidence, next eligible tasks |
 | Execution foundation | `BW-018_IMPLEMENTATION_REPORT.md`, `BW-030_EXECUTION_BACKEND_DESIGN.md` | Local execution controls, lifecycle, and gaps |
 | Handoff audit | `CURRENT_STATE_REVIEW.md`, `INTERNAL_ALPHA_READINESS.md`, `CI_BASELINE_RECONCILIATION.md`, `BW-031_IMPLEMENTATION_PLAN.md` | Verified baseline, release decision and reviewed isolation plan |
